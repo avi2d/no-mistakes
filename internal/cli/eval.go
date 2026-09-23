@@ -117,11 +117,13 @@ func newEvalMissCmd() *cobra.Command {
 
 func newEvalMissIngestCmd() *cobra.Command {
 	var findings []string
+	var caseID string
 	cmd := &cobra.Command{
 		Use:   "ingest <run> --finding <json>",
 		Short: "Capture a green review pass and label confirmed post-PR misses as false-negative gold",
-		Long:  "Reads confirmed post-PR misses from --finding JSON (repeatable), not from GitHub comments or an external ledger. Captures the named run if needed, then writes false-negative gold onto the last completed non-blocking review pass.",
-		Args:  cobra.ExactArgs(1),
+		Long:  "Reads confirmed post-PR misses from --finding JSON (repeatable), not from GitHub comments or an external ledger. Captures the named run if needed, then writes false-negative gold onto the last completed non-blocking review pass, or onto --case when set. A --case target must belong to the named run and its review round must be green; confirm the defect exists in the head that round reviewed before ingesting.",
+
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(findings) == 0 {
 				return fmt.Errorf("at least one --finding is required")
@@ -144,7 +146,7 @@ func newEvalMissIngestCmd() *cobra.Command {
 				return err
 			}
 			defer store.Close()
-			result, err := eval.IngestPostPRMiss(cmd.Context(), store, p, database, args[0], misses)
+			result, err := eval.IngestPostPRMiss(cmd.Context(), store, p, database, args[0], misses, caseID)
 			if err != nil {
 				return err
 			}
@@ -153,6 +155,7 @@ func newEvalMissIngestCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringArrayVar(&findings, "finding", nil, "confirmed miss as JSON finding object with id and description, optional file, line, severity (error|warning|info, default error) and action (auto-fix|ask-user|no-op) (repeatable)")
+	cmd.Flags().StringVar(&caseID, "case", "", "captured case ID to write gold onto instead of the last completed non-blocking review pass; must belong to the named run and have a green review round")
 	return cmd
 }
 

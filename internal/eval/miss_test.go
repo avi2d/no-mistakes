@@ -64,7 +64,7 @@ func TestIngestPostPRMissWritesFalseNegativeGoldOnGreenReview(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := IngestPostPRMiss(ctx, store, p, sourceDB, run.ID, []FindingGold{miss})
+	result, err := IngestPostPRMiss(ctx, store, p, sourceDB, run.ID, []FindingGold{miss}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +94,7 @@ func TestIngestPostPRMissWritesFalseNegativeGoldOnGreenReview(t *testing.T) {
 		t.Fatalf("empty-review score = %#v, want FN=1 TP=0", score)
 	}
 
-	again, err := IngestPostPRMiss(ctx, store, p, sourceDB, run.ID, []FindingGold{miss})
+	again, err := IngestPostPRMiss(ctx, store, p, sourceDB, run.ID, []FindingGold{miss}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +138,7 @@ func TestIngestPostPRMissRefusesBlockingReview(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = IngestPostPRMiss(ctx, store, p, sourceDB, run.ID, []FindingGold{miss})
+	_, err = IngestPostPRMiss(ctx, store, p, sourceDB, run.ID, []FindingGold{miss}, "")
 	if !errors.Is(err, ErrReviewDidNotPassGreen) {
 		t.Fatalf("error = %v, want %v", err, ErrReviewDidNotPassGreen)
 	}
@@ -172,7 +172,7 @@ func TestIngestPostPRMissRefusesWhenLaterPassIsBlocking(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = IngestPostPRMiss(ctx, store, p, sourceDB, run.ID, []FindingGold{miss})
+	_, err = IngestPostPRMiss(ctx, store, p, sourceDB, run.ID, []FindingGold{miss}, "")
 	if !errors.Is(err, ErrReviewDidNotPassGreen) {
 		t.Fatalf("error = %v, want %v", err, ErrReviewDidNotPassGreen)
 	}
@@ -236,4 +236,142 @@ func TestParsePostPRMissFindingValidatesSeverityAndAction(t *testing.T) {
 	if got.Severity != "error" || got.Action != "" {
 		t.Fatalf("parsed = %+v, want the default error severity and no action", got)
 	}
+}
+
+func TestIngestPostPRMissExplicitCaseTargetsEarlierGreenRound(t *testing.T) {
+	ctx := context.Background()
+	p, sourceDB, run, _, firstRound := setupCapturedRun(t, ctx)
+	defer sourceDB.Close()
+	steps, err := sourceDB.GetStepsByRun(run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clean := `{"findings":[],"risk_level":"low","risk_rationale":"clean","risk_scope":"source-or-external"}`
+	middle, err := sourceDB.InsertReviewStepRoundWithProvenance(steps[0].ID, 2, "initial", &clean, nil, run.HeadSHA, stringValue(firstRound.ReviewedHeadSHA), stringValue(firstRound.TrustedConfigSHA), firstRound.GlobalConfigYAML, firstRound.RepoConfigYAML, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	last, err := sourceDB.InsertReviewStepRoundWithProvenance(steps[0].ID, 3, "initial", &clean, nil, run.HeadSHA, stringValue(firstRound.ReviewedHeadSHA), stringValue(firstRound.TrustedConfigSHA), firstRound.GlobalConfigYAML, firstRound.RepoConfigYAML, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sourceDB.UpdateStepStatus(steps[0].ID, types.StepStatusCompleted); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := Open(p.EvalDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	miss, err := ParsePostPRMissFinding(`{"id":"earlier-miss","description":"a miss the earlier round saw","file":"a.go"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := IngestPostPRMiss(ctx, store, p, sourceDB, run.ID, []FindingGold{miss}, run.ID+"-"+middle.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.CaseID != run.ID+"-"+middle.ID {
+		t.Fatalf("ingest result = %#v, want FN gold on the explicitly targeted earlier case", result)
+	}
+
+	for _, c := range mustListAll(t, store) {
+		switch c.SourceRoundID {
+		case middle.ID:
+			if len(c.Labels.Findings) != 1 || c.Labels.Findings[0].ID != "earlier-miss" {
+				t.Fatalf("targeted case gold = %#v, want the ingested miss", c.Labels)
+			}
+		case last.ID, firstRound.ID:
+			for _, gold := range c.Labels.Findings {
+				if gold.ID == "earlier-miss" {
+					t.Fatalf("case %q gold = %#v, want the miss only on the targeted case", c.ID, c.Labels)
+				}
+			}
+		}
+	}
+}
+
+func TestIngestPostPRMissExplicitCaseRejectsForeignRun(t *testing.T) {
+	ctx := context.Background()
+	p, sourceDB, run, _, _ := setupCapturedRun(t, ctx)
+	defer sourceDB.Close()
+
+	store, err := Open(p.EvalDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	writeSyntheticCase(t, store, syntheticCaseSpec{
+		id: "foreign", fingerprint: "repo-a", capturedAt: 1, changedLines: 10,
+		changedFiles: []string{"main.go"},
+	})
+
+	miss, err := ParsePostPRMissFinding(`{"id":"x","description":"a miss","file":"a.go"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = IngestPostPRMiss(ctx, store, p, sourceDB, run.ID, []FindingGold{miss}, "foreign")
+	if err == nil || !strings.Contains(err.Error(), "belongs to run") {
+		t.Fatalf("error = %v, want a foreign-run rejection naming the owning run", err)
+	}
+}
+
+func TestIngestPostPRMissExplicitCaseRejectsMissingCase(t *testing.T) {
+	ctx := context.Background()
+	p, sourceDB, run, _, _ := setupCapturedRun(t, ctx)
+	defer sourceDB.Close()
+
+	store, err := Open(p.EvalDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	miss, err := ParsePostPRMissFinding(`{"id":"x","description":"a miss","file":"a.go"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = IngestPostPRMiss(ctx, store, p, sourceDB, run.ID, []FindingGold{miss}, "no-such-case")
+	if err == nil || errors.Is(err, ErrReviewDidNotPassGreen) || !strings.Contains(err.Error(), "was not captured") {
+		t.Fatalf("error = %v, want a missing-case rejection", err)
+	}
+}
+
+func TestIngestPostPRMissExplicitCaseRejectsNonGreenRound(t *testing.T) {
+	ctx := context.Background()
+	p, sourceDB, run, _, firstRound := setupCapturedRun(t, ctx)
+	defer sourceDB.Close()
+	steps, err := sourceDB.GetStepsByRun(run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sourceDB.UpdateStepStatus(steps[0].ID, types.StepStatusCompleted); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := Open(p.EvalDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	miss, err := ParsePostPRMissFinding(`{"id":"x","description":"a miss","file":"a.go"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = IngestPostPRMiss(ctx, store, p, sourceDB, run.ID, []FindingGold{miss}, run.ID+"-"+firstRound.ID)
+	if !errors.Is(err, ErrReviewDidNotPassGreen) {
+		t.Fatalf("error = %v, want %v for a blocking targeted round", err, ErrReviewDidNotPassGreen)
+	}
+}
+
+func mustListAll(t *testing.T, store *Store) []Case {
+	t.Helper()
+	all, err := store.ListCases("all")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return all
 }
