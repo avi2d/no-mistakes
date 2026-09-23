@@ -77,9 +77,9 @@ func ParsePostPRMissFinding(raw string) (FindingGold, error) {
 
 // IngestPostPRMiss captures a run that already passed review green, then
 // writes confirmed post-PR misses as false-negative gold on the last green
-// review pass. Capture of an existing case is a no-op, so later ingest still
-// attaches gold. Duplicate finding IDs are no-ops.
-func IngestPostPRMiss(ctx context.Context, store *Store, p *paths.Paths, database *db.DB, runID string, misses []FindingGold) (IngestResult, error) {
+// review pass, or on targetCaseID when set. Capture of an existing case is a
+// no-op, so later ingest still attaches gold. Duplicate finding IDs are no-ops.
+func IngestPostPRMiss(ctx context.Context, store *Store, p *paths.Paths, database *db.DB, runID string, misses []FindingGold, targetCaseID string) (IngestResult, error) {
 	if store == nil || p == nil || database == nil {
 		return IngestResult{}, fmt.Errorf("eval miss ingest requires a store, paths, and database")
 	}
@@ -112,19 +112,9 @@ func IngestPostPRMiss(ctx context.Context, store *Store, p *paths.Paths, databas
 	if run == nil {
 		return IngestResult{}, fmt.Errorf("run %q not found", runID)
 	}
-	green, err := lastGreenReviewRound(database, run.ID)
+	target, err := resolveIngestTarget(database, store, cases, run.ID, strings.TrimSpace(targetCaseID))
 	if err != nil {
 		return IngestResult{}, err
-	}
-	var target *Case
-	for i := range cases {
-		if cases[i].SourceRoundID == green.ID {
-			target = &cases[i]
-			break
-		}
-	}
-	if target == nil {
-		return IngestResult{}, fmt.Errorf("%w: green review round %q was not captured", ErrNoCapturableReview, green.ID)
 	}
 
 	unlock, err := lockCorpus(ctx, store.root)
@@ -138,6 +128,68 @@ func IngestPostPRMiss(ctx context.Context, store *Store, p *paths.Paths, databas
 		return IngestResult{}, err
 	}
 	return IngestResult{CaseID: updated.ID, Added: added, Total: len(updated.Labels.Findings)}, nil
+}
+
+func resolveIngestTarget(database *db.DB, store *Store, cases []Case, runID, targetCaseID string) (*Case, error) {
+	if targetCaseID == "" {
+		green, err := lastGreenReviewRound(database, runID)
+		if err != nil {
+			return nil, err
+		}
+		for i := range cases {
+			if cases[i].SourceRoundID == green.ID {
+				return &cases[i], nil
+			}
+		}
+		return nil, fmt.Errorf("%w: green review round %q was not captured", ErrNoCapturableReview, green.ID)
+	}
+	for i := range cases {
+		if cases[i].ID == targetCaseID {
+			if cases[i].SourceRunID != runID {
+				return nil, fmt.Errorf("case %q belongs to run %q, not run %q", targetCaseID, cases[i].SourceRunID, runID)
+			}
+			if err := requireGreenRound(database, runID, &cases[i]); err != nil {
+				return nil, err
+			}
+			return &cases[i], nil
+		}
+	}
+	if other, err := loadCase(store.caseDir(targetCaseID)); err == nil {
+		if other.SourceRunID != runID {
+			return nil, fmt.Errorf("case %q belongs to run %q, not run %q", targetCaseID, other.SourceRunID, runID)
+		}
+		return nil, fmt.Errorf("case %q belongs to run %q but was not captured", targetCaseID, runID)
+	}
+	return nil, fmt.Errorf("case %q was not captured for run %q", targetCaseID, runID)
+}
+
+func requireGreenRound(database *db.DB, runID string, target *Case) error {
+	steps, err := database.GetStepsByRun(runID)
+	if err != nil {
+		return fmt.Errorf("read source steps: %w", err)
+	}
+	for _, step := range steps {
+		if step.StepName != types.StepReview {
+			continue
+		}
+		rounds, err := database.GetRoundsByStep(step.ID)
+		if err != nil {
+			return fmt.Errorf("read review rounds: %w", err)
+		}
+		for _, round := range rounds {
+			if round.ID != target.SourceRoundID {
+				continue
+			}
+			if round.FindingsJSON == nil || strings.TrimSpace(*round.FindingsJSON) == "" {
+				return fmt.Errorf("%w: case %q review round %q recorded no findings", ErrReviewDidNotPassGreen, target.ID, round.ID)
+			}
+			if !reviewPassedGreen(*round.FindingsJSON) {
+				return fmt.Errorf("%w: case %q review round %q was blocking", ErrReviewDidNotPassGreen, target.ID, round.ID)
+			}
+			return nil
+		}
+	}
+	return fmt.Errorf("case %q review round %q not found in run %q", target.ID, target.SourceRoundID, runID)
 }
 
 func lastGreenReviewRound(database *db.DB, runID string) (*db.StepRound, error) {

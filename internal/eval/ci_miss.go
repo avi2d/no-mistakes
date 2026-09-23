@@ -158,7 +158,7 @@ func AutoIngestCIFalseNegatives(ctx context.Context, p *paths.Paths, database *d
 	}
 	defer store.Close()
 
-	result, err := IngestPostPRMiss(ctx, store, p, database, runID, misses)
+	result, err := IngestPostPRMiss(ctx, store, p, database, runID, misses, "")
 	if err != nil {
 		// A run whose review did not pass green, or has no capturable review,
 		// has nowhere to attach these misses: skip it rather than fault.

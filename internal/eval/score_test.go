@@ -267,3 +267,78 @@ func TestEvaluationSummaryPrecisionBoundsTreatPendingAsWorstCase(t *testing.T) {
 		t.Fatalf("precision_lower = %v, want 0.5 (pending treated as FP)", got)
 	}
 }
+
+func TestScoreCandidateIgnoresUnmatchedNoOp(t *testing.T) {
+	labels := Labels{Findings: []FindingGold{{
+		ID:          "gold",
+		Kind:        GoldTruePositive,
+		File:        "main.go",
+		Description: "real bug",
+	}}}
+	candidate := `{"findings":[` +
+		`{"id":"gold","file":"main.go","description":"real bug","action":"auto-fix"},` +
+		`{"id":"note","file":"main.go","description":"nothing to do here","action":"no-op"},` +
+		`{"id":"fixme","file":"main.go","description":"needs a fix","action":"auto-fix"},` +
+		`{"id":"check","file":"main.go","description":"needs a human","action":"ask-user"}` +
+		`]}`
+
+	score := ScoreCandidate(labels, candidate)
+	if score.TruePositive != 1 || score.FalseNegative != 0 {
+		t.Fatalf("score = %#v, want the matched finding counted", score)
+	}
+	if score.Pending != 2 {
+		t.Fatalf("score = %#v, want only the unmatched auto-fix and ask-user queued as pending", score)
+	}
+}
+
+func TestScoreCandidateIgnoresUnmatchedNoOpAcrossSpellings(t *testing.T) {
+	labels := Labels{Findings: []FindingGold{{
+		ID:          "gold",
+		Kind:        GoldTruePositive,
+		File:        "main.go",
+		Description: "real bug",
+	}}}
+	candidate := `{"findings":[` +
+		`{"id":"gold","file":"main.go","description":"real bug"},` +
+		`{"id":"a","file":"main.go","description":"note one","action":"No-Op"},` +
+		`{"id":"b","file":"main.go","description":"note two","action":"  no-op  "}` +
+		`]}`
+
+	score := ScoreCandidate(labels, candidate)
+	if score.Pending != 0 {
+		t.Fatalf("score = %#v, want no-op spellings ignored regardless of case or padding", score)
+	}
+}
+
+func TestScoreCandidateStillCountsMatchedNoOpFinding(t *testing.T) {
+	labels := Labels{Findings: []FindingGold{{
+		ID:          "gold",
+		Kind:        GoldTruePositive,
+		File:        "main.go",
+		Description: "real bug",
+	}}}
+	candidate := `{"findings":[{"id":"gold","file":"main.go","description":"real bug","action":"no-op"}]}`
+
+	score := ScoreCandidate(labels, candidate)
+	if score.TruePositive != 1 || score.FalseNegative != 0 || score.Pending != 0 {
+		t.Fatalf("score = %#v, want a matched finding scored exactly as before", score)
+	}
+}
+
+func TestScoreCandidateKeepsUnlabeledActionPending(t *testing.T) {
+	labels := Labels{Findings: []FindingGold{{
+		ID:          "gold",
+		Kind:        GoldTruePositive,
+		File:        "main.go",
+		Description: "real bug",
+	}}}
+	candidate := `{"findings":[` +
+		`{"id":"gold","file":"main.go","description":"real bug"},` +
+		`{"id":"extra","file":"main.go","description":"unclassified extra"}` +
+		`]}`
+
+	score := ScoreCandidate(labels, candidate)
+	if score.Pending != 1 {
+		t.Fatalf("score = %#v, want a finding with no action still queued as pending", score)
+	}
+}

@@ -18,7 +18,7 @@ const (
 )
 
 // Score is one candidate's finding-level confusion matrix against gold.
-// Pending is unmatched candidate findings: queued, never punished as FP.
+// Pending is unmatched actionable candidate findings: queued, never punished as FP.
 type Score struct {
 	TruePositive      int
 	TruePositiveExact int
@@ -36,7 +36,7 @@ type Score struct {
 //     human-added miss, or a confirmed post-PR miss)
 //   - FN: the candidate misses a true-issue gold
 //   - FP: only an explicit false-positive gold that the candidate still raised
-//   - Pending: unmatched candidate findings, never inferred as invalid
+//   - Pending: unmatched actionable candidate findings, never inferred as invalid
 //
 // Matching is a documented cascade of strengths: exact-id, exact-text,
 // nearby-line Jaccard, then gated containment. Assignment is one globally
@@ -71,9 +71,14 @@ func ScoreCandidate(labels Labels, findingsJSON string) Score {
 		}
 	}
 	for i := range candidate {
-		if !used[i] {
-			score.Pending++
+		if used[i] {
+			continue
 		}
+		// A no-op note records that there was nothing to do, not a candidate error.
+		if types.NormalizeFindingAction(candidate[i].Action) == types.ActionNoOp {
+			continue
+		}
+		score.Pending++
 	}
 	return score
 }

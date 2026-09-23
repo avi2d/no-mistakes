@@ -572,3 +572,33 @@ func TestEvalSetsStillNamesRepositoriesFromAnExistingDatabase(t *testing.T) {
 		t.Fatalf("sets output = %q, want the repository name resolved from the existing pipeline database", out)
 	}
 }
+
+func TestEvalMissIngestCaseFlagTargetsExplicitCase(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	t.Setenv("NM_HOME", root)
+	chdir(t, t.TempDir())
+
+	findings := `{"findings":[],"risk_level":"low","risk_rationale":"clean","risk_scope":"source-or-external"}`
+	fixture := setupEvalCLIFixture(t, ctx, root, findings)
+	if err := fixture.db.UpdateStepStatus(fixture.step.ID, types.StepStatusCompleted); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := executeCmd("eval", "miss", "ingest", fixture.run.ID,
+		"--case", fixture.run.ID+"-"+fixture.round.ID,
+		"--finding", `{"id":"explicit-target","file":"pkg/compute.go","line":12,"severity":"error","description":"returns the wrong set for a valid input"}`)
+	if err != nil {
+		t.Fatalf("eval miss ingest --case: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "ingested 1 false-negative gold finding") || !strings.Contains(out, fixture.run.ID+"-"+fixture.round.ID) {
+		t.Fatalf("ingest output = %q, want gold written onto the explicit case", out)
+	}
+
+	out, err = executeCmd("eval", "miss", "ingest", fixture.run.ID,
+		"--case", "no-such-case",
+		"--finding", `{"id":"other","file":"a.go","severity":"error","description":"another miss"}`)
+	if err == nil || !strings.Contains(err.Error(), "was not captured") {
+		t.Fatalf("ingest with unknown --case err = %v, want a missing-case rejection", err)
+	}
+}

@@ -111,3 +111,31 @@ func TestReplayReportsPlanAndPerResultProgress(t *testing.T) {
 		}
 	}
 }
+
+func TestSelfScoreRecordedReviewsAgreesWithCandidateReplayOnNoOp(t *testing.T) {
+	store := openEvalStore(t)
+	roundFindings := findingsJSON(
+		findingSpec{ID: "hit", Severity: "error", File: "main.go", Line: 1, Description: "real bug", Action: "auto-fix"},
+		findingSpec{ID: "note", Severity: "info", File: "main.go", Line: 2, Description: "nothing to do here", Action: "no-op"},
+	)
+	c := writeSyntheticCase(t, store, syntheticCaseSpec{
+		id: "noop", fingerprint: "repo-a", capturedAt: 1, changedLines: 10,
+		changedFiles: []string{"main.go"},
+		gold: []FindingGold{
+			{ID: "hit", Kind: GoldTruePositive, Source: goldSourceUserFix, File: "main.go", Line: 1, Description: "real bug", Severity: "error", Action: "auto-fix"},
+		},
+		roundFindings: roundFindings,
+	})
+
+	selfScore := SelfScoreRecordedReviews([]Case{c})
+	replay := ScoreCandidate(c.Labels, roundFindings)
+	if selfScore.Pending != replay.Pending {
+		t.Fatalf("self-score pending = %d, replay pending = %d, want both paths to agree", selfScore.Pending, replay.Pending)
+	}
+	if selfScore.Pending != 0 {
+		t.Fatalf("self-score = %#v, want the unmatched no-op note unscored on both paths", selfScore)
+	}
+	if selfScore.TruePositive != 1 {
+		t.Fatalf("self-score = %#v, want the matched finding still counted", selfScore)
+	}
+}
