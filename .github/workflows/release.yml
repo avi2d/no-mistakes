@@ -16,6 +16,8 @@ concurrency:
 jobs:
   release-please:
     runs-on: ubuntu-latest
+    # Only upstream holds the release-PR permission and Developer ID secrets this pipeline needs.
+    if: github.repository == 'kunchenguid/no-mistakes'
     outputs:
       release_created: ${{ steps.release.outputs.release_created }}
       tag_name: ${{ steps.release.outputs.tag_name }}
