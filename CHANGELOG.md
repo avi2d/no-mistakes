@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.82.1](https://github.com/avi2d/no-mistakes/compare/v1.82.0...v1.82.1) (2026-09-24)
+
+
+### Bug Fixes
+
+* **eval:** ignore unmatched no-op findings in scoring and target miss ingest at an explicit case ([#1](https://github.com/avi2d/no-mistakes/issues/1)) ([82cf0ad](https://github.com/avi2d/no-mistakes/commit/82cf0ad44ff3c0171921e99f490d61081cfa100c))
+* **gate:** let a CI rebase replace the run's own published mirror head ([#3](https://github.com/avi2d/no-mistakes/issues/3)) ([558e47f](https://github.com/avi2d/no-mistakes/commit/558e47fb507b77f62d4bc49069c107ecc73516cd))
+
 ## [1.82.0](https://github.com/kunchenguid/no-mistakes/compare/v1.81.0...v1.82.0) (2026-09-23)
 
 
