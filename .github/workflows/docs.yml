@@ -24,6 +24,8 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # Only upstream has the Pages site the non-PR path configures and deploys to.
+    if: github.event_name == 'pull_request' || github.repository == 'kunchenguid/no-mistakes'
     steps:
       - uses: actions/checkout@v6
       - if: github.event_name != 'pull_request'
