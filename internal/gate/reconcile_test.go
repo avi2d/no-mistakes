@@ -39,7 +39,7 @@ func TestReconcileStaleBranchArchivesPatchEquivalentHeadBeforeNonForcePush(t *te
 	}
 	t.Logf("Before reconciliation, ordinary push: %s", before)
 
-	result, err := ReconcileStaleBranch(ctx, gateDir, work, "feature/reconcile", liveHead, "")
+	result, err := ReconcileStaleBranch(ctx, gateDir, work, "feature/reconcile", liveHead, AbandonedSubmission{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +81,7 @@ func TestReconcileStaleBranchLeavesContainedAncestorForNonForcePush(t *testing.T
 	reconcileGit(t, "", "init", "--bare", gateDir)
 	reconcileGit(t, gateDir, "fetch", work, privateHead+":refs/heads/feature/reconcile")
 
-	result, err := ReconcileStaleBranch(ctx, gateDir, work, "feature/reconcile", liveHead, "")
+	result, err := ReconcileStaleBranch(ctx, gateDir, work, "feature/reconcile", liveHead, AbandonedSubmission{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +126,7 @@ func TestReconcileStaleBranchRefusesAndNamesUniquePrivateCommits(t *testing.T) {
 	reconcileGit(t, "", "init", "--bare", gateDir)
 	reconcileGit(t, gateDir, "fetch", work, privateHead+":refs/heads/feature/reconcile")
 
-	result, err := ReconcileStaleBranch(ctx, gateDir, work, "feature/reconcile", liveHead, "")
+	result, err := ReconcileStaleBranch(ctx, gateDir, work, "feature/reconcile", liveHead, AbandonedSubmission{})
 	if err == nil {
 		t.Fatal("unique private commit was reconciled instead of refused")
 	}
@@ -176,11 +176,11 @@ func TestReconcileStaleBranchArchivesRunOwnedHeadWithoutPatchEquivalence(t *test
 	reconcileGit(t, gateDir, "fetch", work, submittedHead+":refs/heads/feature/reconcile")
 
 	// Without run ownership the changed patch is genuinely unproven.
-	if _, err := ReconcileStaleBranch(ctx, gateDir, work, "feature/reconcile", liveHead, ""); err == nil {
+	if _, err := ReconcileStaleBranch(ctx, gateDir, work, "feature/reconcile", liveHead, AbandonedSubmission{}); err == nil {
 		t.Fatal("changed patch was reconciled without proof of ownership")
 	}
 
-	result, err := ReconcileStaleBranch(ctx, gateDir, work, "feature/reconcile", liveHead, submittedHead)
+	result, err := ReconcileStaleBranch(ctx, gateDir, work, "feature/reconcile", liveHead, AbandonedSubmission{Head: submittedHead})
 	if err != nil {
 		t.Fatalf("run-owned submitted head was refused: %v", err)
 	}
@@ -229,7 +229,7 @@ func TestPlanStaleBranchReconciliationMutatesNothingAndApplyRefusesMovedHead(t *
 	reconcileGit(t, "", "init", "--bare", gateDir)
 	reconcileGit(t, gateDir, "fetch", work, privateHead+":refs/heads/feature/reconcile")
 
-	plan, err := PlanStaleBranchReconciliation(ctx, gateDir, work, "feature/reconcile", liveHead, "")
+	plan, err := PlanStaleBranchReconciliation(ctx, gateDir, work, "feature/reconcile", liveHead, AbandonedSubmission{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -337,7 +337,7 @@ func TestReconcileStaleBranchIncludesPatchesHiddenByMergeSimplification(t *testi
 	gateDir := filepath.Join(t.TempDir(), "gate.git")
 	reconcileGit(t, "", "init", "--bare", gateDir)
 	reconcileGit(t, gateDir, "fetch", work, privateHead+":refs/heads/feature")
-	result, err := ReconcileStaleBranch(context.Background(), gateDir, work, "feature", liveHead, "")
+	result, err := ReconcileStaleBranch(context.Background(), gateDir, work, "feature", liveHead, AbandonedSubmission{})
 	if err != nil || !result.Reconciled {
 		t.Fatalf("merge-contained patch was refused: result=%+v err=%v", result, err)
 	}
@@ -363,7 +363,7 @@ func TestRestoreReconciledBranchPreservesConcurrentRefAndRequiresArchive(t *test
 			gateDir := filepath.Join(t.TempDir(), "gate.git")
 			reconcileGit(t, "", "init", "--bare", gateDir)
 			reconcileGit(t, gateDir, "fetch", work, privateHead+":refs/heads/feature")
-			result, err := ReconcileStaleBranch(context.Background(), gateDir, work, "feature", liveHead, "")
+			result, err := ReconcileStaleBranch(context.Background(), gateDir, work, "feature", liveHead, AbandonedSubmission{})
 			if err != nil || !result.Reconciled {
 				t.Fatalf("reconciliation = %+v, err = %v", result, err)
 			}
@@ -514,7 +514,7 @@ func TestReconcileStaleBranchRefusesPatchesDiscardedByOursMerge(t *testing.T) {
 			gateDir := filepath.Join(t.TempDir(), "gate.git")
 			reconcileGit(t, "", "init", "--bare", gateDir)
 			reconcileGit(t, gateDir, "fetch", work, privateHead+":refs/heads/feature")
-			result, err := ReconcileStaleBranch(context.Background(), gateDir, work, "feature", liveHead, "")
+			result, err := ReconcileStaleBranch(context.Background(), gateDir, work, "feature", liveHead, AbandonedSubmission{})
 			if err == nil || result.Reconciled || !strings.Contains(err.Error(), privateHead) {
 				t.Fatalf("discarded patch accepted or not named: result=%+v err=%v", result, err)
 			}
