@@ -30,6 +30,18 @@ type StaleBranchPlan struct {
 	ArchiveTag           string
 }
 
+// RunOwnedHeads are the only private heads a publishing run may replace without
+// containment proof. Submitted must be Run.SubmittedHeadSHA and Published the
+// run's own durable push binding; any other head needs proof.
+type RunOwnedHeads struct {
+	Submitted string
+	Published string
+}
+
+func (o RunOwnedHeads) owns(head string) bool {
+	return head != "" && (head == strings.TrimSpace(o.Submitted) || head == strings.TrimSpace(o.Published))
+}
+
 // ReconcileStaleBranch plans and immediately applies stale private gate branch
 // reconciliation. It removes the branch only after Git proves the live head
 // contains all of its content, or under the exact submitted-head exception
@@ -48,23 +60,20 @@ func ReconcileStaleBranch(ctx context.Context, gateDir, workDir, branch, liveHea
 // exception, an unproven private head is refused before publication.
 //
 // Rewritten histories require both stable per-file patch identities and final
-// tree survival. runOwnedHead is a policy exception, not containment evidence:
-// publication callers must supply only Run.SubmittedHeadSHA, and fresh
-// submissions must leave it empty. The contract and rationale are owned by
-// docs/src/content/docs/concepts/gate-model.md (Private mirror reconciliation).
+// tree survival. runOwnedHead, when set, must be Run.SubmittedHeadSHA; fresh
+// submissions leave it empty.
 func PlanStaleBranchReconciliation(ctx context.Context, gateDir, workDir, branch, liveHead, runOwnedHead string) (StaleBranchPlan, error) {
-	return planStaleBranchReconciliation(ctx, gateDir, workDir, branch, liveHead, runOwnedHead, false)
+	return planStaleBranchReconciliation(ctx, gateDir, workDir, branch, liveHead, RunOwnedHeads{Submitted: runOwnedHead}, false)
 }
 
-func PlanMirrorPublicationReconciliation(ctx context.Context, gateDir, workDir, branch, liveHead, runOwnedHead string) (StaleBranchPlan, error) {
-	return planStaleBranchReconciliation(ctx, gateDir, workDir, branch, liveHead, runOwnedHead, true)
+func PlanMirrorPublicationReconciliation(ctx context.Context, gateDir, workDir, branch, liveHead string, owned RunOwnedHeads) (StaleBranchPlan, error) {
+	return planStaleBranchReconciliation(ctx, gateDir, workDir, branch, liveHead, owned, true)
 }
 
-func planStaleBranchReconciliation(ctx context.Context, gateDir, workDir, branch, liveHead, runOwnedHead string, preserveDescendants bool) (StaleBranchPlan, error) {
+func planStaleBranchReconciliation(ctx context.Context, gateDir, workDir, branch, liveHead string, owned RunOwnedHeads, preserveDescendants bool) (StaleBranchPlan, error) {
 	var plan StaleBranchPlan
 	branch = strings.TrimSpace(branch)
 	liveHead = strings.TrimSpace(liveHead)
-	runOwnedHead = strings.TrimSpace(runOwnedHead)
 	if branch == "" || liveHead == "" {
 		return plan, fmt.Errorf("reconcile stale gate branch: branch and live head are required")
 	}
@@ -119,7 +128,7 @@ func planStaleBranchReconciliation(ctx context.Context, gateDir, workDir, branch
 			return plan, nil
 		}
 	}
-	if gateHead != runOwnedHead {
+	if !owned.owns(gateHead) {
 		atRiskCommits, err := privateCommitsAbsentFromLive(ctx, gateDir, liveHead, gateHead)
 		if err != nil {
 			return plan, fmt.Errorf("compare private mirror content for %s: %w", branchRef, err)

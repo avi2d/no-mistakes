@@ -108,9 +108,19 @@ as at risk.
 private mirror head that is **exactly equal to `Run.SubmittedHeadSHA`** without
 patch-ID or tree-survival proof. This narrow policy exception permits reviewed
 rebases and conflict resolutions to change the submitted patch. Ownership is
-not containment evidence. The exception does not extend to another recorded
-head, an abbreviated SHA, or an external, newer, or divergent private head.
-Fresh AXI submissions do not receive this exception.
+not containment evidence.
+
+The same exception covers a private mirror head **exactly equal to the run's
+own durable push binding** (`runs.last_pushed_sha`). Publication settles the
+mirror at a head only after the upstream verified it, so a mirror still at that
+head holds nothing but what the run itself published. This is what lets a CI
+merge-conflict repair, which rebases the published head onto a moved base and
+revalidates from Review, replace the run's earlier publication. Agent-created
+or recorded-but-unpublished heads are not covered.
+
+The exception does not extend to another recorded head, another run's
+publication, an abbreviated SHA, or an external, newer, or divergent private
+head. Fresh AXI submissions do not receive this exception.
 
 Reconciliation requires direct private branch and archive refs; symbolic refs,
 including dangling symbolic refs, are refused before containment checks. Ref

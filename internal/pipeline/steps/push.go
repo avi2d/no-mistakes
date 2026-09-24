@@ -150,7 +150,7 @@ func publishRunHead(sctx *pipeline.StepContext, headBeingPushed, localRefUpdate 
 		return err
 	}
 	// Prove the private mirror is safe to reconcile BEFORE anything is
-	// published: outside the exact submitted-head exception, unproven private
+	// published: outside the exact run-owned-head exception, unproven private
 	// content must refuse while the branch is intact. Applying the plan is deferred
 	// until the upstream push is verified, because a refused or failed push is
 	// a designed outcome and a gate left with no branch ref would strand
@@ -246,9 +246,6 @@ func publishRunHead(sctx *pipeline.StepContext, headBeingPushed, localRefUpdate 
 }
 
 // planGateMirrorReconciliation inspects the gate mirror without mutating it.
-// Only the exact submitted head is eligible for the policy exception owned by
-// docs/src/content/docs/concepts/gate-model.md. Do not substitute an agent-created
-// or later recorded head: those still require preservation checks.
 func planGateMirrorReconciliation(ctx context.Context, sctx *pipeline.StepContext, ref, branch, headBeingPushed string) (gatepkg.StaleBranchPlan, error) {
 	var plan gatepkg.StaleBranchPlan
 	if sctx.Repo == nil || strings.TrimSpace(sctx.GateDir) == "" {
@@ -261,18 +258,36 @@ func planGateMirrorReconciliation(ctx context.Context, sctx *pipeline.StepContex
 		}
 		return plan, fmt.Errorf("update gate mirror ref %s before push: stat repository: %w", ref, err)
 	}
-	plan, err := gatepkg.PlanMirrorPublicationReconciliation(ctx, gateDir, sctx.WorkDir, branch, headBeingPushed, runOwnedSubmittedHead(sctx))
+	owned, err := runOwnedHeads(sctx)
+	if err != nil {
+		return plan, fmt.Errorf("update gate mirror ref %s before push: %w", ref, err)
+	}
+	plan, err = gatepkg.PlanMirrorPublicationReconciliation(ctx, gateDir, sctx.WorkDir, branch, headBeingPushed, owned)
 	if err != nil {
 		return gatepkg.StaleBranchPlan{}, fmt.Errorf("update gate mirror ref %s before push: %w", ref, err)
 	}
 	return plan, nil
 }
 
-func runOwnedSubmittedHead(sctx *pipeline.StepContext) string {
-	if sctx.Run.SubmittedHeadSHA == nil {
-		return ""
+// runOwnedHeads reads the durable run because an earlier publication in this
+// same run records its push binding without refreshing sctx.Run. Agent-created
+// or recorded-but-unpublished heads are never run-owned: they still need proof.
+func runOwnedHeads(sctx *pipeline.StepContext) (gatepkg.RunOwnedHeads, error) {
+	run, err := sctx.DB.GetRun(sctx.Run.ID)
+	if err != nil {
+		return gatepkg.RunOwnedHeads{}, fmt.Errorf("load run-owned heads: %w", err)
 	}
-	return strings.TrimSpace(*sctx.Run.SubmittedHeadSHA)
+	if run == nil {
+		return gatepkg.RunOwnedHeads{}, fmt.Errorf("load run-owned heads: run %s not found", sctx.Run.ID)
+	}
+	var owned gatepkg.RunOwnedHeads
+	if run.SubmittedHeadSHA != nil {
+		owned.Submitted = *run.SubmittedHeadSHA
+	}
+	if run.LastPushedSHA != nil {
+		owned.Published = *run.LastPushedSHA
+	}
+	return owned, nil
 }
 
 func updateGateMirrorAfterPush(ctx context.Context, sctx *pipeline.StepContext, ref, headBeingPushed string, mirrorPlan gatepkg.StaleBranchPlan) (err error) {
