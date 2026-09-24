@@ -397,77 +397,83 @@ func TestRestoreReconciledBranchPreservesConcurrentRefAndRequiresArchive(t *test
 	}
 }
 
-func TestReconcileStaleBranchDecision41AExactSubmittedHeadOnly(t *testing.T) {
-	for _, variant := range []string{"exact", "newer", "divergent", "abbreviated", "unknown"} {
-		t.Run(variant, func(t *testing.T) {
-			work := initReconcileRepo(t)
-			base := reconcileGit(t, work, "rev-parse", "HEAD")
-			writeReconcileFile(t, work, "submitted.txt", "submitted content\n")
-			reconcileGit(t, work, "add", "-A")
-			reconcileGit(t, work, "commit", "-m", "submitted work")
-			submittedHead := reconcileGit(t, work, "rev-parse", "HEAD")
-			privateHead := submittedHead
-			ownedHead := submittedHead
-			atRisk := []string{submittedHead}
-			switch variant {
-			case "newer", "divergent":
-				if variant == "divergent" {
-					reconcileGit(t, work, "checkout", "--detach", base)
-					atRisk = nil
-				}
-				writeReconcileFile(t, work, "external.txt", "external content\n")
+func TestReconcileStaleBranchRunOwnedHeadsExactOnly(t *testing.T) {
+	for _, slot := range []string{"submitted", "published"} {
+		for _, variant := range []string{"exact", "newer", "divergent", "abbreviated", "unknown"} {
+			t.Run(slot+"/"+variant, func(t *testing.T) {
+				work := initReconcileRepo(t)
+				base := reconcileGit(t, work, "rev-parse", "HEAD")
+				writeReconcileFile(t, work, "owned.txt", "run-owned content\n")
 				reconcileGit(t, work, "add", "-A")
-				reconcileGit(t, work, "commit", "-m", "external work")
-				privateHead = reconcileGit(t, work, "rev-parse", "HEAD")
-				atRisk = append(atRisk, privateHead)
-			case "abbreviated":
-				ownedHead = submittedHead[:12]
-			case "unknown":
-				ownedHead = ""
-			}
-			reconcileGit(t, work, "checkout", "--detach", base)
-			writeReconcileFile(t, work, "live.txt", "reviewed rewrite\n")
-			reconcileGit(t, work, "add", "-A")
-			reconcileGit(t, work, "commit", "-m", "reviewed rewrite")
-			liveHead := reconcileGit(t, work, "rev-parse", "HEAD")
-			gateDir := filepath.Join(t.TempDir(), "gate.git")
-			reconcileGit(t, "", "init", "--bare", gateDir)
-			reconcileGit(t, gateDir, "fetch", work, privateHead+":refs/heads/feature")
-			plan, err := PlanMirrorPublicationReconciliation(context.Background(), gateDir, work, "feature", liveHead, ownedHead)
-			if variant != "exact" {
-				if err == nil || plan.Reconcile {
-					t.Fatalf("non-exact submitted head exempted: plan=%+v err=%v", plan, err)
+				reconcileGit(t, work, "commit", "-m", "run-owned work")
+				runOwnedHead := reconcileGit(t, work, "rev-parse", "HEAD")
+				privateHead := runOwnedHead
+				ownedHead := runOwnedHead
+				atRisk := []string{runOwnedHead}
+				switch variant {
+				case "newer", "divergent":
+					if variant == "divergent" {
+						reconcileGit(t, work, "checkout", "--detach", base)
+						atRisk = nil
+					}
+					writeReconcileFile(t, work, "external.txt", "external content\n")
+					reconcileGit(t, work, "add", "-A")
+					reconcileGit(t, work, "commit", "-m", "external work")
+					privateHead = reconcileGit(t, work, "rev-parse", "HEAD")
+					atRisk = append(atRisk, privateHead)
+				case "abbreviated":
+					ownedHead = runOwnedHead[:12]
+				case "unknown":
+					ownedHead = ""
 				}
-				for _, commit := range atRisk {
-					if !strings.Contains(err.Error(), commit) {
-						t.Fatalf("missing at-risk commit %s: %v", commit, err)
+				owned := RunOwnedHeads{Submitted: ownedHead}
+				if slot == "published" {
+					owned = RunOwnedHeads{Submitted: base, Published: ownedHead}
+				}
+				reconcileGit(t, work, "checkout", "--detach", base)
+				writeReconcileFile(t, work, "live.txt", "reviewed rewrite\n")
+				reconcileGit(t, work, "add", "-A")
+				reconcileGit(t, work, "commit", "-m", "reviewed rewrite")
+				liveHead := reconcileGit(t, work, "rev-parse", "HEAD")
+				gateDir := filepath.Join(t.TempDir(), "gate.git")
+				reconcileGit(t, "", "init", "--bare", gateDir)
+				reconcileGit(t, gateDir, "fetch", work, privateHead+":refs/heads/feature")
+				plan, err := PlanMirrorPublicationReconciliation(context.Background(), gateDir, work, "feature", liveHead, owned)
+				if variant != "exact" {
+					if err == nil || plan.Reconcile {
+						t.Fatalf("non-exact %s head exempted: plan=%+v err=%v", slot, plan, err)
+					}
+					for _, commit := range atRisk {
+						if !strings.Contains(err.Error(), commit) {
+							t.Fatalf("missing at-risk commit %s: %v", commit, err)
+						}
+					}
+				} else {
+					if err != nil || !plan.Reconcile {
+						t.Fatalf("exact %s-head exception refused: plan=%+v err=%v", slot, plan, err)
 					}
 				}
-			} else {
-				if err != nil || !plan.Reconcile {
-					t.Fatalf("exact submitted-head exception refused: plan=%+v err=%v", plan, err)
+				if got := reconcileGit(t, gateDir, "rev-parse", "refs/heads/feature"); got != privateHead {
+					t.Fatalf("planning moved mirror to %s, want %s", got, privateHead)
 				}
-			}
-			if got := reconcileGit(t, gateDir, "rev-parse", "refs/heads/feature"); got != privateHead {
-				t.Fatalf("planning moved mirror to %s, want %s", got, privateHead)
-			}
-			if got := reconcileGit(t, gateDir, "tag", "--list", "no-mistakes-abandoned/*"); got != "" {
-				t.Fatalf("planning archived head: %s", got)
-			}
-			if variant == "exact" {
-				result, err := ApplyStaleBranchReconciliation(context.Background(), gateDir, plan)
-				if err != nil || !result.Reconciled {
-					t.Fatalf("apply = %+v, err = %v", result, err)
+				if got := reconcileGit(t, gateDir, "tag", "--list", "no-mistakes-abandoned/*"); got != "" {
+					t.Fatalf("planning archived head: %s", got)
 				}
-				if got := reconcileGit(t, gateDir, "rev-parse", result.ArchivedTag); got != submittedHead {
-					t.Fatalf("archive = %s, want exact submitted head %s", got, submittedHead)
+				if variant == "exact" {
+					result, err := ApplyStaleBranchReconciliation(context.Background(), gateDir, plan)
+					if err != nil || !result.Reconciled {
+						t.Fatalf("apply = %+v, err = %v", result, err)
+					}
+					if got := reconcileGit(t, gateDir, "rev-parse", result.ArchivedTag); got != runOwnedHead {
+						t.Fatalf("archive = %s, want exact %s head %s", got, slot, runOwnedHead)
+					}
+					reconcileGit(t, work, "push", gateDir, liveHead+":refs/heads/feature")
+					if got := reconcileGit(t, gateDir, "rev-parse", "refs/heads/feature"); got != liveHead {
+						t.Fatalf("ordinary push = %s, want %s", got, liveHead)
+					}
 				}
-				reconcileGit(t, work, "push", gateDir, liveHead+":refs/heads/feature")
-				if got := reconcileGit(t, gateDir, "rev-parse", "refs/heads/feature"); got != liveHead {
-					t.Fatalf("ordinary push = %s, want %s", got, liveHead)
-				}
-			}
-		})
+			})
+		}
 	}
 }
 
