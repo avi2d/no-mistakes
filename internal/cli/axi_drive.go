@@ -600,7 +600,11 @@ func triggerRun(ctx context.Context, env *axiEnv, branch string, skipSteps []typ
 			priorRunIDs = nil
 		}
 	}
-	reconciliation, err := gate.ReconcileStaleBranch(ctx, env.p.RepoDir(env.repo.ID), ".", branch, submissionHead, "")
+	abandoned, err := abandonedSubmission(env.d, env.repo.ID, branch)
+	if err != nil {
+		return "", fmt.Errorf("prepare private mirror for %q: read the branch's runs: %w", branch, err)
+	}
+	reconciliation, err := gate.ReconcileStaleBranch(ctx, env.p.RepoDir(env.repo.ID), ".", branch, submissionHead, abandoned)
 	if err != nil {
 		return "", fmt.Errorf("prepare private mirror for %q: %w", branch, err)
 	}

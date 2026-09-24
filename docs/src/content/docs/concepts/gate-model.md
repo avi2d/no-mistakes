@@ -120,7 +120,18 @@ or recorded-but-unpublished heads are not covered.
 
 The exception does not extend to another recorded head, another run's
 publication, an abbreviated SHA, or an external, newer, or divergent private
-head. Fresh AXI submissions do not receive this exception.
+head.
+
+A fresh AXI submission receives the exception for exactly one head: the
+submitted head of the branch's latest run, once that run is terminal and its
+push step never started. That run's leftover is the tool's own and was never
+published, so a worker can abort a run before push, drop a commit, and submit
+the branch again; the dropped commit is archived like any reconciled head. The
+exception is withheld while any run on the branch may have published without a
+record (a push step that started and did not complete, or a held push lease),
+and it never covers published content: when a commit the live head lacks is
+reachable from any run's recorded publication for the branch, the ordinary
+containment proof applies.
 
 Reconciliation requires direct private branch and archive refs; symbolic refs,
 including dangling symbolic refs, are refused before containment checks. Ref

@@ -185,9 +185,14 @@ func NewHarness(t *testing.T, opts SetupOpts) *Harness {
 	return h
 }
 
+// writeLoginShellPathSeed puts the fake binaries first on the PATH the daemon's
+// login-shell probe resolves. zsh reads the system zshrc after ~/.zprofile, and
+// one that prepends Homebrew (nix-darwin's runs `brew shellenv`) would otherwise
+// hand every step the real, possibly authenticated gh, so ~/.zlogin, which zsh
+// reads last, repeats the seed.
 func (h *Harness) writeLoginShellPathSeed() {
 	line := "export PATH=" + shellQuote(h.BinDir) + ":$PATH\n"
-	for _, name := range []string{".zshenv", ".zprofile", ".bash_profile", ".profile"} {
+	for _, name := range []string{".zshenv", ".zprofile", ".zlogin", ".bash_profile", ".profile"} {
 		if err := os.WriteFile(filepath.Join(h.HomeDir, name), []byte(line), 0o644); err != nil {
 			h.t.Fatalf("write %s: %v", name, err)
 		}

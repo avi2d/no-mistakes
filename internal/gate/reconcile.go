@@ -42,12 +42,22 @@ func (o RunOwnedHeads) owns(head string) bool {
 	return head != "" && (head == strings.TrimSpace(o.Submitted) || head == strings.TrimSpace(o.Published))
 }
 
+// AbandonedSubmission is the only private head a fresh submission may replace
+// without containment proof. Head must be the submitted head of the branch's
+// latest run, which is terminal and never reached publication, and
+// Publications every head any run published for the branch. Content reachable
+// from a publication still needs proof.
+type AbandonedSubmission struct {
+	Head         string
+	Publications []string
+}
+
 // ReconcileStaleBranch plans and immediately applies stale private gate branch
 // reconciliation. It removes the branch only after Git proves the live head
-// contains all of its content, or under the exact submitted-head exception
-// described in docs/src/content/docs/concepts/gate-model.md.
-func ReconcileStaleBranch(ctx context.Context, gateDir, workDir, branch, liveHead, runOwnedHead string) (StaleBranchReconciliation, error) {
-	plan, err := PlanStaleBranchReconciliation(ctx, gateDir, workDir, branch, liveHead, runOwnedHead)
+// contains all of its content, or when the branch holds exactly an abandoned
+// submission.
+func ReconcileStaleBranch(ctx context.Context, gateDir, workDir, branch, liveHead string, abandoned AbandonedSubmission) (StaleBranchReconciliation, error) {
+	plan, err := PlanStaleBranchReconciliation(ctx, gateDir, workDir, branch, liveHead, abandoned)
 	if err != nil || !plan.Reconcile {
 		return StaleBranchReconciliation{}, err
 	}
@@ -56,21 +66,20 @@ func ReconcileStaleBranch(ctx context.Context, gateDir, workDir, branch, liveHea
 
 // PlanStaleBranchReconciliation inspects a private gate branch and reports
 // whether it must be archived and removed before the live head can enter
-// through an ordinary push. It mutates no ref: outside the submitted-head
+// through an ordinary push. It mutates no ref: outside the abandoned-submission
 // exception, an unproven private head is refused before publication.
 //
 // Rewritten histories require both stable per-file patch identities and final
-// tree survival. runOwnedHead, when set, must be Run.SubmittedHeadSHA; fresh
-// submissions leave it empty.
-func PlanStaleBranchReconciliation(ctx context.Context, gateDir, workDir, branch, liveHead, runOwnedHead string) (StaleBranchPlan, error) {
-	return planStaleBranchReconciliation(ctx, gateDir, workDir, branch, liveHead, RunOwnedHeads{Submitted: runOwnedHead}, false)
+// tree survival.
+func PlanStaleBranchReconciliation(ctx context.Context, gateDir, workDir, branch, liveHead string, abandoned AbandonedSubmission) (StaleBranchPlan, error) {
+	return planStaleBranchReconciliation(ctx, gateDir, workDir, branch, liveHead, RunOwnedHeads{Submitted: abandoned.Head}, abandoned.Publications, false)
 }
 
 func PlanMirrorPublicationReconciliation(ctx context.Context, gateDir, workDir, branch, liveHead string, owned RunOwnedHeads) (StaleBranchPlan, error) {
-	return planStaleBranchReconciliation(ctx, gateDir, workDir, branch, liveHead, owned, true)
+	return planStaleBranchReconciliation(ctx, gateDir, workDir, branch, liveHead, owned, nil, true)
 }
 
-func planStaleBranchReconciliation(ctx context.Context, gateDir, workDir, branch, liveHead string, owned RunOwnedHeads, preserveDescendants bool) (StaleBranchPlan, error) {
+func planStaleBranchReconciliation(ctx context.Context, gateDir, workDir, branch, liveHead string, owned RunOwnedHeads, publications []string, preserveDescendants bool) (StaleBranchPlan, error) {
 	var plan StaleBranchPlan
 	branch = strings.TrimSpace(branch)
 	liveHead = strings.TrimSpace(liveHead)
@@ -128,7 +137,15 @@ func planStaleBranchReconciliation(ctx context.Context, gateDir, workDir, branch
 			return plan, nil
 		}
 	}
-	if !owned.owns(gateHead) {
+	exempt := owned.owns(gateHead)
+	if exempt {
+		published, err := dropsPublishedCommit(ctx, gateDir, liveHead, gateHead, publications)
+		if err != nil {
+			return plan, fmt.Errorf("compare private mirror ref %s with its branch's publications: %w", branchRef, err)
+		}
+		exempt = !published
+	}
+	if !exempt {
 		atRiskCommits, err := privateCommitsAbsentFromLive(ctx, gateDir, liveHead, gateHead)
 		if err != nil {
 			return plan, fmt.Errorf("compare private mirror content for %s: %w", branchRef, err)
@@ -339,6 +356,27 @@ func privateCommitsAbsentFromLive(ctx context.Context, repoDir, liveHead, privat
 		return privateOnly, nil
 	}
 	return atRisk, nil
+}
+
+// dropsPublishedCommit reports whether a commit reachable from privateHead but
+// not from liveHead is reachable from any of publications.
+func dropsPublishedCommit(ctx context.Context, repoDir, liveHead, privateHead string, publications []string) (bool, error) {
+	if len(publications) == 0 {
+		return false, nil
+	}
+	privateOnly, err := git.Run(ctx, repoDir, "rev-list", "--count", privateHead, "^"+liveHead)
+	if err != nil {
+		return false, err
+	}
+	unpublishedArgs := []string{"rev-list", "--count", privateHead, "^" + liveHead}
+	for _, published := range publications {
+		unpublishedArgs = append(unpublishedArgs, "^"+strings.TrimSpace(published))
+	}
+	unpublished, err := git.Run(ctx, repoDir, unpublishedArgs...)
+	if err != nil {
+		return false, err
+	}
+	return unpublished != privateOnly, nil
 }
 
 // liveSidePatchIDs collects per-file patch identities from the live-only
