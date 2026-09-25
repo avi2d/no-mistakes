@@ -51,6 +51,14 @@ const ciMergeConflictFixRules = `- Resolve the merge conflicts by applying the m
 ` + ciFixerClassRules + `
 		- Verify the rebase completes cleanly before finishing.`
 
+const ciMergeResolutionFixRules = additiveMergeResolutionRules + `
+		- Do not make unrelated file edits.
+` + ciFixerClassRules
+
+const ciAppendOnlyRule = `- This branch is published and integrates its base by merging, so it is only ever appended to: add commits on top of it, and never rebase, reset, amend, or otherwise rewrite its history. A repair that rewrites it is refused.`
+
+var errRepairDoesNotAppend = errors.New("CI repair refused")
+
 // repairFromFindings runs one CI fix round over the findings the executor
 // selected for it (sctx.PreviousFindings): the auto-fix subset of the last
 // settled observation for an automatic round, or whatever the human selected
@@ -171,11 +179,33 @@ func (s *CIStep) autoFixCI(sctx *pipeline.StepContext, host scm.Host, pr *scm.PR
 		baseBranch = strings.TrimSpace(pr.BaseBranch)
 	}
 	baseSHA := resolveBranchBaseSHA(ctx, sctx.WorkDir, sctx.Run.BaseSHA, baseBranch)
-	rebaseBaseSHA := resolveRunDefaultBranchTipSHA(ctx, sctx, sctx.Run.BaseSHA, baseBranch)
+	rebaseBaseSHA, baseTipFetched := resolveRunDefaultBranchTip(ctx, sctx, sctx.Run.BaseSHA, baseBranch)
 	promptBaseSHA := baseSHA
 	if mergeConflict {
 		promptBaseSHA = rebaseBaseSHA
 	}
+
+	rebasing := mergeConflict && !mergesMovedBase(sctx)
+	var merge *startedMerge
+	if mergeConflict && mergesMovedBase(sctx) {
+		mergeTarget := rebaseBaseSHA
+		if baseTipFetched {
+			mergeTarget = "origin/" + baseBranch
+		}
+		var err error
+		if merge, err = startMerge(ctx, sctx, mergeTarget); err != nil {
+			return ciRepairResult{}, fmt.Errorf("merge the base branch: %w", err)
+		}
+		if (merge == nil || len(merge.conflicts) == 0) && targets.onlyMergeConflict() {
+			sctx.Log("no merge conflicts left to resolve, skipping the fix agent")
+			repair, err := s.commitRepair(sctx, "")
+			if repair.HeadAdvanced {
+				repair.Summary = "merge the base branch"
+			}
+			return repair, err
+		}
+	}
+	resolvingMerge := merge != nil && len(merge.conflicts) > 0
 
 	const maxLogBytes = 32 * 1024
 	var logOutput string
@@ -187,10 +217,16 @@ func (s *CIStep) autoFixCI(sctx *pipeline.StepContext, host scm.Host, pr *scm.PR
 	var promptIntro string
 	var promptRules string
 	switch {
-	case len(failingNames) > 0 && mergeConflict:
+	case len(failingNames) > 0 && resolvingMerge:
+		promptIntro = "The following CI checks have failed and the PR has merge conflicts with the base branch. Merging the base branch into this branch stopped on conflicts: resolve them and conclude the merge first, then diagnose and fix the CI issues."
+		promptRules = additiveMergeResolutionRules + "\n\t\t" + ciFailingCheckFixRules
+	case len(failingNames) > 0 && rebasing:
 		promptIntro = "The following CI checks have failed and the PR has merge conflicts with the base branch. Diagnose and fix the CI issues, then rebase onto the base branch and resolve the merge conflicts."
 		promptRules = ciFailingCheckFixRules
-	case mergeConflict:
+	case resolvingMerge:
+		promptIntro = "The PR has merge conflicts with the base branch. Merging the base branch into this branch stopped on conflicts: resolve them and conclude the merge."
+		promptRules = ciMergeResolutionFixRules
+	case rebasing:
 		promptIntro = "The PR has merge conflicts with the base branch. Rebase onto the base branch and resolve the merge conflicts."
 		promptRules = ciMergeConflictFixRules
 	case len(failingNames) == 0:
@@ -199,6 +235,9 @@ func (s *CIStep) autoFixCI(sctx *pipeline.StepContext, host scm.Host, pr *scm.PR
 	default:
 		promptIntro = "The following CI checks have failed on this PR. Diagnose and fix the issues."
 		promptRules = ciFailingCheckFixRules
+	}
+	if mergesMovedBase(sctx) {
+		promptRules += "\n\t\t" + ciAppendOnlyRule
 	}
 
 	prompt := fmt.Sprintf(
@@ -220,11 +259,14 @@ Context:
 		sctx.Run.HeadSHA,
 		pr.Number,
 		strings.Join(failingNames, ", "),
-		mergeConflict,
+		rebasing || resolvingMerge,
 		promptRules,
 	)
-	if mergeConflict {
+	if rebasing {
 		prompt += fmt.Sprintf("\n- rebase target commit: %s", rebaseBaseSHA)
+	}
+	if resolvingMerge {
+		prompt += fmt.Sprintf("\n- merge target commit: %s\n- conflicted files: %s", merge.targetSHA, strings.Join(merge.conflicts, ", "))
 	}
 	if logOutput != "" {
 		prompt += fmt.Sprintf(`
@@ -256,7 +298,15 @@ CI logs:
 		OnChunk:    sctx.LogChunk,
 	})
 	if err != nil {
+		if merge != nil {
+			merge.abandon(ctx, sctx)
+		}
 		return ciRepairResult{}, fmt.Errorf("agent CI fix: %w", err)
+	}
+	if merge != nil {
+		if err := merge.prove(ctx, sctx); err != nil {
+			return ciRepairResult{}, fmt.Errorf("merge the base branch: %w", err)
+		}
 	}
 
 	conclusion, conclusionErr := extractCIFixConclusion(result)
@@ -507,10 +557,15 @@ func (s *CIStep) ciFixAgentBudgetOutcome(sctx *pipeline.StepContext, issueDesc s
 	case rebaseInProgress(sctx.Ctx, sctx.WorkDir) || mergeInProgress(sctx.Ctx, sctx.WorkDir):
 		leftover = append(leftover, fmt.Sprintf("The timed-out agent left an unfinished rebase or merge in the run worktree at %s; its partial HEAD is not recorded.", sctx.WorkDir))
 	case headErr == nil && head != "" && head != sctx.Run.HeadSHA:
-		if _, recErr := s.recordLocalRepair(sctx, head); recErr != nil {
+		_, recErr := s.recordLocalRepair(sctx, head)
+		switch {
+		case errors.Is(recErr, errRepairDoesNotAppend):
+			sctx.Log(fmt.Sprintf("timed-out CI repair head %s refused: %v", head, recErr))
+			leftover = append(leftover, fmt.Sprintf("The timed-out agent committed %s; it is not recorded: %v.", shortObjectID(head), recErr))
+		case recErr != nil:
 			sctx.Log(fmt.Sprintf("warning: could not record timed-out CI repair head %s: %v", head, recErr))
 			leftover = append(leftover, fmt.Sprintf("The timed-out agent left a committed head at %s in the run worktree.", shortObjectID(head)))
-		} else {
+		default:
 			sctx.Log("timed-out CI repair head recorded locally; waiting for a decision instead of auto-revalidating")
 			leftover = append(leftover, fmt.Sprintf("The timed-out agent committed %s; it is recorded locally for custody and is not published.", shortObjectID(head)))
 		}
@@ -664,14 +719,16 @@ func ciRepairPolicyDescription(sctx *pipeline.StepContext) string {
 //
 // ci.revalidate_repairs governs intent identically on every path: true asks for
 // revalidation outright, false asks to publish when it is safe to do so. Merge
-// conflict repairs are not carved out - they simply always land in the
-// cannot-be-proven half, because a rebase makes the repaired head a
+// conflict repairs are not carved out. Under rebase.strategy rebase they always
+// land in the cannot-be-proven half, because a rebase makes the repaired head a
 // non-descendant of the reviewed head, resolving a conflict changes the
 // commit's patch-id, and no content-based guard can separate "rebased and
-// resolved" from "dropped the work". Provenance cannot stand in for that proof
-// either: the repair that deleted a reviewed commit in the reproduction behind
-// this rule was authored by the CI repair agent itself. Who wrote the repair
-// says nothing about what it did to the reviewed commits.
+// resolved" from "dropped the work". Under rebase.strategy merge the repair is a
+// merge commit on top of the published head, so ancestry proves it. Provenance
+// cannot stand in for that proof either: the repair that deleted a reviewed
+// commit in the reproduction behind this rule was authored by the CI repair
+// agent itself. Who wrote the repair says nothing about what it did to the
+// reviewed commits.
 //
 // Once recording or publication succeeds, the run's recorded head advances;
 // the two paths differ in whether the repair is published now or held until
@@ -721,6 +778,9 @@ func ciRepairContinuityGap(sctx *pipeline.StepContext, headSHA string) string {
 // Review has approved it again. The CI monitor turns that into a restart at
 // Review.
 func (s *CIStep) recordLocalRepair(sctx *pipeline.StepContext, headSHA string) (ciRepairResult, error) {
+	if err := assertRepairAppendsPublishedHead(sctx, headSHA); err != nil {
+		return ciRepairResult{}, err
+	}
 	if err := updateNonSharedBranchRef(sctx, headSHA); err != nil {
 		return ciRepairResult{}, err
 	}
@@ -739,6 +799,34 @@ func (s *CIStep) recordLocalRepair(sctx *pipeline.StepContext, headSHA string) (
 	return ciRepairResult{HeadAdvanced: true, Revalidate: true}, nil
 }
 
+// A refused head is not left checked out: the worktree goes back to the
+// recorded head so no later round, hand-off, or recovery reads it as the
+// branch's state. An unreadable publication refuses, because nothing then
+// proves the repair appends to it.
+func assertRepairAppendsPublishedHead(sctx *pipeline.StepContext, headSHA string) error {
+	if !mergesMovedBase(sctx) {
+		return nil
+	}
+	run, err := sctx.DB.GetRun(sctx.Run.ID)
+	var cause error
+	switch {
+	case err != nil || run == nil || run.LastPushedSHA == nil || strings.TrimSpace(*run.LastPushedSHA) == "":
+		cause = fmt.Errorf("%w: the run's published head could not be read, so rebase.strategy merge cannot prove the repair appends to it", errRepairDoesNotAppend)
+	case strings.EqualFold(strings.TrimSpace(*run.LastPushedSHA), headSHA):
+		return nil
+	default:
+		published := strings.TrimSpace(*run.LastPushedSHA)
+		if _, err := stepGitRun(sctx, "merge-base", "--is-ancestor", published, headSHA); err == nil {
+			return nil
+		}
+		cause = fmt.Errorf("%w: %s does not contain the published head %s, and rebase.strategy merge only appends to a published branch", errRepairDoesNotAppend, shortObjectID(headSHA), shortObjectID(published))
+	}
+	if rebaseInProgress(sctx.Ctx, sctx.WorkDir) {
+		_, _ = stepGitRun(sctx, "rebase", "--abort")
+	}
+	return restorePreMergeHead(sctx.Ctx, sctx, sctx.Run.HeadSHA, cause)
+}
+
 // publishRepair publishes a continuity-proven repair immediately when
 // ci.revalidate_repairs is false. It uses publishRunHead - the same guarded path
 // the Push step uses, so force-push lease safety, remote verification, and the
@@ -753,6 +841,9 @@ func (s *CIStep) recordLocalRepair(sctx *pipeline.StepContext, headSHA string) (
 // the database write have all succeeded, so a partial failure leaves the run on
 // the pre-repair head and the next fix attempt re-enters this path.
 func (s *CIStep) publishRepair(sctx *pipeline.StepContext, headSHA string) (ciRepairResult, error) {
+	if err := assertRepairAppendsPublishedHead(sctx, headSHA); err != nil {
+		return ciRepairResult{}, err
+	}
 	if err := publishRunHead(sctx, headSHA, headSHA, nil); err != nil {
 		if errors.Is(err, errAttestationWriteFailed) {
 			return ciRepairResult{}, fmt.Errorf("%w at %s: %v", errCIAttestationUnsettled, shortObjectID(headSHA), err)

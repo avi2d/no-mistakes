@@ -372,6 +372,15 @@ func parseCIFixTargets(raw string) (ciFixTargets, error) {
 
 func (t ciFixTargets) empty() bool { return len(t.Findings.Items) == 0 }
 
+func (t ciFixTargets) onlyMergeConflict() bool {
+	for _, item := range t.Findings.Items {
+		if item.Category != types.FindingCategoryCIMergeConflict {
+			return false
+		}
+	}
+	return t.MergeConflict
+}
+
 // description names the round's targets the way the CI step log always has.
 func (t ciFixTargets) checkNames() []string {
 	names := make([]string, 0, len(t.Checks))
