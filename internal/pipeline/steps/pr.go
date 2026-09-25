@@ -547,8 +547,12 @@ func prTitleScopeRules(sctx *pipeline.StepContext) string {
 }
 
 func renderPRTitle(sctx *pipeline.StepContext, title string) (string, error) {
-	if sctx == nil || sctx.Config == nil || sctx.Config.PR.TitleFormat == "" {
+	if sctx == nil || sctx.Config == nil {
 		return conventional.TightenTitle(title), nil
+	}
+	if sctx.Config.PR.TitleFormat == "" {
+		clamped, err := sctx.Config.PR.ClampTitle(conventional.TightenTitle(title))
+		return clamped, err
 	}
 	branch := strings.TrimSpace(strings.TrimPrefix(sctx.Run.Branch, "refs/heads/"))
 	if sctx.Config.PR.RequiresBranch() {
@@ -558,7 +562,11 @@ func renderPRTitle(sctx *pipeline.StepContext, title string) (string, error) {
 			return "", fmt.Errorf("resolve branch identifier for PR title: %w", err)
 		}
 	}
-	return sctx.Config.PR.RenderTitle(branch, title)
+	rendered, err := sctx.Config.PR.RenderTitle(branch, title)
+	if err != nil {
+		return "", err
+	}
+	return sctx.Config.PR.ClampTitle(rendered)
 }
 
 // buildPipelineSection queries step results and rounds from the DB and

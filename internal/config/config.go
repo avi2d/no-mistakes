@@ -198,6 +198,7 @@ type GlobalConfig struct {
 	Commit GlobalCommitRaw
 	Intent GlobalIntentRaw
 	Test   TestRaw
+	PR     GlobalPRRaw
 	// Eval is resolved at load time because it is global-only: it describes
 	// this machine's local eval corpus (disk, retention, whether review rounds
 	// record replay provenance), never a repository policy. Keeping it out of
@@ -235,6 +236,7 @@ type globalConfigRaw struct {
 	Commit                  GlobalCommitRaw            `yaml:"commit"`
 	Intent                  GlobalIntentRaw            `yaml:"intent"`
 	Test                    TestRaw                    `yaml:"test"`
+	PR                      GlobalPRRaw                `yaml:"pr"`
 	Eval                    EvalRaw                    `yaml:"eval"`
 	// Jev is the retired jev.review_assist pre-brief block. The feature was
 	// removed after the offline trial showed its candidate listing cannot
@@ -281,10 +283,10 @@ type RepoConfig struct {
 	AllowRepoCommands bool `yaml:"allow_repo_commands"`
 	// PR carries pull-request settings. BaseBranch controls where a PR lands,
 	// Template and PublishIntent control trusted publication policy, and
-	// TitleFormat controls repository title convention. EffectiveRepoConfig keeps
-	// BaseBranch trusted-only unless the repository opts into pushed settings,
-	// leaves TitleFormat on the pushed branch, and keeps Template and
-	// PublishIntent trusted-only.
+	// TitleFormat and TitleMaxLength control repository title convention.
+	// EffectiveRepoConfig keeps BaseBranch trusted-only unless the repository
+	// opts into pushed settings, leaves TitleFormat and TitleMaxLength on the
+	// pushed branch, and keeps Template and PublishIntent trusted-only.
 	AutoFix AutoFixRaw `yaml:"auto_fix"`
 	CI      CIRaw      `yaml:"ci"`
 	// Rebase is gate-control: EffectiveRepoConfig keeps it trusted-only so a
@@ -380,6 +382,10 @@ type PRRaw struct {
 	// TitleFormat controls PR title rendering when set. It is a non-executing
 	// repository convention and is therefore read from the pushed branch.
 	TitleFormat *string `yaml:"title_format"`
+	// TitleMaxLength caps the published PR title in characters, squash-merge
+	// suffix included. Nil leaves titles unclamped. Like TitleFormat it is a
+	// non-executing repository convention read from the pushed branch.
+	TitleMaxLength *int `yaml:"title_max_length"`
 }
 
 // PathInstruction is one glob-scoped block of review guidance. Path follows the
@@ -779,6 +785,16 @@ type PR struct {
 	// Nil preserves the historical default: publish the extracted intent.
 	PublishIntent *bool
 	TitleFormat   string
+	// Zero leaves titles unclamped: the squash-merge suffix budget applies
+	// only when a limit is configured.
+	TitleMaxLength int
+}
+
+// GlobalPRRaw is the YAML representation of the operator-wide pull-request
+// settings. It carries only knobs that describe this machine's policy across
+// repositories; repository title shape stays per-repo.
+type GlobalPRRaw struct {
+	TitleMaxLength *int `yaml:"title_max_length"`
 }
 
 // Document is the resolved document-step config. Instructions come from the
@@ -2129,6 +2145,9 @@ func LoadGlobalFromBytes(data []byte) (*GlobalConfig, error) {
 	if err := validateRebaseRaw(raw.Rebase); err != nil {
 		return nil, fmt.Errorf("parse global config: %w", err)
 	}
+	if err := validatePRTitleMaxLength(raw.PR.TitleMaxLength, "pr.title_max_length"); err != nil {
+		return nil, fmt.Errorf("parse global config: %w", err)
+	}
 	warnRetiredJev(raw.Jev)
 
 	if len(raw.Agent) > 0 {
@@ -2261,6 +2280,7 @@ func LoadGlobalFromBytes(data []byte) (*GlobalConfig, error) {
 	cfg.Commit = raw.Commit
 	cfg.Intent = raw.Intent
 	cfg.Test = raw.Test
+	cfg.PR = raw.PR
 	cfg.Providers = raw.Providers
 	applyEvalOverrides(&cfg.Eval, &raw.Eval)
 
@@ -2434,6 +2454,9 @@ func validatePRRaw(pr PRRaw) error {
 		if err := validatePRTitleFormat(*pr.TitleFormat); err != nil {
 			return err
 		}
+	}
+	if err := validatePRTitleMaxLength(pr.TitleMaxLength, "pr.title_max_length"); err != nil {
+		return err
 	}
 	return nil
 }
@@ -2609,8 +2632,9 @@ func EffectiveRepoConfig(pushed, trusted *RepoConfig, allowRepoCommands bool) *R
 		effective.Test.AllowApproveOverFailure = trusted.Test.AllowApproveOverFailure
 		// pr.base_branch controls where the contributor's PR lands, so it is
 		// trusted-only unless the repository explicitly opts into pushed
-		// settings alongside commands and agent selection. TitleFormat is a
-		// non-executing convention and remains sourced from the pushed copy.
+		// settings alongside commands and agent selection. TitleFormat and
+		// TitleMaxLength are non-executing conventions and remain sourced from
+		// the pushed copy.
 		// pr.template and pr.publish_intent control public narrative policy, so
 		// they remain trusted-only regardless of the commands opt-in.
 		if !allowRepoCommands {
@@ -3059,6 +3083,13 @@ func Merge(global *GlobalConfig, repo *RepoConfig) *Config {
 	}
 	if repo.PR.TitleFormat != nil {
 		pr.TitleFormat = *repo.PR.TitleFormat
+	}
+	// The pushed branch names its own title budget; the operator's global
+	// value is only the fallback for repositories that set nothing.
+	if repo.PR.TitleMaxLength != nil {
+		pr.TitleMaxLength = *repo.PR.TitleMaxLength
+	} else if global.PR.TitleMaxLength != nil {
+		pr.TitleMaxLength = *global.PR.TitleMaxLength
 	}
 
 	cfg := &Config{

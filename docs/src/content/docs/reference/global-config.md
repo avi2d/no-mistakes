@@ -865,6 +865,19 @@ Malformed replacement syntax fails configuration loading with an actionable erro
 The expanded identifier is subject to the existing UTF-8, control-character, unsafe-Unicode, and rendered-subject validation.
 A repository `commit.branch_pattern` override disables this machine-local replacement so it cannot be applied to a different pattern.
 
+### pr.title_max_length
+
+Operator-wide fallback cap on published PR titles in characters, counting the squash-merge suffix.
+
+| | |
+| --- | --- |
+| Type | `int` character count |
+| Default | Unset, which leaves titles unclamped |
+
+A repository `pr.title_max_length` wins when set.
+The [repo config reference](/no-mistakes/reference/repo-config/#prtitle_max_length) describes the shortening behavior.
+A limit of 90 keeps squash-merged headers within a 100-character commitlint limit in every repository.
+
 ### intent
 
 Transcript-based user-intent extraction settings.

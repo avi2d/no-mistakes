@@ -36,6 +36,10 @@ const (
 	maxPRTitleFormatBytes        = 1024
 	maxPRTitleFormatPlaceholders = 16
 	maxPRTitleBytes              = 4096
+	// GitHub appends " (#NNN)" to the title on squash-merge and commitlint
+	// counts it against the header limit, so the clamp reserves room for a
+	// six-digit PR number.
+	prTitleSquashSuffixReserveChars = 10
 )
 
 type prTitleData struct {
@@ -146,6 +150,54 @@ func validateRenderedPRTitle(title string) error {
 		return fmt.Errorf("pr.title_format must render to a non-empty title")
 	}
 	return nil
+}
+
+func validatePRTitleMaxLength(maxLength *int, name string) error {
+	if maxLength == nil {
+		return nil
+	}
+	if *maxLength <= 0 {
+		return fmt.Errorf("%s must be positive", name)
+	}
+	return nil
+}
+
+// ClampTitle shortens title to TitleMaxLength characters with room left for
+// the squash-merge suffix. Zero leaves the title unchanged. The cut keeps a
+// leading "prefix: " whole and stops at a word boundary, so a conventional
+// type and scope never split.
+func (p PR) ClampTitle(title string) (string, error) {
+	if p.TitleMaxLength <= 0 {
+		return title, nil
+	}
+	budget := p.TitleMaxLength - prTitleSquashSuffixReserveChars
+	if utf8.RuneCountInString(title) <= budget {
+		return title, nil
+	}
+	if budget <= 0 {
+		return "", fmt.Errorf("pr.title_max_length %d leaves no room for a title once the squash-merge suffix is counted", p.TitleMaxLength)
+	}
+	if i := strings.Index(title, ": "); i >= 0 {
+		prefix := title[:i+2]
+		keep := budget - utf8.RuneCountInString(prefix)
+		if keep <= 0 {
+			return "", fmt.Errorf("pr.title_max_length %d leaves no room for the %q title prefix", p.TitleMaxLength, strings.TrimSuffix(prefix, ": "))
+		}
+		return prefix + cutWords(title[i+2:], keep), nil
+	}
+	return cutWords(title, budget), nil
+}
+
+func cutWords(text string, keep int) string {
+	runes := []rune(strings.TrimSpace(text))
+	if len(runes) <= keep {
+		return string(runes)
+	}
+	runes = runes[:keep]
+	if i := strings.LastIndex(string(runes), " "); i >= 0 {
+		runes = []rune(strings.TrimRight(string(runes[:i]), " "))
+	}
+	return string(runes)
 }
 
 // RequiresBranch reports whether configured PR title format uses the branch
