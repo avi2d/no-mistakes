@@ -543,21 +543,34 @@ func tryMerge(ctx context.Context, sctx *pipeline.StepContext, targetRef string)
 	return nil, nil
 }
 
-// mergeWithAgent is merge mode's counterpart to rebaseWithAgent: it merges
-// targetRef into the branch and hands any conflicts to the agent.
-//
-// The resolution prompt differs from the rebase one in the constraint it
-// carries. "Minimal necessary changes" is satisfied by deleting whichever side
-// is in the way, and a rebase leaves no evidence that anything was deleted. A
-// merge commit does, so the prompt asks for the resolution that commit can
-// actually be audited against: keep what both sides introduced.
-func mergeWithAgent(ctx context.Context, sctx *pipeline.StepContext, targetRef string) error {
+// additiveMergeResolutionRules is the resolution every merge-conflict resolver
+// is held to. "Minimal necessary changes" is satisfied by deleting whichever
+// side is in the way, and a rebase leaves no evidence that anything was
+// deleted. A merge commit does, so the rules ask for the resolution that commit
+// can actually be audited against: keep what both sides introduced.
+const additiveMergeResolutionRules = `- Resolve ADDITIVELY. Keep both sides' introduced content; never delete content one side introduced to make the merge apply. Where both sides changed the same lines, combine them so neither side's contribution is lost.
+- Only where the two sides are genuinely mutually exclusive may one supersede the other, and then say which and why in the summary.
+- After resolving each file, stage it with: git add <file>
+- After all conflicts are resolved, conclude the merge with: git commit --no-edit`
+
+// startedMerge is a merge of targetRef that startMerge began in the worktree.
+// conflicts is empty when git concluded the merge on its own; otherwise the
+// merge is still in progress, stopped on those files.
+type startedMerge struct {
+	targetRef    string
+	preMergeHead string
+	targetSHA    string
+	conflicts    []string
+}
+
+// startMerge returns nil when shouldSkipRebase leaves nothing to merge.
+func startMerge(ctx context.Context, sctx *pipeline.StepContext, targetRef string) (*startedMerge, error) {
 	skip, err := shouldSkipRebase(ctx, sctx, targetRef)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if skip {
-		return nil
+		return nil, nil
 	}
 
 	// Snapshot what the merge must prove before it runs. The target is pinned
@@ -566,22 +579,39 @@ func mergeWithAgent(ctx context.Context, sctx *pipeline.StepContext, targetRef s
 	// merge that actually landed.
 	preMergeHead, err := git.HeadSHA(ctx, sctx.WorkDir)
 	if err != nil {
-		return fmt.Errorf("get pre-merge head: %w", err)
+		return nil, fmt.Errorf("get pre-merge head: %w", err)
 	}
 	targetSHA, err := git.Run(ctx, sctx.WorkDir, "rev-parse", targetRef)
 	if err != nil {
-		return fmt.Errorf("get target head %s: %w", targetRef, err)
+		return nil, fmt.Errorf("get target head %s: %w", targetRef, err)
 	}
+	merge := &startedMerge{targetRef: targetRef, preMergeHead: preMergeHead, targetSHA: targetSHA}
 
 	sctx.Log(fmt.Sprintf("merging %s...", targetRef))
 	if _, err := git.Run(ctx, sctx.WorkDir, mergeArgs(targetRef)...); err == nil {
-		return nil
+		return merge, nil
 	}
 
-	conflictFiles := rebaseConflictFiles(ctx, sctx.WorkDir)
-	if len(conflictFiles) == 0 {
+	merge.conflicts = rebaseConflictFiles(ctx, sctx.WorkDir)
+	if len(merge.conflicts) == 0 {
 		_, _ = git.Run(ctx, sctx.WorkDir, "merge", "--abort")
-		return fmt.Errorf("merge %s failed (no conflicts detected)", targetRef)
+		return nil, fmt.Errorf("merge %s failed (no conflicts detected)", targetRef)
+	}
+	return merge, nil
+}
+
+func (m *startedMerge) abandon(ctx context.Context, sctx *pipeline.StepContext) {
+	if mergeInProgress(ctx, sctx.WorkDir) {
+		_, _ = git.Run(ctx, sctx.WorkDir, "merge", "--abort")
+	}
+}
+
+// mergeWithAgent is merge mode's counterpart to rebaseWithAgent: it merges
+// targetRef into the branch and hands any conflicts to the agent.
+func mergeWithAgent(ctx context.Context, sctx *pipeline.StepContext, targetRef string) error {
+	merge, err := startMerge(ctx, sctx, targetRef)
+	if err != nil || merge == nil || len(merge.conflicts) == 0 {
+		return err
 	}
 	sctx.Log("conflicts detected, asking agent to resolve...")
 
@@ -593,16 +623,14 @@ Current conflicted files:
 
 Instructions:
 - Find all conflicting files and resolve the conflict markers (<<<<<<< ======= >>>>>>>).
-- Resolve ADDITIVELY. Keep both sides' introduced content; never delete content one side introduced to make the merge apply. Where both sides changed the same lines, combine them so neither side's contribution is lost.
-- Only where the two sides are genuinely mutually exclusive may one supersede the other, and then say which and why in the summary.
-- After resolving each file, stage it with: git add <file>
-- After all conflicts are resolved, conclude the merge with: git commit --no-edit
+%s
 - Do not modify any files that don't have conflicts.
 - Preserve the intent of both the current branch changes and the upstream changes.
 - Return JSON with a single "summary" field describing what you resolved.
 - Keep the summary under 10 words.`,
 		targetRef,
-		strings.Join(conflictFiles, "\n- "),
+		strings.Join(merge.conflicts, "\n- "),
+		additiveMergeResolutionRules,
 	)
 	if sctx.PreviousFindings != "" {
 		prompt += "\n\nPrevious findings:\n" + sctx.PreviousFindings
@@ -618,9 +646,17 @@ Instructions:
 		OnChunk:    sctx.LogChunk,
 	})
 	if err != nil {
-		_, _ = git.Run(ctx, sctx.WorkDir, "merge", "--abort")
+		merge.abandon(ctx, sctx)
 		return fmt.Errorf("agent resolve conflicts: %w", err)
 	}
+	return merge.prove(ctx, sctx)
+}
+
+// prove checks, after a resolver has finished with the merge, that the branch
+// really is the merge of preMergeHead and targetSHA, restoring the worktree to
+// preMergeHead when it is not.
+func (m *startedMerge) prove(ctx context.Context, sctx *pipeline.StepContext) error {
+	targetRef, preMergeHead, targetSHA := m.targetRef, m.preMergeHead, m.targetSHA
 
 	// An unconcluded merge would leave MERGE_HEAD set and the index conflicted,
 	// so the run would carry the reviewed head forward as if nothing happened.
