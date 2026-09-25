@@ -13,7 +13,8 @@ The daemon also reads `document.instructions`, `review.path_instructions`, `gate
 If the default branch cannot be fetched and resolved to a readable commit, or its present `.no-mistakes.yaml` cannot be read and parsed, the run aborts before launching an agent.
 A readable default-branch tree with no `.no-mistakes.yaml` is valid and uses defaults.
 Commit the gate-control settings you want to your default branch.
-Non-executing fields (`ignore_patterns`, `auto_fix`, `commit`, `intent`, `test`, `pr.title_format`, and `providers`) are still read from the pushed branch, except `test.instructions`, `test.allow_approve_over_failure`, and `test.evidence.branch`.
+Non-executing fields are still read from the pushed branch: `ignore_patterns`, `auto_fix`, `commit`, `intent`, `test`, `pr.title_format`, `pr.title_max_length`, and `providers`.
+Three test fields stay trusted-only regardless: `test.instructions`, `test.allow_approve_over_failure`, and `test.evidence.branch`.
 
 If you genuinely want per-branch `commands` and `agent` (for example, a single-developer repo where you trust your own feature branches), opt in with [`allow_repo_commands: true`](#allow_repo_commands) in this same file on your default branch. This re-enables the previous behavior with eyes open. The switch is read only from the trusted default-branch copy, so a contributor cannot self-enable it from a pushed branch.
 :::
@@ -64,6 +65,9 @@ disable_project_settings: true
 pr:
   base_branch: develop
   # title_format: "{{.Branch}}: {{.Title}}"
+  # title_max_length caps the published title in characters, squash-merge
+  # suffix included. Unset leaves titles unclamped.
+  # title_max_length: 90
 
 auto_fix:
   rebase: 3
@@ -304,6 +308,24 @@ Providers can impose lower publication limits. GitLab titles are checked at its 
 If a format requires `{{.Branch}}` but the branch pattern finds no identifier, PR publication fails safely instead of publishing a malformed title.
 
 When this setting is omitted, no-mistakes keeps its default conventional commit title behavior, including release type guidance and title tightening.
+
+### pr.title_max_length
+
+Cap the published PR title in characters, counting the squash-merge suffix.
+
+| | |
+| --- | --- |
+| Type | `int` character count |
+| Default | Unset, which leaves titles unclamped |
+| Trust | Pushed branch, like `pr.title_format`. A global `pr.title_max_length` is the fallback for repositories that set nothing |
+
+GitHub appends ` (#NNN)` to the title on squash-merge and commitlint counts it against the header limit.
+The clamp reserves 10 characters for that suffix.
+It shortens the description at a word boundary.
+It keeps a leading `prefix: ` whole, so a conventional type and scope never split.
+It applies after `pr.title_format` rendering, to created and updated pull requests alike.
+A limit that leaves no room for the title prefix fails PR publication instead of publishing a truncated prefix.
+A limit of 90 keeps squash-merged headers within a 100-character commitlint limit.
 
 ### commands.prepare
 
