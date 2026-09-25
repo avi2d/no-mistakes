@@ -27,6 +27,8 @@ var canonicalStaleMonitorPhrases = []string{
 	"never hand-rebase",
 	"revalidates from Review",
 	"cannot prove continuity with the reviewed head",
+	"rebase.strategy: merge",
+	"merges the base into the published head",
 	"re-pushes",
 	"no-mistakes rerun",
 }

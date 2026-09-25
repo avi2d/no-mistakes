@@ -284,8 +284,10 @@ hits a merge conflict after checks pass - commonly because another PR merged
 first - needs **no command from you**: never hand-rebase. When the CI monitor
 sees an actual conflict it **rebases onto the base, resolves it, revalidates from Review
 because rebasing cannot prove continuity with the reviewed head, and re-pushes
-the branch through Push**; a PR that is merely behind but still clean needs nothing
-either, since the platform merges it. The one exception is when that monitor is
+the branch through Push**. Under `rebase.strategy: merge` it instead
+**merges the base into the published head** and re-pushes that as a fast-forward.
+A PR that is merely behind but still clean needs nothing either, since the
+platform merges it. The one exception is when that monitor is
 no longer running - the PR was closed, the run was aborted or superseded, it
 idle-timed-out, or its auto-fix attempts were exhausted - in which case recover
 with `no-mistakes rerun`, subject to the clean-head check above. An accepted

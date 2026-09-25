@@ -654,7 +654,13 @@ Continuity is proven when the repaired head is the run's durably review-approved
 
 CI repair publication uses the same settlement order as Push. The [CI step reference](/no-mistakes/reference/pipeline-steps/#ci) owns the publication and retry behavior.
 
-**Merge-conflict repairs always revalidate, under either setting.** They are not carved out - they simply always land in the cannot-be-proven half. A conflict repair rebases, so the repaired head is never a descendant of the reviewed head; resolving a conflict changes the commit's patch-id; and no content-based guard can separate "rebased and resolved" from "dropped the work". Revalidating is what keeps that safe: the rewritten head is not published until Review has approved it, so the reviewed commits stay on the remote in the meantime.
+**Merge-conflict repairs follow [`rebase.strategy`](#rebasestrategy).**
+They are not carved out.
+Under the default `rebase`, they always land in the cannot-be-proven half, under either `revalidate_repairs` setting.
+A conflict repair there rebases, so the repaired head is never a descendant of the reviewed head.
+Resolving a conflict also changes the commit's patch-id, and no content-based guard can separate "rebased and resolved" from "dropped the work".
+Revalidating keeps that safe, because the rewritten head is not published until Review has approved it, so the reviewed commits stay on the remote in the meantime.
+Under `merge`, a conflict repair is a merge commit on top of the published head, so its continuity is plain ancestry and it follows the same rule as any other repair.
 
 Provenance is deliberately not accepted as a substitute for that proof. In the reproduction this rule exists for, the repair that deleted a reviewed commit was authored by no-mistakes' own CI repair agent: it reset to the rebase base, left a clean tree, and the pipeline reported success while the remote lost the work. Who wrote a repair says nothing about what it did to the reviewed commits.
 
@@ -663,7 +669,8 @@ The tradeoff `true` buys is cost against an unreviewed repair:
 | | `false` (default) | `true` |
 |---|---|---|
 | Ordinary repair that builds on the reviewed head | published immediately, one agent round | revalidated: one agent round plus a full Review, Test, Document, Lint, Push, PR pass |
-| Merge-conflict repair | revalidated | revalidated |
+| Merge-conflict repair under `rebase.strategy: rebase` | revalidated | revalidated |
+| Merge-conflict repair under `rebase.strategy: merge` | published immediately, as a fast-forward | revalidated |
 | Ordinary repair is reviewed before it reaches the PR | no | yes |
 | Steps that re-run when a repair revalidates | Review onward; Intent and Rebase do not | same |
 | Run identity | unchanged; a restart is a same-run rewind | same |
@@ -681,7 +688,7 @@ With no trusted copy of this file, the operator's global value applies, then the
 
 ### rebase.strategy
 
-How the [Rebase step](/no-mistakes/reference/pipeline-steps/#rebase) integrates a base branch that moved under the gated branch.
+How the [Rebase step](/no-mistakes/reference/pipeline-steps/#rebase) and the [CI step](/no-mistakes/reference/pipeline-steps/#ci)'s merge-conflict repair integrate a base branch that moved under the gated branch.
 
 | | |
 |---|---|
@@ -708,7 +715,9 @@ The two differ in what survives the integration, which matters in three places:
 | Evidence of what a conflict resolution did | none; the result is just commits | the merge commit's two parents and their merge base |
 | Cost | none | one merge commit per integration |
 
-Integration publishes as a fast-forward under `merge`. A CI merge-conflict repair is the exception: it rebases onto the base branch whichever strategy is set, so that repair still force-pushes and still revalidates in full.
+Integration publishes as a fast-forward under `merge`, and that includes a CI merge-conflict repair.
+The CI step merges the PR's base branch into the published head the same way the Rebase step does, holds the conflict resolution to the same additive rule, and refuses any CI repair whose head no longer contains the published head.
+Under `rebase`, that repair rebases, force-pushes, and revalidates in full.
 
 **Continuity.** The CI step publishes a repair without a full revalidation cycle only when it can prove the repaired head continues the reviewed head (see [`ci.revalidate_repairs`](#cirevalidate_repairs)). Under `merge` that proof is plain ancestry, because the reviewed head is a parent. Under `rebase` there is nothing to prove it with.
 

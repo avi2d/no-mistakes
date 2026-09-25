@@ -156,6 +156,7 @@ When the pipeline applied fixes, successful outcomes include a `fixes` table lis
 
 If that PR later falls behind the default branch or hits a merge conflict - commonly because another PR merged first - the agent runs no command and must never hand-rebase.
 The CI monitor stays live in the background after checks pass, and when it sees an actual conflict it rebases onto the base, resolves it, revalidates from Review because rebasing cannot prove continuity with the reviewed head, and re-pushes the branch through Push, so no agent or user action is needed.
+Under [`rebase.strategy: merge`](/no-mistakes/reference/repo-config/#rebasestrategy), it instead merges the base into the published head and re-pushes that as a fast-forward.
 A PR that is merely behind but still clean needs nothing either, since the platform merges it.
 The one exception is when that monitor is no longer running - the PR was closed, the run was aborted or superseded, it idle-timed-out, or its auto-fix attempts were exhausted - in which case see [`no-mistakes rerun`](/no-mistakes/reference/cli/#no-mistakes-rerun) for the restart conditions.
 The agent must not use `no-mistakes axi run` to refresh a still-active PR: after `checks-passed` it reattaches to the running monitor with HEAD unchanged and returns the monitor output without rebasing.
