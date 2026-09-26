@@ -8,11 +8,109 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/kunchenguid/no-mistakes/internal/db"
 	"github.com/kunchenguid/no-mistakes/internal/paths"
 	"github.com/kunchenguid/no-mistakes/internal/types"
 )
+
+// The housekeeping fixture adds a line to NOTES.md on every pass, the way a
+// model finds one more doc to touch each time it rereads the same change.
+// Push sends the documented tree back to Review for the recorded decision,
+// and the run must publish that re-approved tree rather than rewrite it again.
+func TestRecordedFixDecisionRevalidationPublishesAfterRepeatedHousekeeping(t *testing.T) {
+	scenario := axiScenario(t)
+	h := NewHarness(t, SetupOpts{Agent: "claude", Scenario: scenario})
+	h.CommitChange("init-housekeeping", "seed.txt", "seed\n", "seed")
+	if out, err := h.Run("init"); err != nil {
+		t.Fatalf("init: %v\n%s", err, out)
+	}
+	const branch = "feature/repeated-housekeeping"
+	h.CommitChange(branch, "NOTES.md", "note\n", "add notes")
+	h.CommitChange(branch, "feature.txt", "original\n", "add original identifier")
+	operator := h.AddWorktree(branch)
+	out, err := h.RunInDir(operator, "axi", "run", "--intent", "Add the identifier")
+	if err != nil || !strings.Contains(out, "axi-1") {
+		t.Fatalf("initial decision gate: %v\n%s", err, out)
+	}
+	const content = `actions:
+  - match: "Investigate previous review findings"
+    edits:
+      - path: feature.txt
+        new: "decided\n"
+    structured:
+      summary: "use the decided prefix"
+  - match: "Perform the combined documentation and lint housekeeping pass"
+    edits:
+      - path: NOTES.md
+        old: "note\n"
+        new: "note\nnote\n"
+    structured:
+      findings: []
+      summary: "note the decided prefix"
+  - structured:
+      findings: []
+      summary: "clean"
+      risk_level: low
+      risk_rationale: "clean"
+      risk_scope: source-or-external
+      tested: ["fixture: checked identifier"]
+      testing_summary: "fixture validation completed"
+      scenarios:
+        - name: "fixture identifier check"
+          result: pass
+          live: true
+          evidence: "fixture validation"
+          reason: ""
+      verdict: go
+      artifacts: []
+      title: "fix: use the decided identifier"
+      body: "Use the decided identifier."
+`
+	if err := os.WriteFile(scenario, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err = h.RunInDir(operator, "axi", "respond", "--action", "fix", "--findings", "axi-1", "--instructions", "Use decided as the identifier prefix.")
+	if err != nil || !strings.Contains(out, "outcome: passed") {
+		t.Fatalf("run did not publish after recorded-decision revalidation: %v\n%s", err, out)
+	}
+
+	run := h.ActiveRun(branch)
+	if run == nil {
+		run = h.WaitForRun(branch, 5*time.Second)
+	}
+	database, err := db.Open(paths.WithRoot(h.NMHome).DB())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	record, err := database.GetRun(run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	published := h.UpstreamBranchSHA(branch)
+	if record.ReviewApprovedHeadSHA == nil || *record.ReviewApprovedHeadSHA != published {
+		t.Fatalf("published %s, review approved %v", published, record.ReviewApprovedHeadSHA)
+	}
+	notes, gitErr := h.runGit(t.Context(), h.UpstreamDir, "show", "refs/heads/"+branch+":NOTES.md")
+	if gitErr != nil || string(notes) != "note\nnote\n" {
+		t.Fatalf("published NOTES.md = %q, %v; want exactly one housekeeping edit", notes, gitErr)
+	}
+	var housekeeping, reviews int
+	for _, invocation := range h.AgentInvocations() {
+		switch {
+		case strings.Contains(invocation.Prompt, "Perform the combined documentation and lint housekeeping pass"):
+			housekeeping++
+		case strings.Contains(invocation.Prompt, "Review the code changes and return structured findings"):
+			reviews++
+		}
+	}
+	if housekeeping != 1 || reviews < 3 {
+		t.Fatalf("housekeeping passes = %d, reviews = %d; want one housekeeping pass and a revalidating review", housekeeping, reviews)
+	}
+	t.Logf("published %s = review-approved head; housekeeping passes=%d reviews=%d", published, housekeeping, reviews)
+}
 
 // Drives the real CLI, daemon, SQLite rounds and Git publication boundary.
 // The fixture models an imperfect Test fixer and an independent reviewer;
