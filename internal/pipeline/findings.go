@@ -625,6 +625,50 @@ func resolveVerifiedFindingsJSON(outstandingRaw string, pendingIDs []string, rev
 	return encoded
 }
 
+// dropDeletedFileFindingsForIDsJSON closes every finding in ids whose named
+// file is absent from the worktree at fileExists's head. Scope is limited to
+// ids (the round's pending verification set): a fix round can delete the
+// whole file a SELECTED finding named, leaving a later rereview nothing to
+// cover, and resolveVerifiedFindingsJSON's ReviewedPaths coverage requirement
+// would otherwise keep such a finding pending forever. A finding the operator
+// never selected is untouched here and keeps the ordinary carry rule; a
+// file-less finding is unaffected, since there is nothing to check.
+func dropDeletedFileFindingsForIDsJSON(raw string, ids []string, fileExists func(path string) bool) string {
+	if raw == "" || len(ids) == 0 {
+		return raw
+	}
+	findings, err := types.ParseFindingsJSON(raw)
+	if err != nil {
+		return raw
+	}
+	pending := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		if id != "" {
+			pending[id] = true
+		}
+	}
+	filtered := types.FindingsMetadata(findings)
+	for _, item := range findings.Items {
+		if pending[item.ID] {
+			if file := normalizeCoveredPath(item.File); file != "" && !fileExists(file) {
+				continue
+			}
+		}
+		filtered.Items = append(filtered.Items, item)
+	}
+	if len(filtered.Items) == len(findings.Items) {
+		return raw
+	}
+	if len(filtered.Items) == 0 {
+		return ""
+	}
+	encoded, err := types.MarshalFindingsJSON(filtered)
+	if err != nil {
+		return raw
+	}
+	return encoded
+}
+
 // mergeOutstandingFindingsJSON merges one review round's output into the
 // append-only outstanding set.
 //
