@@ -3,7 +3,9 @@ package branchsync
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/kunchenguid/no-mistakes/internal/custody"
 	"github.com/kunchenguid/no-mistakes/internal/db"
@@ -171,5 +173,43 @@ func TestRecoverKeepLocalRefusesUnverifiedTerminalHeadWithConflictingAnchor(t *t
 	}
 	if got := mustRun(t, f.gate, "for-each-ref", "--format=%(refname) %(objectname)"); got != gateRefsBefore {
 		t.Fatalf("refusal changed gate refs: %q != %q", got, gateRefsBefore)
+	}
+}
+
+func TestRecoverKeepLocalReleasesStackWithAnAnchorableUnverifiedRun(t *testing.T) {
+	t.Parallel()
+
+	f := newRecoverFixture(t, types.RunCancelled)
+	if err := f.db.UpdateRunStatus(f.run.ID, types.RunFailed); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(1100 * time.Millisecond)
+	newest, err := f.db.InsertRun(f.repo.ID, "feature/recover", f.submitted, f.base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.db.UpdateRunStatusWithVerifiedHead(newest.ID, types.RunFailed, strings.Repeat("f", 40)); err != nil {
+		t.Fatal(err)
+	}
+	if older, err := f.db.GetRun(f.run.ID); err != nil || older.TerminalHeadVerifiedAt != nil {
+		t.Fatalf("older run = %#v (err %v), want an unverified terminal head", older, err)
+	}
+
+	state := f.service.InspectCached(f.ctx)
+	if state.Pipeline.RunID != newest.ID || state.NextAction == nil || state.NextAction.Command != "no-mistakes axi sync --recover --keep-local" {
+		t.Fatalf("stack with an anchorable unverified run = %#v", state)
+	}
+	kept := f.service.Recover(f.ctx, true)
+	if !kept.Recovered {
+		t.Fatalf("stack keep-local recovery = %#v", kept)
+	}
+	if got := mustRun(t, f.gate, "rev-parse", f.anchorRef()+"^{commit}"); got != f.preserved {
+		t.Fatalf("unverified run's recorded head anchor = %s, want %s", got, f.preserved)
+	}
+	for _, id := range []string{f.run.ID, newest.ID} {
+		run, err := f.db.GetRun(id)
+		if err != nil || run == nil || run.CustodyReturnedAt == nil {
+			t.Fatalf("run %s custody = %#v, %v", id, run, err)
+		}
 	}
 }
