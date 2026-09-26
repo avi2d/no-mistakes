@@ -39,7 +39,15 @@ Declines and earlier-run context are advisory and fail open. This history tells 
 
 Positive human `fix` selections bind subsequent work in the same run. Review and Test receive their complete selected findings and user instructions as acceptance criteria, ahead of conflicting original intent or legacy tests. Independent Review reports a source-backed assessment for every recorded fix decision, even when the decision's path is ignored or a reversal leaves no net diff. Missing, contradicted, or unverified assessments produce named `ask-user` findings; an empty ordinary findings list cannot certify those decisions. Selecting one of those findings for Fix clears it only when the fresh Review returns exactly one matching `satisfied` assessment with nonblank evidence, including for decisions whose path is ignored, absent from the current diff, or unspecified. Unreadable decision data refuses validation instead of silently omitting criteria; the authoritative criteria are not truncated to the advisory history budget. Later explicit human rulings can supersede earlier decisions.
 
-For runs with those positive selections, Push compares the final local tree (including Test, documentation, lint, and formatter edits) with the last review-approved tree. A changed tree or a decision made after that Review restarts the existing pipeline at Review before publication, preserving the run, history, and automatic-fix budgets. If downstream steps change the tree again after this revalidation, the run refuses publication instead of repeating the cycle indefinitely; a newer explicit fix decision permits a new revalidation. No separate conformance agent runs. Runs without positive selections and unchanged trees with already-reviewed decisions do not acquire an extra Review. Explicit approval at the existing gate remains the operator's decision. CI repair publication follows its separate policy below.
+For runs with those positive selections, Push compares the final local tree, including Test, documentation, lint, and formatter edits, with the last review-approved tree.
+A changed tree or a decision made after that Review restarts the existing pipeline at Review before publication, preserving the run, history, and automatic-fix budgets.
+Document and agent-driven Lint skip the tree Push sent back to Review, because their earlier passes produced it.
+If a later step still changes a tree that Review revalidated at Push's request, the run refuses publication instead of repeating the cycle indefinitely.
+A different approved tree, such as one produced by a Review fix or a revalidating CI repair, gets its own revalidation, and a newer explicit fix decision permits one too.
+No separate conformance agent runs.
+Runs without positive selections and unchanged trees with already-reviewed decisions do not acquire an extra Review.
+Explicit approval at the existing gate remains the operator's decision.
+CI repair publication follows its separate policy below.
 
 ## Intent
 
@@ -182,11 +190,12 @@ Updates matching documentation for code changes and reports only unresolved gaps
 
 **Behavior:**
 
-- Diffs the base commit against head and skips the step if there are no non-ignored changed files to document
+- Diffs the base commit against head and skips the step if there are no non-ignored changed files to document, or if the worktree holds a tree the [recorded-fix-decision revalidation boundary](#finding-decision-history) already sent back to Review
 - Asks the agent to find every documentation gap, update docs or doc comments for all gaps it can resolve, verify its edits, and commit any documentation changes under the placement policy
 - The placement policy gives each fact one authoritative owner, prefers removing stale duplicates or replacing them with pointers, avoids new documentation surfaces for perceived gaps, and keeps durable incident lessons near their owner instead of in `AGENTS.md`
 - `document.instructions` can add trusted default-branch ownership rules for the repository
-- When `commands.lint` is empty, performs documentation and agent-driven lint in one combined housekeeping invocation, categorizing findings for the document or lint gate; if that pass is skipped, its structured output is unusable, or a daemon restart loses the in-memory result, lint runs its own agent pass instead
+- When `commands.lint` is empty, performs documentation and agent-driven lint in one combined housekeeping invocation, categorizing findings for the document or lint gate.
+  If that pass is skipped, its structured output is unusable, or a daemon restart loses the in-memory result, lint runs its own agent pass instead, unless the tree is one the revalidation boundary already sent back to Review.
 - Includes user intent when available
 - Returns findings only for unresolved documentation gaps or human judgment calls
 - Requires approval whenever any unresolved documentation finding is returned, including `info` findings
@@ -203,7 +212,8 @@ Runs linters and static analysis.
 **Behavior:**
 
 - If `commands.lint` is set: ensures [`commands.prepare`](/no-mistakes/reference/repo-config/#commandsprepare) has succeeded once for the isolated worktree, then runs lint via the platform shell (`sh -c` on POSIX, `cmd.exe /c` on Windows). Non-zero exit produces `warning` findings.
-- If `commands.lint` is empty: consumes lint-category findings from the document step's combined housekeeping pass, avoiding a second cold agent invocation. If no usable combined result exists, the lint step detects appropriate linters/formatters, applies safe fixes, reruns the relevant checks, commits any agent changes, and returns structured findings only for unresolved issues.
+- If `commands.lint` is empty: consumes lint-category findings from the document step's combined housekeeping pass, avoiding a second cold agent invocation.
+  If no usable combined result exists and the tree is not one the [recorded-fix-decision revalidation boundary](#finding-decision-history) already sent back to Review, the lint step detects appropriate linters/formatters, applies safe fixes, reruns the relevant checks, commits any agent changes, and returns structured findings only for unresolved issues.
 - Bounds those agent turns, including a configured-lint repair turn, with [`agent_timeout`](/no-mistakes/reference/global-config/#agent_timeout): an expired budget cancels the agent and fails the step with a timeout diagnostic rather than leaving the run active indefinitely
 
 **Approval:** lint findings with `action: ask-user` pause for approval.

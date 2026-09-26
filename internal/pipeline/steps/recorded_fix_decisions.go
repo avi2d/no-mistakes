@@ -177,45 +177,146 @@ func recordedDecisionsNeedReview(sctx *pipeline.StepContext, head string) (bool,
 	if approved == "" {
 		return false, fmt.Errorf("cannot verify recorded fix decisions: %s", reason)
 	}
-	diff, err := stepGitRun(sctx, "diff", "--name-only", approved, head, "--")
+	sameTree, err := sameGitTree(sctx, approved, head)
 	if err != nil {
 		return false, fmt.Errorf("compare recorded-decision review tree: %w", err)
 	}
-	treeChanged := strings.TrimSpace(diff) != ""
-	steps, err := sctx.DB.GetStepsByRun(sctx.Run.ID)
+	lastReview, err := lastReviewOf(sctx, approved)
 	if err != nil {
 		return false, err
 	}
-	var lastReview, lastRequest string
+	latestDecision := decisions[len(decisions)-1].roundID
+	if sameTree && latestDecision < lastReview {
+		return false, nil
+	}
+	requests, err := revalidationRequests(sctx)
+	if err != nil {
+		return false, err
+	}
+	for _, request := range requests {
+		if request.roundID <= latestDecision {
+			continue
+		}
+		covered, err := request.covers(sctx, approved)
+		if err != nil {
+			return false, fmt.Errorf("compare recorded-decision review request: %w", err)
+		}
+		if covered {
+			return false, fmt.Errorf("post-review steps changed the tree again after recorded fix decisions were revalidated; refusing to repeat validation or publish an unreviewed tree - inspect the later Test/Document/Lint/formatter changes before retrying")
+		}
+	}
+	return true, nil
+}
+
+const recordedDecisionReviewRequest = "revalidate recorded fix decisions before publication"
+
+func lastReviewOf(sctx *pipeline.StepContext, approved string) (string, error) {
+	steps, err := sctx.DB.GetStepsByRun(sctx.Run.ID)
+	if err != nil {
+		return "", err
+	}
+	var lastReview string
 	for _, step := range steps {
-		if step.StepName != types.StepReview && step.StepName != types.StepPush {
+		if step.StepName != types.StepReview {
 			continue
 		}
 		rounds, err := sctx.DB.GetRoundsByStep(step.ID)
 		if err != nil {
-			return false, err
+			return "", err
 		}
 		for _, round := range rounds {
-			if step.StepName == types.StepPush && round.FindingsJSON != nil {
-				findings, err := types.ParseFindingsJSON(*round.FindingsJSON)
-				if err != nil {
-					return false, fmt.Errorf("read prior recorded-decision review request: %w", err)
-				}
-				if findings.Summary == recordedDecisionReviewRequest && round.ID > lastRequest {
-					lastRequest = round.ID
-				}
-			}
-			if step.StepName == types.StepReview && round.ReviewedHeadSHA != nil && *round.ReviewedHeadSHA == approved && round.ID > lastReview {
+			if round.ReviewedHeadSHA != nil && *round.ReviewedHeadSHA == approved && round.ID > lastReview {
 				lastReview = round.ID
 			}
 		}
 	}
-	latestDecision := decisions[len(decisions)-1].roundID
-	needsReview := treeChanged || latestDecision >= lastReview
-	if needsReview && lastRequest > latestDecision {
-		return false, fmt.Errorf("post-review steps changed the tree again after recorded fix decisions were revalidated; refusing to repeat validation or publish an unreviewed tree - inspect the later Test/Document/Lint/formatter changes before retrying")
-	}
-	return needsReview, nil
+	return lastReview, nil
 }
 
-const recordedDecisionReviewRequest = "revalidate recorded fix decisions before publication"
+type revalidationRequest struct {
+	roundID string
+	head    string
+}
+
+// A request that does not name a well-formed head, including one recorded
+// before requests named their head, cannot say which tree it settled, so it
+// bounds every later tree.
+func (r revalidationRequest) covers(sctx *pipeline.StepContext, tree string) (bool, error) {
+	if !isFullGitObjectID(r.head) {
+		return true, nil
+	}
+	return sameGitTree(sctx, r.head, tree)
+}
+
+func revalidationRequests(sctx *pipeline.StepContext) ([]revalidationRequest, error) {
+	steps, err := sctx.DB.GetStepsByRun(sctx.Run.ID)
+	if err != nil {
+		return nil, err
+	}
+	var requests []revalidationRequest
+	for _, step := range steps {
+		if step.StepName != types.StepPush {
+			continue
+		}
+		rounds, err := sctx.DB.GetRoundsByStep(step.ID)
+		if err != nil {
+			return nil, err
+		}
+		for _, round := range rounds {
+			if round.FindingsJSON == nil {
+				continue
+			}
+			findings, err := types.ParseFindingsJSON(*round.FindingsJSON)
+			if err != nil {
+				return nil, fmt.Errorf("read prior recorded-decision review request: %w", err)
+			}
+			if findings.Summary == recordedDecisionReviewRequest {
+				requests = append(requests, revalidationRequest{roundID: round.ID, head: findings.RevalidationHeadSHA})
+			}
+		}
+	}
+	return requests, nil
+}
+
+// Push sends Review only a tree that this run's Document and Lint passes
+// already produced, so another agent pass over that same clean tree can only
+// rework their own output.
+func housekeepingSettled(sctx *pipeline.StepContext) (bool, error) {
+	if sctx.DB == nil || sctx.Run == nil || sctx.Run.ID == "" {
+		return false, nil
+	}
+	requests, err := revalidationRequests(sctx)
+	if err != nil || len(requests) == 0 {
+		return false, err
+	}
+	status, err := stepGitRun(sctx, "status", "--porcelain")
+	if err != nil || strings.TrimSpace(status) != "" {
+		return false, err
+	}
+	head, err := stepGitRun(sctx, "rev-parse", "HEAD")
+	if err != nil {
+		return false, err
+	}
+	for _, request := range requests {
+		if !isFullGitObjectID(request.head) {
+			continue
+		}
+		same, err := sameGitTree(sctx, request.head, strings.TrimSpace(head))
+		if err != nil || same {
+			return same, err
+		}
+	}
+	return false, nil
+}
+
+func sameGitTree(sctx *pipeline.StepContext, a, b string) (bool, error) {
+	if a == b {
+		return true, nil
+	}
+	trees, err := stepGitRun(sctx, "rev-parse", a+"^{tree}", b+"^{tree}")
+	if err != nil {
+		return false, err
+	}
+	ids := strings.Fields(trees)
+	return len(ids) == 2 && ids[0] == ids[1], nil
+}

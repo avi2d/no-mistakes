@@ -3,6 +3,7 @@ package steps
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -265,6 +266,71 @@ func TestRecordedDecisionsNeedReview_BoundsRepeatedDownstreamMutation(t *testing
 	recordFixDecision(t, sctx, types.StepTest, db.RoundSelectionSourceUser)
 	if got, err := recordedDecisionsNeedReview(sctx, later); err != nil || !got {
 		t.Fatalf("new decision cannot be reviewed: %v, %v", got, err)
+	}
+}
+
+func recordRevalidationRequest(t *testing.T, sctx *pipeline.StepContext, pushStepID string, round int, head string) {
+	t.Helper()
+	raw := fmt.Sprintf(`{"findings":null,"summary":%q,"revalidation_head_sha":%q}`, recordedDecisionReviewRequest, head)
+	if _, err := sctx.DB.InsertStepRound(pushStepID, round, "initial", &raw, nil, 1); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func commitFile(t *testing.T, dir, name, content string) string {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitCmd(t, dir, "add", "-A")
+	gitCmd(t, dir, "commit", "-m", "change "+name)
+	return gitCmd(t, dir, "rev-parse", "HEAD")
+}
+
+// A request settles once Review approves the tree it asked about. A later
+// validation restart that Review approves on a different tree, such as a CI
+// repair, has never been revalidated for the recorded decisions, so the edits
+// that follow it earn one request of their own.
+func TestRecordedDecisionsNeedReview_BoundIsPerRevalidatedTree(t *testing.T) {
+	dir, base, head := setupGitRepo(t)
+	sctx := newTestContextWithDBRecords(t, &mockAgent{name: "test"}, dir, base, head, config.Commands{})
+	review, _ := recordFixDecision(t, sctx, types.StepReview, db.RoundSelectionSourceUser)
+	push, err := sctx.DB.InsertStepResult(sctx.Run.ID, types.StepPush)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	documented := commitFile(t, dir, "doc.txt", "documented the decision\n")
+	recordRevalidationRequest(t, sctx, push.ID, 1, documented)
+	if _, err := sctx.DB.InsertReviewStepRound(review.ID, 2, "initial", nil, nil, documented, 1); err != nil {
+		t.Fatal(err)
+	}
+	recordReviewApproval(t, sctx, documented)
+	if got, err := recordedDecisionsNeedReview(sctx, documented); err != nil || got {
+		t.Fatalf("revalidated tree: %v, %v", got, err)
+	}
+
+	repaired := commitFile(t, dir, "repair.txt", "CI merge-conflict repair\n")
+	if _, err := sctx.DB.InsertReviewStepRound(review.ID, 3, "initial", nil, nil, repaired, 1); err != nil {
+		t.Fatal(err)
+	}
+	recordReviewApproval(t, sctx, repaired)
+	repairDocumented := commitFile(t, dir, "doc.txt", "documented the repair\n")
+	if got, err := recordedDecisionsNeedReview(sctx, repairDocumented); err != nil || !got {
+		t.Fatalf("edits after a newly approved tree were not sent to Review: %v, %v", got, err)
+	}
+
+	recordRevalidationRequest(t, sctx, push.ID, 2, repairDocumented)
+	if _, err := sctx.DB.InsertReviewStepRound(review.ID, 4, "initial", nil, nil, repairDocumented, 1); err != nil {
+		t.Fatal(err)
+	}
+	recordReviewApproval(t, sctx, repairDocumented)
+	if got, err := recordedDecisionsNeedReview(sctx, repairDocumented); err != nil || got {
+		t.Fatalf("revalidated repair: %v, %v", got, err)
+	}
+	again := commitFile(t, dir, "doc.txt", "documented it a third way\n")
+	if got, err := recordedDecisionsNeedReview(sctx, again); err == nil || got || !strings.Contains(err.Error(), "refusing to repeat") {
+		t.Fatalf("edit after revalidating that same tree: %v, %v", got, err)
 	}
 }
 

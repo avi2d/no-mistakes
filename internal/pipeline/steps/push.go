@@ -84,7 +84,7 @@ func (s *PushStep) Execute(sctx *pipeline.StepContext) (*pipeline.StepOutcome, e
 			return nil, err
 		}
 		sctx.Log("later changes or decisions require independent Review of recorded fix decisions before publication")
-		findings, _ := json.Marshal(Findings{Summary: recordedDecisionReviewRequest})
+		findings, _ := json.Marshal(Findings{Summary: recordedDecisionReviewRequest, RevalidationHeadSHA: headBeingPushed})
 		return &pipeline.StepOutcome{RestartFrom: types.StepReview, Findings: string(findings)}, nil
 	}
 	// This run's own review/test/document have already completed by now (see

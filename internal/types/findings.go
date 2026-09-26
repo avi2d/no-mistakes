@@ -309,6 +309,9 @@ type Findings struct {
 	// unvalidated-work check measured from, carried so a repeated cut before any
 	// evidence turn completes re-measures from that same head.
 	UnvalidatedSinceSHA string `json:"unvalidated_since_sha,omitempty"`
+	// RevalidationHeadSHA is set only on Push's recorded-decision revalidation
+	// request: the head it sent back to Review.
+	RevalidationHeadSHA string `json:"revalidation_head_sha,omitempty"`
 	RiskLevel           string `json:"risk_level"`
 	RiskRationale       string `json:"risk_rationale"`
 	RiskScope           string `json:"risk_scope,omitempty"`
@@ -327,6 +330,7 @@ type findingsWire struct {
 	Verdict             string           `json:"verdict"`
 	TestedHeadSHA       string           `json:"tested_head_sha"`
 	UnvalidatedSinceSHA string           `json:"unvalidated_since_sha"`
+	RevalidationHeadSHA string           `json:"revalidation_head_sha"`
 	RiskLevel           string           `json:"risk_level"`
 	RiskRationale       string           `json:"risk_rationale"`
 	RiskScope           string           `json:"risk_scope"`
@@ -355,6 +359,7 @@ func ParseFindingsJSON(raw string) (Findings, error) {
 		Verdict:             wire.Verdict,
 		TestedHeadSHA:       wire.TestedHeadSHA,
 		UnvalidatedSinceSHA: wire.UnvalidatedSinceSHA,
+		RevalidationHeadSHA: wire.RevalidationHeadSHA,
 		RiskLevel:           wire.RiskLevel,
 		RiskRationale:       wire.RiskRationale,
 		RiskScope:           wire.RiskScope,

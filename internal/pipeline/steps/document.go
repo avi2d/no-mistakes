@@ -116,6 +116,16 @@ func (s *DocumentStep) Execute(sctx *pipeline.StepContext) (*pipeline.StepOutcom
 		sctx.Log("no changes to document")
 		return &pipeline.StepOutcome{}, nil
 	}
+	if !sctx.Fixing {
+		settled, err := housekeepingSettled(sctx)
+		if err != nil {
+			return nil, fmt.Errorf("check for an already housekept tree: %w", err)
+		}
+		if settled {
+			sctx.Log("housekeeping already produced this tree before Review revalidated it; nothing new to document")
+			return &pipeline.StepOutcome{}, nil
+		}
+	}
 
 	if combinedLint {
 		sctx.Log("housekeeping: updating documentation and linting in one pass...")
