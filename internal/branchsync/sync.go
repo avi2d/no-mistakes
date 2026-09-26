@@ -689,10 +689,14 @@ func (s *Service) Recover(ctx context.Context, keepLocal bool) State {
 	if run.TerminalHeadVerifiedAt == nil {
 		gateHead, equalTreeRewrite, unproven := s.unverifiedTerminalHeadFromGate(ctx, state, run)
 		if unproven != "" {
-			if !keepLocal {
-				return blockedPlan(state, StatePipelineOwned, "blocked_recover_unverified_head", unproven)
-			}
 			runIDs, candidateHeads, _, allEligible := s.missingHeadKeepLocalRuns(ctx, &state, run)
+			if !keepLocal {
+				blocked := blockedPlan(state, StatePipelineOwned, "blocked_recover_unverified_head", unproven)
+				if allEligible {
+					blocked.NextAction = &NextAction{Code: "recover_custody", Command: "no-mistakes axi sync --recover --keep-local"}
+				}
+				return blocked
+			}
 			if !allEligible {
 				return blockedPlan(state, StatePipelineOwned, "blocked_recover_unverified_head", "the terminal run has no verified head, and its recorded pipeline head cannot be anchored or conflicts with existing recovery evidence; no files or refs were changed")
 			}

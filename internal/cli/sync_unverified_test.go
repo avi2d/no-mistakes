@@ -123,8 +123,14 @@ func TestAxiSyncRecoverKeepLocalReturnsCustodyForUnverifiedTerminalHead(t *testi
 	if err == nil || !asExitError(err, &ee) || ee.code != 1 {
 		t.Fatalf("plain recover of an unverified head should refuse, got %#v\n%s", err, refused)
 	}
-	if !strings.Contains(refused, "safety: blocked_recover_unverified_head") {
-		t.Fatalf("plain recover refusal:\n%s", refused)
+	for _, want := range []string{
+		"safety: blocked_recover_unverified_head",
+		"code: recover_custody",
+		"command: no-mistakes axi sync --recover --keep-local",
+	} {
+		if !strings.Contains(refused, want) {
+			t.Errorf("plain recover refusal missing %q:\n%s", want, refused)
+		}
 	}
 
 	kept, err := executeCmd("axi", "sync", "--recover", "--keep-local")
