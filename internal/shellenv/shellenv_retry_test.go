@@ -195,7 +195,9 @@ func TestDefaultShellCommandOutput_InteractiveShellFromForegroundTerminal(t *tes
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, scriptBin, args...)
-	cmd.Env = append(os.Environ(), "NM_SHELLENV_PTY_CHILD=1", "SHELL="+zsh)
+	// The operator's own startup files can outlast the probe timeout on a loaded
+	// machine, and job control starts without any of them.
+	cmd.Env = append(os.Environ(), "NM_SHELLENV_PTY_CHILD=1", "SHELL="+zsh, "ZDOTDIR="+t.TempDir())
 	out, err := cmd.CombinedOutput()
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		t.Fatalf("pty child did not finish: %q", out)
