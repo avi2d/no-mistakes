@@ -162,15 +162,25 @@ func validatePRTitleMaxLength(maxLength *int, name string) error {
 	return nil
 }
 
+// TitleBudget is the character budget available for a title once the
+// squash-merge suffix is reserved. Zero means no configured limit.
+func (p PR) TitleBudget() int {
+	if p.TitleMaxLength <= 0 {
+		return 0
+	}
+	return p.TitleMaxLength - prTitleSquashSuffixReserveChars
+}
+
 // ClampTitle shortens title to TitleMaxLength characters with room left for
 // the squash-merge suffix. Zero leaves the title unchanged. The cut keeps a
 // leading "prefix: " whole and stops at a word boundary, so a conventional
-// type and scope never split.
+// type and scope never split. This is the last-resort shortening; callers
+// that can rewrite the title instead should try that first.
 func (p PR) ClampTitle(title string) (string, error) {
 	if p.TitleMaxLength <= 0 {
 		return title, nil
 	}
-	budget := p.TitleMaxLength - prTitleSquashSuffixReserveChars
+	budget := p.TitleBudget()
 	if utf8.RuneCountInString(title) <= budget {
 		return title, nil
 	}

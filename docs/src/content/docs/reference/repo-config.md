@@ -319,13 +319,18 @@ Cap the published PR title in characters, counting the squash-merge suffix.
 | Default | Unset, which leaves titles unclamped |
 | Trust | Pushed branch, like `pr.title_format`. A global `pr.title_max_length` is the fallback for repositories that set nothing |
 
-GitHub appends ` (#NNN)` to the title on squash-merge and commitlint counts it against the header limit.
+GitHub appends ` (#NNN)` to the title on squash-merge, and commitlint counts it against the header limit.
 The clamp reserves 10 characters for that suffix.
-It shortens the description at a word boundary.
-It keeps a leading `prefix: ` whole, so a conventional type and scope never split.
-It applies after `pr.title_format` rendering, to created and updated pull requests alike.
-A limit that leaves no room for the title prefix fails PR publication instead of publishing a truncated prefix.
 A limit of 90 keeps squash-merged headers within a 100-character commitlint limit.
+
+When the plain conventional title has no `pr.title_format` and it exceeds the limit, no-mistakes first asks the drafting agent to rewrite it as a shorter, complete conventional title.
+The published title then still reads as a finished description instead of trailing off mid-phrase.
+Word-boundary shortening is the last resort, used only when the rewrite fails or is still over the limit.
+It keeps a leading `prefix: ` whole and cuts the description at a word boundary, so a conventional type and scope never split.
+A `pr.title_format` render is always word-boundary shortened, because its fixed literal text is not sent back to the agent to rewrite.
+A limit that leaves no room for the title prefix fails PR publication instead of publishing a truncated prefix.
+
+Updating an existing pull request whose current title is already a conventional title within the limit leaves that title in place instead of replacing it with a freshly drafted one.
 
 ### commands.prepare
 
