@@ -219,6 +219,16 @@ func TestExecutor_ReviewCarryForward_NoOpFixKeepsFindingParked(t *testing.T) {
 	database, p, run, repo := setupTest(t)
 	workDir := t.TempDir()
 	initGitRepo(t, workDir)
+	// The selected finding's file must still exist through the no-op fix, or
+	// the new deleted-file carry rule would (correctly) close it instead of
+	// parking it - this test is pinning the OTHER half of that rule.
+	for _, name := range []string{"service.go", "cache.go"} {
+		if err := os.WriteFile(filepath.Join(workDir, name), []byte("package x\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	execGit(t, workDir, "add", "service.go", "cache.go")
+	execGit(t, workDir, "commit", "-m", "add service.go and cache.go")
 
 	round := 0
 	step := &adaptiveCallStep{
@@ -314,6 +324,64 @@ func TestExecutor_ReviewCarryForward_NoOpFixKeepsFindingParked(t *testing.T) {
 	waitExecutorDone(t, done)
 }
 
+// TestExecutor_ReviewCarryForward_DeletedFileFindingClosesWithoutRereport is
+// the deleted-code half of the carry contract: a fix round can delete the
+// file a finding named, and the rereview then has nothing left to cover -
+// requiring positive ReviewedPaths coverage of a file that no longer exists
+// would park the finding forever. Coverage is not required when the file is
+// gone; the finding closes as soon as the rereview does not restate it.
+func TestExecutor_ReviewCarryForward_DeletedFileFindingClosesWithoutRereport(t *testing.T) {
+	database, p, run, repo := setupTest(t)
+	workDir := t.TempDir()
+	initGitRepo(t, workDir)
+	if err := os.WriteFile(filepath.Join(workDir, "service.go"), []byte("package x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	execGit(t, workDir, "add", "service.go")
+	execGit(t, workDir, "commit", "-m", "add service.go")
+
+	round := 0
+	step := &adaptiveCallStep{
+		name: types.StepReview,
+		fn: func(sctx *StepContext) (*StepOutcome, error) {
+			round++
+			if round == 1 {
+				return &StepOutcome{
+					NeedsApproval:   true,
+					Findings:        `{"findings":[{"id":"review-1","severity":"error","file":"service.go","line":10,"description":"nil deref on the error path","action":"ask-user"}],"summary":"1 finding"}`,
+					ReviewedPaths:   []string{"service.go"},
+					ReviewablePaths: []string{"service.go"},
+				}, nil
+			}
+			// The fixer deletes the whole file the finding named rather than
+			// patching it. There is nothing left in it for a rereview to cover.
+			execGit(t, sctx.WorkDir, "rm", "service.go")
+			execGit(t, sctx.WorkDir, "commit", "-m", "remove service.go")
+			return &StepOutcome{FixSummary: "removed service.go"}, nil
+		},
+	}
+
+	exec := NewExecutor(database, p, nil, nil, []Step{step}, nil)
+	done, _ := startExecutor(t, exec, run, repo, workDir)
+
+	waitForStepStatus(t, database, run.ID, types.StepReview, types.StepStatusAwaitingApproval)
+	if err := exec.Respond(types.StepReview, types.ActionFix, []string{"review-1"}); err != nil {
+		t.Fatal(err)
+	}
+	waitExecutorDone(t, done)
+
+	steps, err := database.GetStepsByRun(run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if steps[0].Status != types.StepStatusCompleted {
+		t.Fatalf("step status = %s, want %s", steps[0].Status, types.StepStatusCompleted)
+	}
+	if steps[0].FindingsJSON != nil {
+		t.Fatalf("finding about a deleted file was re-presented instead of closing: %s", *steps[0].FindingsJSON)
+	}
+}
+
 // TestExecutor_ReviewCarryForward_PositiveCoverageClearsFinding is the other
 // half of the same contract: a selected finding does leave the outstanding set
 // once the rereview positively records that it covered the finding's file and
@@ -322,6 +390,14 @@ func TestExecutor_ReviewCarryForward_NoOpFixKeepsFindingParked(t *testing.T) {
 func TestExecutor_ReviewCarryForward_UserAddedFindingStaysOutstanding(t *testing.T) {
 	database, p, run, repo := setupTest(t)
 	workDir := t.TempDir()
+	// Both the selected finding's file and the added finding's file must
+	// exist, or the deleted-file carry rule would (correctly) close them
+	// instead of leaving them outstanding for the operator to see.
+	for _, name := range []string{"service.go", "logger.go"} {
+		if err := os.WriteFile(filepath.Join(workDir, name), []byte("package x\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	calls := 0
 	step := &adaptiveCallStep{
@@ -644,6 +720,37 @@ func TestResolveVerifiedFindingsJSON_FilelessFindingIsNeverVerifiedAway(t *testi
 	got := resolveVerifiedFindingsJSON(outstanding, []string{"review-1"}, []string{"service.go", "cache.go"}, []string{"service.go", "cache.go"}, "")
 	if !strings.Contains(got, "review-1") {
 		t.Fatalf("file-less finding was verified away by an unrelated coverage record: %s", got)
+	}
+}
+
+// TestDropDeletedFileFindingsForIDsJSON pins the deleted-file half of the
+// carry contract at the pure-function level: only a pending (selected)
+// finding whose file is gone closes; an unselected finding and a file-less
+// finding are both left alone regardless of file existence.
+func TestDropDeletedFileFindingsForIDsJSON(t *testing.T) {
+	exists := map[string]bool{"service.go": true}
+	fileExists := func(path string) bool { return exists[path] }
+
+	got := dropDeletedFileFindingsForIDsJSON(reviewCarryTwoFindings, []string{"review-1", "review-2"}, fileExists)
+	parsed, err := types.ParseFindingsJSON(got)
+	if err != nil {
+		t.Fatalf("parse result: %v", err)
+	}
+	if len(parsed.Items) != 1 || parsed.Items[0].ID != "review-1" {
+		t.Fatalf("items = %+v, want only review-1 (service.go exists, cache.go does not)", parsed.Items)
+	}
+
+	// An unselected finding is left alone even when its file is gone.
+	got = dropDeletedFileFindingsForIDsJSON(reviewCarryTwoFindings, []string{"review-1"}, fileExists)
+	if !strings.Contains(got, "review-2") {
+		t.Fatalf("unselected finding for a missing file was dropped: %s", got)
+	}
+
+	// A file-less finding is left alone: there is nothing to check.
+	filelessRaw := `{"findings":[{"id":"review-1","severity":"warning","description":"no file anchor","action":"ask-user"}],"summary":"1 finding"}`
+	got = dropDeletedFileFindingsForIDsJSON(filelessRaw, []string{"review-1"}, fileExists)
+	if !strings.Contains(got, "review-1") {
+		t.Fatalf("file-less pending finding was dropped: %s", got)
 	}
 }
 
