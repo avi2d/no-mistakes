@@ -33,6 +33,14 @@ func (s *LintStep) Execute(sctx *pipeline.StepContext) (*pipeline.StepOutcome, e
 			if stash, ok := sctx.Shared.TakeHousekeepingLint(); ok {
 				return lintOutcomeFromHousekeeping(sctx, stash)
 			}
+			settled, err := housekeepingSettled(sctx)
+			if err != nil {
+				return nil, fmt.Errorf("check for an already housekept tree: %w", err)
+			}
+			if settled {
+				sctx.Log("housekeeping already produced this tree before Review revalidated it; nothing new to lint")
+				return &pipeline.StepOutcome{}, nil
+			}
 		}
 		sctx.Log("no lint command configured, asking agent to lint and fix...")
 		reassessHistory := executionContextPromptSection(sctx.WorkDir) + roundHistoryPromptSection(sctx) + userIntentPromptSection(sctx)
