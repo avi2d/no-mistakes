@@ -64,6 +64,36 @@ func fixerPrompt(prompt string) string {
 	return prompt + fixerRemovalRule
 }
 
+const fixRoundHistoryRule = `
+
+History rule:
+- Leave the existing branch history exactly as it is: never rebase, reset, or amend, and do not check out another commit. Make your fixes in the working tree; the pipeline commits them on top of the current HEAD, and any commit of your own must also go on top of it. A fix round whose final HEAD does not descend from the HEAD it started on is discarded and fails the run.`
+
+// Committing a rewritten round would build on a history that dropped the
+// recorded head, and failing without the restore would leave the rewrite
+// checked out, where terminalization cannot verify the run's head.
+func refuseHistoryRewrite(sctx *pipeline.StepContext, stepName types.StepName, startHead string) error {
+	ctx := sctx.Ctx
+	head, err := git.HeadSHA(ctx, sctx.WorkDir)
+	if err != nil {
+		return fmt.Errorf("resolve head after %s fix round: %w", stepName, err)
+	}
+	leftRebase := rebaseInProgress(ctx, sctx.WorkDir)
+	descends := head == startHead || isAncestor(ctx, sctx.WorkDir, startHead, head)
+	if descends && !leftRebase {
+		return nil
+	}
+	rewrite := fmt.Sprintf("HEAD %s does not descend from the round's starting head %s", head, startHead)
+	if descends {
+		rewrite = fmt.Sprintf("a rebase was left in progress on top of the round's starting head %s", startHead)
+	}
+	cause := fmt.Errorf("%s fix round rewrote branch history: %s; a fix round may only add commits on top (never rebase, reset, or amend), so its result was discarded and the worktree restored to %s", stepName, rewrite, startHead)
+	if leftRebase {
+		_, _ = git.Run(ctx, sctx.WorkDir, "rebase", "--abort")
+	}
+	return restorePreMergeHead(ctx, sctx, startHead, cause)
+}
+
 var commitSummarySchema = json.RawMessage(fmt.Sprintf(`{
 	"type": "object",
 	"properties": {
@@ -420,8 +450,12 @@ func executeFixMode(sctx *pipeline.StepContext, stepName types.StepName, opts fi
 	if purpose == "" {
 		purpose = string(stepName) + "-fix"
 	}
+	startHead, err := git.HeadSHA(sctx.Ctx, sctx.WorkDir)
+	if err != nil {
+		return "", fmt.Errorf("resolve head before %s fix round: %w", stepName, err)
+	}
 	runOpts := agent.RunOpts{
-		Prompt:     fixerPrompt(opts.Prompt),
+		Prompt:     fixerPrompt(opts.Prompt) + fixRoundHistoryRule,
 		CWD:        sctx.WorkDir,
 		JSONSchema: commitSummarySchema,
 		OnChunk:    sctx.LogChunk,
@@ -429,7 +463,6 @@ func executeFixMode(sctx *pipeline.StepContext, stepName types.StepName, opts fi
 		Workload:   opts.Workload,
 	}
 	var result *agent.Result
-	var err error
 	if opts.RunAgent != nil {
 		result, err = opts.RunAgent(runOpts)
 	} else {
@@ -444,6 +477,9 @@ func executeFixMode(sctx *pipeline.StepContext, stepName types.StepName, opts fi
 			return "", err
 		}
 		return "", fmt.Errorf("%s: %w", opts.ErrorPrefix, err)
+	}
+	if err := refuseHistoryRewrite(sctx, stepName, startHead); err != nil {
+		return "", err
 	}
 	if opts.AfterAgentRun != nil {
 		if err := opts.AfterAgentRun(result); err != nil {
