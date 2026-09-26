@@ -1040,6 +1040,15 @@ rounds:
 			// set only on a positive coverage record that also no longer reports
 			// the defect.
 			outstandingFindings = resolveVerifiedFindingsJSON(outstandingFindings, pendingVerificationIDs, outcome.ReviewedPaths, outcome.ReviewablePaths, roundFindings)
+			// A fix round can delete the file a selected finding named outright,
+			// leaving the rereview nothing to cover; requiring ReviewedPaths
+			// coverage of a file that no longer exists would keep it pending
+			// forever. Scoped to pendingVerificationIDs only: an outstanding
+			// finding the operator never selected keeps the ordinary carry rule.
+			outstandingFindings = dropDeletedFileFindingsForIDsJSON(outstandingFindings, pendingVerificationIDs, func(relPath string) bool {
+				_, statErr := os.Stat(filepath.Join(sctx.WorkDir, relPath))
+				return statErr == nil
+			})
 			pendingVerificationIDs = retainFindingIDs(outstandingFindings, pendingVerificationIDs)
 			selectedOutstandingIDs = retainFindingIDs(outstandingFindings, selectedOutstandingIDs)
 			effectiveFindings = mergeOutstandingFindingsJSON(outstandingFindings, roundFindings, outcome.ReviewedPaths)

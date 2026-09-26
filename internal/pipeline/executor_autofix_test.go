@@ -335,6 +335,11 @@ func TestExecutor_AutoFixInfoFindings(t *testing.T) {
 func TestExecutor_AutoFixInfoFindingNoOpParksAfterBudget(t *testing.T) {
 	database, p, run, repo := setupTest(t)
 	workDir := t.TempDir()
+	// The selected finding's file must exist, or the deleted-file carry rule
+	// would (correctly) close it instead of parking it after the budget.
+	if err := os.WriteFile(filepath.Join(workDir, "main.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	cfg := &config.Config{AutoFix: config.AutoFix{Review: 1}}
 
 	callCount := 0
