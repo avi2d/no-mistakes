@@ -101,6 +101,47 @@ func TestPRStep_UpdatesExistingPR(t *testing.T) {
 	}
 }
 
+// TestPRStep_UpdateKeepsExistingConventionalTitleThatStillFits checks the
+// keep-existing-title carve-out: an update that would otherwise overwrite an
+// already conventional, in-budget title with a fresh agent draft leaves the
+// live title alone instead, so a PR does not shed its changelog-worthy title
+// on every later run.
+func TestPRStep_UpdateKeepsExistingConventionalTitleThatStillFits(t *testing.T) {
+	t.Parallel()
+	dir, baseSHA, headSHA := setupGitRepo(t)
+
+	env, logFile := fakeGH(t, "https://github.com/test/repo/pull/42")
+	env = append(env,
+		"FAKE_CLI_PR_TITLE=feat(scripts): add checks-subsumed-tests report",
+		"FAKE_CLI_PR_BODY=an existing plain PR description",
+	)
+
+	ag := &mockAgent{
+		name: "test",
+		runFn: func(ctx context.Context, opts agent.RunOpts) (*agent.Result, error) {
+			payload := json.RawMessage(`{"title":"feat(scripts): a completely different fresh draft","body":"## What Changed\n\n- updated"}`)
+			return &agent.Result{Output: payload}, nil
+		},
+	}
+	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
+	sctx.Env = env
+	sctx.Config.PR.TitleMaxLength = 90
+
+	step := &PRStep{}
+	if _, err := step.Execute(sctx); err != nil {
+		t.Fatal(err)
+	}
+
+	logData, err := os.ReadFile(logFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ghLog := string(logData)
+	if strings.Contains(ghLog, "--title") {
+		t.Fatalf("expected the update to leave the existing conventional title untouched, got:\n%s", ghLog)
+	}
+}
+
 func TestPRStep_MalformedPRListFailsClosed(t *testing.T) {
 	t.Parallel()
 	dir, baseSHA, headSHA := setupGitRepo(t)

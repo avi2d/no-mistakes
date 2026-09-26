@@ -163,6 +163,12 @@ func (s *PRStep) Execute(sctx *pipeline.StepContext) (*pipeline.StepOutcome, err
 			if err != nil {
 				return nil, err
 			}
+			// An already-conventional title that still fits keeps publishing
+			// changelog history rather than a freshly drafted one; an empty
+			// Title leaves the provider's title untouched (host.UpdatePR).
+			if titleAlreadyFitsWithinBudget(sctx, live.Title) {
+				content.Title = ""
+			}
 			if err := retargetExistingPRIfNeeded(sctx, host, existing, runPRBaseBranch(sctx)); err != nil {
 				return nil, err
 			}
@@ -551,8 +557,7 @@ func renderPRTitle(sctx *pipeline.StepContext, title string) (string, error) {
 		return conventional.TightenTitle(title), nil
 	}
 	if sctx.Config.PR.TitleFormat == "" {
-		clamped, err := sctx.Config.PR.ClampTitle(conventional.TightenTitle(title))
-		return clamped, err
+		return fitPRTitle(sctx, conventional.TightenTitle(title))
 	}
 	branch := strings.TrimSpace(strings.TrimPrefix(sctx.Run.Branch, "refs/heads/"))
 	if sctx.Config.PR.RequiresBranch() {
@@ -566,7 +571,80 @@ func renderPRTitle(sctx *pipeline.StepContext, title string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// A custom pr.title_format wraps the title in maintainer-chosen fixed
+	// text; rewriting the whole rendered string risks corrupting that fixed
+	// part, so only the plain conventional path below asks the agent to
+	// rewrite. This stays a word-boundary clamp, as before.
 	return sctx.Config.PR.ClampTitle(rendered)
+}
+
+// fitPRTitle keeps a conventional title readable when it exceeds the
+// configured budget: it asks the drafting agent to rewrite the title as a
+// complete, shorter description before falling back to ClampTitle's
+// word-boundary cut. A cut-off phrase reads as unfinished the moment it is
+// published; a rewrite by the agent that already wrote the title does not.
+func fitPRTitle(sctx *pipeline.StepContext, title string) (string, error) {
+	budget := sctx.Config.PR.TitleBudget()
+	if budget <= 0 || utf8.RuneCountInString(title) <= budget {
+		return sctx.Config.PR.ClampTitle(title)
+	}
+	rewritten, err := rewriteOverLongPRTitle(sctx, title, budget)
+	if err != nil {
+		slog.Warn("PR title rewrite failed, falling back to word-boundary shortening", "error", err)
+		return sctx.Config.PR.ClampTitle(title)
+	}
+	if utf8.RuneCountInString(rewritten) > budget {
+		slog.Warn("PR title rewrite still exceeded the configured limit, falling back to word-boundary shortening", "title", rewritten)
+		return sctx.Config.PR.ClampTitle(title)
+	}
+	return rewritten, nil
+}
+
+// rewriteOverLongPRTitle asks the agent for a shorter, complete conventional
+// title instead of letting ClampTitle cut the original off mid-phrase.
+func rewriteOverLongPRTitle(sctx *pipeline.StepContext, title string, budget int) (string, error) {
+	prompt := fmt.Sprintf(`This pull request title exceeds the repository's title length limit. Rewrite it as a short, complete conventional-commit title that fits within %d characters total (including the "type(scope): " prefix), without trailing off mid-phrase or mid-word.
+
+Over-long title:
+%s
+
+Rules:
+- Return only the rewritten title text in the structured title field.
+- Keep the "type(scope): " or "type: " prefix; shorten the scope or description instead of dropping the prefix.
+- The rewrite must read as a complete description, not a truncation of the original.
+- Do not invent behavior not implied by the original title.`, budget, title)
+	result, err := sctx.RunAgentContext(sctx.Ctx, agent.RunOpts{
+		Prompt:     prompt,
+		CWD:        sctx.WorkDir,
+		JSONSchema: prTitleSchema,
+		OnChunk:    sctx.LogChunk,
+	})
+	if err != nil {
+		return "", fmt.Errorf("rewrite over-long PR title: %w", err)
+	}
+	var content prContent
+	if result == nil || json.Unmarshal(result.Output, &content) != nil {
+		return "", fmt.Errorf("agent returned no valid PR title rewrite")
+	}
+	rewritten := strings.TrimSpace(content.Title)
+	if rewritten == "" {
+		return "", fmt.Errorf("agent returned an empty PR title rewrite")
+	}
+	return conventional.TightenTitle(rewritten), nil
+}
+
+// titleAlreadyFitsWithinBudget reports whether an existing live PR title is
+// already conventional and within the configured budget, so an update can
+// leave it in place instead of publishing a freshly drafted one.
+func titleAlreadyFitsWithinBudget(sctx *pipeline.StepContext, title string) bool {
+	if !conventional.IsTitle(title) {
+		return false
+	}
+	if sctx == nil || sctx.Config == nil {
+		return true
+	}
+	budget := sctx.Config.PR.TitleBudget()
+	return budget <= 0 || utf8.RuneCountInString(title) <= budget
 }
 
 // buildPipelineSection queries step results and rounds from the DB and
