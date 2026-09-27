@@ -60,7 +60,7 @@ func TestDocumentStep_AgentManaged_FixesAndCommitsWithoutApproval(t *testing.T) 
 	}
 }
 
-func TestDocumentStep_AgentManaged_NormalizesMultilineCommitSummary(t *testing.T) {
+func TestDocumentStep_AgentManaged_MultilineCommitSummaryKeepsBody(t *testing.T) {
 	t.Parallel()
 	dir, baseSHA, headSHA := setupGitRepo(t)
 	gitCmd(t, dir, "checkout", "--detach", headSHA)
@@ -79,8 +79,11 @@ func TestDocumentStep_AgentManaged_NormalizesMultilineCommitSummary(t *testing.T
 	if _, err := (&DocumentStep{}).Execute(sctx); err != nil {
 		t.Fatal(err)
 	}
-	if got := lastCommitMessage(t, dir); got != "no-mistakes(document): update README and references" {
-		t.Fatalf("last commit message = %q", got)
+	if got := lastCommitMessage(t, dir); got != "no-mistakes(document): update README" {
+		t.Fatalf("last commit subject = %q", got)
+	}
+	if got := gitCmd(t, dir, "log", "-1", "--pretty=%b"); got != "and references" {
+		t.Fatalf("last commit body = %q", got)
 	}
 }
 

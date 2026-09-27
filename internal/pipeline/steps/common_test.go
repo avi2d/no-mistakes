@@ -1290,6 +1290,22 @@ func TestCommitSummarySchema_BoundsSummaryLength(t *testing.T) {
 	}
 }
 
+func TestExtractCommitSummary_PreservesParagraphs(t *testing.T) {
+	t.Parallel()
+
+	output, err := json.Marshal(map[string]string{"summary": "Fixed. The failure came from this PR.\n\nCause: an unused import.\n\nRisk: low."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := extractCommitSummary(&agent.Result{Output: output})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "Fixed. The failure came from this PR.\n\nCause: an unused import.\n\nRisk: low"; got != want {
+		t.Fatalf("extractCommitSummary() = %q, want %q", got, want)
+	}
+}
+
 func TestExtractCommitSummary_RejectsOversizedSummary(t *testing.T) {
 	t.Parallel()
 

@@ -20,10 +20,11 @@ const DefaultFixMessageTemplate = "no-mistakes({{.Step}}): {{.Summary}}"
 // The source and placeholder caps keep repository-controlled parsing cheap, while
 // the summary and subject caps prevent placeholder expansion from amplifying data.
 const (
-	maxFixMessageTemplateBytes = 1024
-	maxFixMessagePlaceholders  = 16
-	maxFixMessageSubjectBytes  = 4096
-	maxBranchPatternBytes      = 1024
+	maxFixMessageTemplateBytes       = 1024
+	maxFixMessagePlaceholders        = 16
+	maxFixMessageSubjectBytes        = 4096
+	maxFixMessageSummarySubjectRunes = 72
+	maxBranchPatternBytes            = 1024
 )
 
 // MaxFixMessageSummaryBytes bounds agent-provided fix summaries before rendering.
@@ -142,13 +143,13 @@ func invalidBranchReplacement() error {
 	return fmt.Errorf("commit.branch_replacement must contain exactly one ${1} capture reference and no other dollar signs")
 }
 
-// RenderFixMessage renders and validates a single-line auto-fix commit subject.
+// RenderFixMessage renders and validates an auto-fix commit message with a one-line subject.
 // It preserves the legacy call shape for callers that do not have a branch.
 func (c Commit) RenderFixMessage(step types.StepName, summary string) (string, error) {
 	return c.renderFixMessage(step, summary, "", true)
 }
 
-// RenderFixMessageForBranch renders an auto-fix commit subject with the branch
+// RenderFixMessageForBranch renders an auto-fix commit message with a one-line subject with the branch
 // value available to the {{.Branch}} placeholder.
 func (c Commit) RenderFixMessageForBranch(step types.StepName, summary, branch string) (string, error) {
 	return c.renderFixMessage(step, summary, branch, true)
@@ -174,10 +175,11 @@ func (c Commit) renderFixMessage(step types.StepName, summary, branch string, re
 	if !utf8.ValidString(summary) {
 		return "", fmt.Errorf("commit.fix_message summary must contain valid UTF-8")
 	}
-	summary = strings.Join(strings.Fields(summary), " ")
-	if containsUnsafeFixMessageRune(summary) {
+	summary = NormalizeFixMessageSummary(summary)
+	if containsUnsafeFixMessageRune(strings.ReplaceAll(strings.ReplaceAll(summary, "\n", ""), "\t", "")) {
 		return "", fmt.Errorf("commit.fix_message summary must not contain control or unsafe Unicode format characters or line separators")
 	}
+	subjectSummary, body := splitFixMessageSummary(summary)
 	tmpl, err := template.New("commit.fix_message").Option("missingkey=error").Parse(source)
 	if err != nil {
 		return "", fmt.Errorf("parse commit.fix_message template: %w", err)
@@ -193,14 +195,13 @@ func (c Commit) renderFixMessage(step types.StepName, summary, branch string, re
 			}
 		}
 	}
-	data := fixMessageData{Step: step, Summary: summary, Branch: branch}
-	predictedBytes, err := predictFixMessageBytes(tmpl, data)
+	predictedBytes, err := predictFixMessageBytes(tmpl, fixMessageData{Step: step, Summary: summary, Branch: branch})
 	if err != nil {
 		return "", err
 	}
 	var rendered bytes.Buffer
 	rendered.Grow(predictedBytes)
-	if err := tmpl.Execute(&rendered, data); err != nil {
+	if err := tmpl.Execute(&rendered, fixMessageData{Step: step, Summary: subjectSummary, Branch: branch}); err != nil {
 		return "", fmt.Errorf("render commit.fix_message template: %w", err)
 	}
 	message := rendered.String()
@@ -217,7 +218,93 @@ func (c Commit) renderFixMessage(step types.StepName, summary, branch string, re
 	if message == "" {
 		return "", fmt.Errorf("commit.fix_message must render to a non-empty message")
 	}
+	if body != "" {
+		body = cutFixMessageBodyToFit(body, maxFixMessageSubjectBytes-len(message)-2)
+		if body != "" {
+			message += "\n\n" + body
+		}
+	}
 	return message, nil
+}
+
+func NormalizeFixMessageSummary(summary string) string {
+	summary = strings.ReplaceAll(summary, "\r\n", "\n")
+	summary = strings.ReplaceAll(summary, "\r", "\n")
+	lines := strings.Split(summary, "\n")
+	kept := make([]string, 0, len(lines))
+	blank := false
+	for _, line := range lines {
+		line = strings.Join(strings.Fields(line), " ")
+		if line == "" {
+			if len(kept) > 0 {
+				blank = true
+			}
+			continue
+		}
+		if blank {
+			kept = append(kept, "")
+		}
+		blank = false
+		kept = append(kept, line)
+	}
+	return strings.Join(kept, "\n")
+}
+
+func splitFixMessageSummary(summary string) (string, string) {
+	line, rest, _ := strings.Cut(summary, "\n")
+	sentence, remainder := firstFixMessageSentence(strings.TrimSpace(line))
+	subject := cutFixMessageWords(sentence, maxFixMessageSummarySubjectRunes)
+	dropped := strings.TrimSpace(strings.TrimPrefix(sentence, subject))
+	return subject, strings.TrimSpace(dropped + "\n" + remainder + "\n" + rest)
+}
+
+func firstFixMessageSentence(line string) (string, string) {
+	for i := 0; i < len(line); i++ {
+		if line[i] != '.' && line[i] != '?' && line[i] != '!' {
+			continue
+		}
+		if i+1 == len(line) {
+			return line, ""
+		}
+		if line[i+1] == ' ' || line[i+1] == '\t' {
+			return strings.TrimSpace(line[:i+1]), strings.TrimSpace(line[i+1:])
+		}
+	}
+	return line, ""
+}
+
+func cutFixMessageWords(text string, keep int) string {
+	text = strings.TrimSpace(text)
+	if utf8.RuneCountInString(text) <= keep {
+		return text
+	}
+	runes := []rune(text)[:keep]
+	if i := strings.LastIndex(string(runes), " "); i >= 0 {
+		runes = []rune(strings.TrimSpace(string(runes[:i])))
+	}
+	return string(runes)
+}
+
+func cutFixMessageBodyToFit(body string, budget int) string {
+	body = strings.TrimSpace(body)
+	if budget <= 0 || body == "" {
+		return ""
+	}
+	if len(body) <= budget {
+		return body
+	}
+	cut := 0
+	for _, r := range body {
+		if cut+utf8.RuneLen(r) > budget {
+			break
+		}
+		cut += utf8.RuneLen(r)
+	}
+	body = body[:cut]
+	if i := strings.LastIndexAny(body, " \t\n"); i >= 0 {
+		body = body[:i]
+	}
+	return strings.TrimSpace(body)
 }
 
 // BranchValue returns the branch value exposed to commit and PR title
