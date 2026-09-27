@@ -163,8 +163,65 @@ func TestCommitRenderFixMessage_NormalizesMultilineSummary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "no-mistakes(document): update configuration docs"
+	want := "no-mistakes(document): update configuration\n\ndocs"
 	if got != want {
+		t.Fatalf("RenderFixMessage() = %q, want %q", got, want)
+	}
+}
+
+func TestCommitRenderFixMessage_MultiParagraphSummaryKeepsOneLineSubject(t *testing.T) {
+	t.Parallel()
+
+	summary := "Fixed. The failure came from this PR: the lint job failed on an unused import.\n\nCause: an unused import slipped through review.\n\nChanges: removed the unused import.\n\nVerification: ran the lint command again and it passes.\n\nRisk: low, no behavior change."
+	got, err := (Commit{}).RenderFixMessage(types.StepCI, summary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	subject, body, found := strings.Cut(got, "\n\n")
+	if !found {
+		t.Fatalf("RenderFixMessage() = %q, want a subject line plus a body", got)
+	}
+	if strings.Contains(subject, "\n") {
+		t.Fatalf("RenderFixMessage() subject = %q, want a single line", subject)
+	}
+	if want := "no-mistakes(ci): Fixed."; subject != want {
+		t.Fatalf("RenderFixMessage() subject = %q, want %q", subject, want)
+	}
+	for _, section := range []string{"Cause:", "Changes:", "Verification:", "Risk:"} {
+		if !strings.Contains(body, section) {
+			t.Fatalf("RenderFixMessage() body = %q, want it to keep %q", body, section)
+		}
+	}
+}
+
+func TestCommitRenderFixMessage_LongSingleLineSummaryCutsAtWordBoundary(t *testing.T) {
+	t.Parallel()
+
+	got, err := (Commit{}).RenderFixMessage(types.StepReview, "repair the widget renderer so it stops dropping trailing words in every long label on the dashboard screen today")
+	if err != nil {
+		t.Fatal(err)
+	}
+	subject, body, found := strings.Cut(got, "\n\n")
+	if !found {
+		t.Fatalf("RenderFixMessage() = %q, want a subject line plus a body", got)
+	}
+	if want := "no-mistakes(review): repair the widget renderer so it stops dropping trailing words in every"; subject != want {
+		t.Fatalf("RenderFixMessage() subject = %q, want %q", subject, want)
+	}
+	if want := "long label on the dashboard screen today"; body != want {
+		t.Fatalf("RenderFixMessage() body = %q, want %q", body, want)
+	}
+}
+
+func TestCommitRenderFixMessage_CustomTemplateKeepsBody(t *testing.T) {
+	t.Parallel()
+
+	commit := Commit{FixMessage: "fix(ci): {{.Summary}}"}
+	got, err := commit.RenderFixMessage(types.StepCI, "Fixed. The failure came from this PR.\n\nCause: an unused import.")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "fix(ci): Fixed.\n\nThe failure came from this PR.\n\nCause: an unused import."; got != want {
 		t.Fatalf("RenderFixMessage() = %q, want %q", got, want)
 	}
 }
