@@ -121,7 +121,7 @@ func TestReviewStep_FixRoundThatRewritesHistoryIsDiscarded(t *testing.T) {
 				t.Errorf("error blames an out-of-band writer for the fix round's own rewrite: %v", err)
 			}
 			if got := gitCmd(t, f.dir, "rev-parse", "HEAD"); got != f.roundStart {
-				t.Fatalf("worktree HEAD = %s, want the round's starting head %s restored", got, f.roundStart)
+				t.Fatalf("worktree HEAD = %s, want the recorded head %s restored", got, f.roundStart)
 			}
 			if rebaseInProgress(context.Background(), f.dir) {
 				t.Fatal("the discarded round left a rebase in progress")
