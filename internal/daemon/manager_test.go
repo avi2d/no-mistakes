@@ -360,7 +360,7 @@ func TestPushReceivedAllowsDifferentBranchRunsConcurrently(t *testing.T) {
 	}, &first); err != nil {
 		t.Fatal(err)
 	}
-	waitForStartedBranch(t, started, "feature/one")
+	waitForStartedBranch(t, d, started, "feature/one", first.RunID)
 
 	var second ipc.PushReceivedResult
 	if err := client.Call(ipc.MethodPushReceived, &ipc.PushReceivedParams{
@@ -371,7 +371,7 @@ func TestPushReceivedAllowsDifferentBranchRunsConcurrently(t *testing.T) {
 	}, &second); err != nil {
 		t.Fatal(err)
 	}
-	waitForStartedBranch(t, started, "feature/two")
+	waitForStartedBranch(t, d, started, "feature/two", second.RunID)
 
 	for _, tc := range []struct {
 		branch string
@@ -654,9 +654,9 @@ func (s *notifyBlockStep) Execute(sctx *pipeline.StepContext) (*pipeline.StepOut
 	return nil, sctx.Ctx.Err()
 }
 
-func waitForStartedBranch(t *testing.T, started <-chan string, branch string) {
+func waitForStartedBranch(t *testing.T, d *db.DB, started <-chan string, branch, runID string) {
 	t.Helper()
-	timeout := time.After(3 * time.Second)
+	timeout := time.After(daemonRunWaitTimeout())
 	for {
 		select {
 		case got := <-started:
@@ -664,7 +664,15 @@ func waitForStartedBranch(t *testing.T, started <-chan string, branch string) {
 				return
 			}
 		case <-timeout:
-			t.Fatalf("run for branch %s did not start", branch)
+			run, err := d.GetRun(runID)
+			if err != nil || run == nil {
+				t.Fatalf("run %s for branch %s did not start and could not be read: %v", runID, branch, err)
+			}
+			runErr := ""
+			if run.Error != nil {
+				runErr = *run.Error
+			}
+			t.Fatalf("run %s for branch %s did not start: status %s, error %q", runID, branch, run.Status, runErr)
 		}
 	}
 }
