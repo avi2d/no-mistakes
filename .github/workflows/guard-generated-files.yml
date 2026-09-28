@@ -39,13 +39,25 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          # A fork receives release-please output only by merging upstream.
+          UPSTREAM_URL: ${{ github.repository != 'kunchenguid/no-mistakes' && 'https://github.com/kunchenguid/no-mistakes.git' || '' }}
         run: |
           set -eu
           files=$(git diff --name-only "${BASE_SHA}...${HEAD_SHA}")
 
+          merged_upstream=""
+          if [ -n "${UPSTREAM_URL}" ]; then
+            git fetch --quiet --no-tags "${UPSTREAM_URL}" "+refs/heads/main:refs/remotes/upstream/main"
+            merged_upstream=$(git merge-base "${HEAD_SHA}" refs/remotes/upstream/main)
+          fi
+
           violated=""
           for path in CHANGELOG.md .release-please-manifest.json; do
             if printf '%s\n' "$files" | grep -qxF -- "$path"; then
+              if [ -n "$merged_upstream" ] &&
+                [ "$(git rev-parse --verify --quiet "${HEAD_SHA}:${path}")" = "$(git rev-parse --verify --quiet "${merged_upstream}:${path}")" ]; then
+                continue
+              fi
               violated="${violated} ${path}"
             fi
           done
