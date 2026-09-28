@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -336,6 +337,7 @@ func TestExecutor_ReviewCarryForward_DeletedFileFindingClosesWithoutRereport(t *
 	}
 	execGit(t, workDir, "add", "service.go")
 	execGit(t, workDir, "commit", "-m", "add service.go")
+	useWorktreeHeadAsRunHead(t, database, run, workDir)
 
 	round := 0
 	step := &adaptiveCallStep{
@@ -377,6 +379,60 @@ func TestExecutor_ReviewCarryForward_DeletedFileFindingClosesWithoutRereport(t *
 	if steps[0].FindingsJSON != nil {
 		t.Fatalf("finding about a deleted file was re-presented instead of closing: %s", *steps[0].FindingsJSON)
 	}
+}
+
+// A finding can name a file the fix is meant to create. A fixer that never
+// creates it has not resolved the finding, so absence alone must not close it.
+func TestExecutor_ReviewCarryForward_NeverCreatedFileFindingStaysOutstanding(t *testing.T) {
+	database, p, run, repo := setupTest(t)
+	workDir := t.TempDir()
+	initGitRepo(t, workDir)
+	useWorktreeHeadAsRunHead(t, database, run, workDir)
+
+	const missingTest = `{"findings":[{"id":"review-1","severity":"error","file":"service_test.go","description":"the new service has no test","action":"ask-user"}],"summary":"1 finding"}`
+	round := 0
+	step := &adaptiveCallStep{
+		name: types.StepReview,
+		fn: func(sctx *StepContext) (*StepOutcome, error) {
+			round++
+			if round == 1 {
+				return &StepOutcome{NeedsApproval: true, Findings: missingTest}, nil
+			}
+			return &StepOutcome{FixSummary: "no change"}, nil
+		},
+	}
+
+	exec := NewExecutor(database, p, nil, nil, []Step{step}, nil)
+	startExecutor(t, exec, run, repo, workDir)
+
+	waitForStepStatus(t, database, run.ID, types.StepReview, types.StepStatusAwaitingApproval)
+	if err := exec.Respond(types.StepReview, types.ActionFix, []string{"review-1"}); err != nil {
+		t.Fatal(err)
+	}
+	waitForStepStatus(t, database, run.ID, types.StepReview, types.StepStatusFixReview)
+
+	steps, err := database.GetStepsByRun(run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if steps[0].FindingsJSON == nil || !strings.Contains(*steps[0].FindingsJSON, "service_test.go") {
+		t.Fatalf("finding about a file the fixer never created was closed: %v", steps[0].FindingsJSON)
+	}
+}
+
+func useWorktreeHeadAsRunHead(t *testing.T, database *db.DB, run *db.Run, workDir string) {
+	t.Helper()
+	cmd := exec.Command("git", "rev-parse", "HEAD")
+	cmd.Dir = workDir
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("resolve worktree head: %v", err)
+	}
+	head := strings.TrimSpace(string(out))
+	if err := database.UpdateRunHeadSHA(run.ID, head); err != nil {
+		t.Fatal(err)
+	}
+	run.HeadSHA = head
 }
 
 // TestExecutor_ReviewCarryForward_PositiveCoverageClearsFinding is the other
@@ -1032,30 +1088,29 @@ func TestResolveVerifiedFindingsJSON_FilelessPendingFinding(t *testing.T) {
 
 // TestDropDeletedFileFindingsForIDsJSON pins the deleted-file half of the
 // carry contract at the pure-function level: only a pending (selected)
-// finding whose file is gone closes; an unselected finding and a file-less
-// finding are both left alone regardless of file existence.
+// finding whose file was deleted closes; an unselected finding and a
+// file-less finding are both left alone.
 func TestDropDeletedFileFindingsForIDsJSON(t *testing.T) {
-	exists := map[string]bool{"service.go": true}
-	fileExists := func(path string) bool { return exists[path] }
+	deleted := func(path string) bool { return path == "cache.go" }
 
-	got := dropDeletedFileFindingsForIDsJSON(reviewCarryTwoFindings, []string{"review-1", "review-2"}, fileExists)
+	got := dropDeletedFileFindingsForIDsJSON(reviewCarryTwoFindings, []string{"review-1", "review-2"}, deleted)
 	parsed, err := types.ParseFindingsJSON(got)
 	if err != nil {
 		t.Fatalf("parse result: %v", err)
 	}
 	if len(parsed.Items) != 1 || parsed.Items[0].ID != "review-1" {
-		t.Fatalf("items = %+v, want only review-1 (service.go exists, cache.go does not)", parsed.Items)
+		t.Fatalf("items = %+v, want only review-1 (cache.go was deleted, service.go was not)", parsed.Items)
 	}
 
-	// An unselected finding is left alone even when its file is gone.
-	got = dropDeletedFileFindingsForIDsJSON(reviewCarryTwoFindings, []string{"review-1"}, fileExists)
+	// An unselected finding is left alone even when its file was deleted.
+	got = dropDeletedFileFindingsForIDsJSON(reviewCarryTwoFindings, []string{"review-1"}, deleted)
 	if !strings.Contains(got, "review-2") {
-		t.Fatalf("unselected finding for a missing file was dropped: %s", got)
+		t.Fatalf("unselected finding for a deleted file was dropped: %s", got)
 	}
 
 	// A file-less finding is left alone: there is nothing to check.
 	filelessRaw := `{"findings":[{"id":"review-1","severity":"warning","description":"no file anchor","action":"ask-user"}],"summary":"1 finding"}`
-	got = dropDeletedFileFindingsForIDsJSON(filelessRaw, []string{"review-1"}, fileExists)
+	got = dropDeletedFileFindingsForIDsJSON(filelessRaw, []string{"review-1"}, func(string) bool { return true })
 	if !strings.Contains(got, "review-1") {
 		t.Fatalf("file-less pending finding was dropped: %s", got)
 	}

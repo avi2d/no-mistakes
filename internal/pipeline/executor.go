@@ -840,6 +840,21 @@ func (e *Executor) autoFixLimit(stepName types.StepName) int {
 	return e.config.AutoFixLimit(stepName)
 }
 
+// fileDeletedSince reports whether relPath existed at head and is gone from
+// workDir. Absence alone is not deletion: a finding can name the file its fix
+// is meant to create.
+func fileDeletedSince(ctx context.Context, workDir, head, relPath string) bool {
+	// An empty head would turn the object name into ":path", an index lookup.
+	if strings.TrimSpace(head) == "" {
+		return false
+	}
+	if _, err := git.Run(ctx, workDir, "cat-file", "-e", head+":"+relPath); err != nil {
+		return false
+	}
+	_, err := os.Stat(filepath.Join(workDir, relPath))
+	return errors.Is(err, os.ErrNotExist)
+}
+
 // executeStep runs a single step with approval coordination.
 // Returns whether to skip the remainder, an optional earlier restart step,
 // and any execution error.
@@ -1181,8 +1196,7 @@ rounds:
 			// A fix round that deletes a selected finding's file leaves the
 			// rereview nothing to cover, so coverage alone would keep it pending.
 			outstandingFindings = dropDeletedFileFindingsForIDsJSON(outstandingFindings, pendingVerificationIDs, func(relPath string) bool {
-				_, statErr := os.Stat(filepath.Join(sctx.WorkDir, relPath))
-				return statErr == nil
+				return fileDeletedSince(ctx, sctx.WorkDir, reviewStartingHeadSHA, relPath)
 			})
 			pendingVerificationIDs = retainFindingIDs(outstandingFindings, pendingVerificationIDs)
 			selectedOutstandingIDs = retainFindingIDs(outstandingFindings, selectedOutstandingIDs)

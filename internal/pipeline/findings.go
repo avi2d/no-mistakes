@@ -614,14 +614,14 @@ func resolveVerifiedFindingsJSON(outstandingRaw string, pendingIDs []string, rev
 }
 
 // dropDeletedFileFindingsForIDsJSON closes every finding in ids whose named
-// file is absent from the worktree at fileExists's head. Scope is limited to
-// ids (the round's pending verification set): a fix round can delete the
-// whole file a SELECTED finding named, leaving a later rereview nothing to
-// cover, and resolveVerifiedFindingsJSON's ReviewedPaths coverage requirement
-// would otherwise keep such a finding pending forever. A finding the operator
-// never selected is untouched here and keeps the ordinary carry rule; a
-// file-less finding is unaffected, since there is nothing to check.
-func dropDeletedFileFindingsForIDsJSON(raw string, ids []string, fileExists func(path string) bool) string {
+// file deleted reports as deleted. Scope is limited to ids (the round's
+// pending verification set): a fix round can delete the whole file a SELECTED
+// finding named, leaving a later rereview nothing to cover, and
+// resolveVerifiedFindingsJSON's ReviewedPaths coverage requirement would
+// otherwise keep such a finding pending forever. A finding the operator never
+// selected is untouched here and keeps the ordinary carry rule; a file-less
+// finding is unaffected, since there is nothing to check.
+func dropDeletedFileFindingsForIDsJSON(raw string, ids []string, deleted func(path string) bool) string {
 	if raw == "" || len(ids) == 0 {
 		return raw
 	}
@@ -638,7 +638,7 @@ func dropDeletedFileFindingsForIDsJSON(raw string, ids []string, fileExists func
 	filtered := types.FindingsMetadata(findings)
 	for _, item := range findings.Items {
 		if pending[item.ID] {
-			if file := normalizeCoveredPath(item.File); file != "" && !fileExists(file) {
+			if file := normalizeCoveredPath(item.File); file != "" && deleted(file) {
 				continue
 			}
 		}
