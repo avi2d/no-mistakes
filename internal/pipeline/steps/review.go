@@ -222,14 +222,19 @@ Previous review findings to address:
 	// findings; later steps own those. External / pre-existing lifecycle
 	// requirements stay in scope.
 	//
-	// TODO(intent-conformance-C, HELD): add the deterministic, zero-LLM
-	// net-deleted-author-lines git-diff backstop for the removal-of-required
-	// class - a fixer round that net-deletes author-added lines parks
-	// regardless of intent source. Held pending a scope decision.
 	historySection := executionContextPromptSection(sctx.WorkDir) + roundHistoryPromptSection(sctx) + uncertifiedRoundHistoryPromptSection(sctx) + fixRoundProvenanceClause(sctx) + userIntentPromptSection(sctx) + intentConformanceReviewClause(sctx) + pipelineDeliveryPhaseClause() + testguidance.Rule + testguidance.ReviewerAction
 
 	if len(decisions) > 0 {
 		historySection += decisionSection + recordedDecisionReviewRule
+	}
+
+	// Empty when no fix round changed an assertion, leaving other prompts byte-identical.
+	if sctx.Fixing {
+		from := strings.TrimSpace(sctx.ReviewStartingHeadSHA)
+		if from == "" {
+			from = sctx.Run.HeadSHA
+		}
+		historySection += testAssertionChangesSection(ctx, sctx.WorkDir, from)
 	}
 
 	// Path-scoped repository review guidance, taken from the trusted

@@ -65,7 +65,7 @@ func (s *TestStep) Execute(sctx *pipeline.StepContext) (*pipeline.StepOutcome, e
 	} else if sctx.Fixing {
 		historySection := executionContextPromptSection(sctx.WorkDir) + roundHistoryPromptSection(sctx) + userIntentPromptSection(sctx) + decisionSection + testguidance.Rule
 		fixPrompt := fmt.Sprintf(
-			`Fix the failing tests in this repository. Reproduce the specific failure, identify the root cause, and fix either the tests or the code so that failure passes.
+			`Fix the failing tests in this repository. Reproduce the specific failure, identify the root cause, and fix the code so that failure passes.
 
 Context:
 - branch: %s
@@ -75,6 +75,8 @@ Context:
 Rules:
 - Make the smallest correct root-cause fix.
 - Do not refactor beyond what is needed for that root-cause fix.
+- Change an existing assertion only when the requested intent changed it, and name each changed assertion in the summary.
+- If a test contradicts the stated intent, stop: leave the test untouched and say so in the summary instead of editing it.
 - If tests fail, determine whether the problem is a real product/code failure, a setup/environment problem you can fix, or a flaky/infrastructure issue.
 - Do NOT run linters, formatters, or static analysis tools.
 - Reproduce the specific failing case first (the exact test, package, script, or check named in the findings), then re-run only that focused verification after the fix.
