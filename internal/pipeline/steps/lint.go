@@ -20,7 +20,10 @@ func (s *LintStep) Execute(sctx *pipeline.StepContext) (*pipeline.StepOutcome, e
 		return nil, err
 	}
 	ctx := sctx.Ctx
-	baseSHA := resolveBranchBaseSHA(ctx, sctx.WorkDir, sctx.Run.BaseSHA, sctx.Repo.DefaultBranch)
+	baseSHA, err := resolveBranchBaseSHA(ctx, sctx, sctx.Run.BaseSHA, sctx.Repo.DefaultBranch)
+	if err != nil {
+		return nil, err
+	}
 	lintCmd := sctx.Config.Commands.Lint
 
 	if lintCmd == "" {
@@ -32,14 +35,6 @@ func (s *LintStep) Execute(sctx *pipeline.StepContext) (*pipeline.StepOutcome, e
 		if !sctx.Fixing {
 			if stash, ok := sctx.Shared.TakeHousekeepingLint(); ok {
 				return lintOutcomeFromHousekeeping(sctx, stash)
-			}
-			settled, err := housekeepingSettled(sctx)
-			if err != nil {
-				return nil, fmt.Errorf("check for an already housekept tree: %w", err)
-			}
-			if settled {
-				sctx.Log("housekeeping already produced this tree before Review revalidated it; nothing new to lint")
-				return &pipeline.StepOutcome{}, nil
 			}
 		}
 		sctx.Log("no lint command configured, asking agent to lint and fix...")
@@ -167,6 +162,7 @@ Previous lint findings to address:
 	sctx.Log(fmt.Sprintf("running linter: %s", lintCmd))
 	output, exitCode, err := runStepShellCommand(sctx, lintCmd)
 	if err != nil {
+		logConfiguredCommandOutput(sctx, output, types.StepLint)
 		return nil, fmt.Errorf("run lint command: %w", err)
 	}
 
