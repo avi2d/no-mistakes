@@ -178,7 +178,10 @@ func (s *CIStep) autoFixCI(sctx *pipeline.StepContext, host scm.Host, pr *scm.PR
 	if pr != nil && strings.TrimSpace(pr.BaseBranch) != "" {
 		baseBranch = strings.TrimSpace(pr.BaseBranch)
 	}
-	baseSHA := resolveBranchBaseSHA(ctx, sctx.WorkDir, sctx.Run.BaseSHA, baseBranch)
+	baseSHA, err := resolveBranchBaseSHA(ctx, sctx, sctx.Run.BaseSHA, baseBranch)
+	if err != nil {
+		return ciRepairResult{}, err
+	}
 	rebaseBaseSHA, baseTipFetched := resolveRunDefaultBranchTip(ctx, sctx, sctx.Run.BaseSHA, baseBranch)
 	promptBaseSHA := baseSHA
 	if mergeConflict {
@@ -192,7 +195,6 @@ func (s *CIStep) autoFixCI(sctx *pipeline.StepContext, host scm.Host, pr *scm.PR
 		if baseTipFetched {
 			mergeTarget = "origin/" + baseBranch
 		}
-		var err error
 		if merge, err = startMerge(ctx, sctx, mergeTarget); err != nil {
 			return ciRepairResult{}, fmt.Errorf("merge the base branch: %w", err)
 		}

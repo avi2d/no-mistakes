@@ -105,20 +105,20 @@ survival check cannot prove preservation, the private-only range is reported
 as at risk.
 
 **Accepted Decision 41-A (issue #983):** pipeline publication may replace a
-private mirror head that is **exactly equal to `Run.SubmittedHeadSHA`** without
-patch-ID or tree-survival proof. This narrow policy exception permits reviewed
-rebases and conflict resolutions to change the submitted patch. Ownership is
-not containment evidence.
+private mirror head that is **exactly equal to a head the publishing run itself
+placed on the mirror** without patch-ID or tree-survival proof: its
+`Run.SubmittedHeadSHA`, or, once it has published, its durable
+`Run.LastPushedSHA`. The last pushed head is recorded only after a verified push to the configured
+push target and mirror settlement, so it is never an external or newer head.
+This narrow policy exception permits reviewed rebases and conflict resolutions
+to change the submitted patch, including a CI merge-conflict repair that is
+revalidated from Review after the run has already published. The replacement
+head must still be review-approved, and the force push to the configured target
+stays leased on the same last pushed head. Ownership is not containment evidence. The
+exception does not extend to another recorded head, an agent-created head, an
+abbreviated SHA, or an external, newer, or divergent private head.
 
-The same exception covers a private mirror head **exactly equal to the run's own durable push binding**, `runs.last_pushed_sha`.
-Publication settles the mirror at a head only after the upstream verified it, so a mirror still at that head holds nothing but what the run itself published.
-The push-binding exception is what lets a CI merge-conflict repair under `rebase.strategy: rebase`, which rebases the published head onto a moved base and revalidates from Review, replace the run's earlier publication.
-Under `rebase.strategy: merge`, the repair contains the published head, so the mirror advances as a fast-forward and needs no exception.
-Agent-created or recorded-but-unpublished heads are not covered.
-
-The exception does not extend to another recorded head, another run's
-publication, an abbreviated SHA, or an external, newer, or divergent private
-head.
+Under `rebase.strategy: merge`, a CI merge-conflict repair contains the published head, so the mirror advances as a fast-forward and needs no exception.
 
 A fresh AXI submission receives the exception for exactly one head: the
 submitted head of the branch's latest run, once that run is terminal and its

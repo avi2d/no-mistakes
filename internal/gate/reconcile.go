@@ -18,7 +18,7 @@ type StaleBranchReconciliation struct {
 }
 
 // StaleBranchPlan is the verdict of a non-mutating stale-branch inspection.
-// Planning checks containment or the exact submitted-head policy exception
+// Planning checks containment or the exact run-owned-head policy exception
 // without touching any ref, so a caller can decide before it publishes anything;
 // applying the plan is the only step that archives and removes the branch.
 type StaleBranchPlan struct {
@@ -28,18 +28,6 @@ type StaleBranchPlan struct {
 	BranchRef            string
 	PreviousHead         string
 	ArchiveTag           string
-}
-
-// RunOwnedHeads are the only private heads a publishing run may replace without
-// containment proof. Submitted must be Run.SubmittedHeadSHA and Published the
-// run's own durable push binding; any other head needs proof.
-type RunOwnedHeads struct {
-	Submitted string
-	Published string
-}
-
-func (o RunOwnedHeads) owns(head string) bool {
-	return head != "" && (head == strings.TrimSpace(o.Submitted) || head == strings.TrimSpace(o.Published))
 }
 
 // AbandonedSubmission is the only private head a fresh submission may replace
@@ -72,14 +60,21 @@ func ReconcileStaleBranch(ctx context.Context, gateDir, workDir, branch, liveHea
 // Rewritten histories require both stable per-file patch identities and final
 // tree survival.
 func PlanStaleBranchReconciliation(ctx context.Context, gateDir, workDir, branch, liveHead string, abandoned AbandonedSubmission) (StaleBranchPlan, error) {
-	return planStaleBranchReconciliation(ctx, gateDir, workDir, branch, liveHead, RunOwnedHeads{Submitted: abandoned.Head}, abandoned.Publications, false)
+	return planStaleBranchReconciliation(ctx, gateDir, workDir, branch, liveHead, false, abandoned.Publications, abandoned.Head)
 }
 
-func PlanMirrorPublicationReconciliation(ctx context.Context, gateDir, workDir, branch, liveHead string, owned RunOwnedHeads) (StaleBranchPlan, error) {
-	return planStaleBranchReconciliation(ctx, gateDir, workDir, branch, liveHead, owned, nil, true)
+// PlanMirrorPublicationReconciliation is the pipeline-publication variant of
+// PlanStaleBranchReconciliation: it also leaves a newer descendant of the live
+// head in place. runOwnedHeads are the exact heads the publishing run itself
+// placed on the private mirror - Run.SubmittedHeadSHA and, once the run has
+// published, its durable Run.LastPushedSHA - and nothing else. Neither an
+// agent-created head nor any other recorded head is eligible; every other
+// mirror head still needs the full preservation proof.
+func PlanMirrorPublicationReconciliation(ctx context.Context, gateDir, workDir, branch, liveHead string, runOwnedHeads ...string) (StaleBranchPlan, error) {
+	return planStaleBranchReconciliation(ctx, gateDir, workDir, branch, liveHead, true, nil, runOwnedHeads...)
 }
 
-func planStaleBranchReconciliation(ctx context.Context, gateDir, workDir, branch, liveHead string, owned RunOwnedHeads, publications []string, preserveDescendants bool) (StaleBranchPlan, error) {
+func planStaleBranchReconciliation(ctx context.Context, gateDir, workDir, branch, liveHead string, preserveDescendants bool, publications []string, runOwnedHeads ...string) (StaleBranchPlan, error) {
 	var plan StaleBranchPlan
 	branch = strings.TrimSpace(branch)
 	liveHead = strings.TrimSpace(liveHead)
@@ -137,7 +132,7 @@ func planStaleBranchReconciliation(ctx context.Context, gateDir, workDir, branch
 			return plan, nil
 		}
 	}
-	exempt := owned.owns(gateHead)
+	exempt := isRunOwnedHead(gateHead, runOwnedHeads)
 	if exempt {
 		published, err := dropsPublishedCommit(ctx, gateDir, liveHead, gateHead, publications)
 		if err != nil {
@@ -174,6 +169,18 @@ func planStaleBranchReconciliation(ctx context.Context, gateDir, workDir, branch
 		PreviousHead:         gateHead,
 		ArchiveTag:           archiveTag,
 	}, nil
+}
+
+// isRunOwnedHead reports whether the private mirror head is exactly one of the
+// run-owned heads. Matching is on the full object ID only: an abbreviated or
+// empty entry never matches, so an unknown owner cannot widen the exception.
+func isRunOwnedHead(gateHead string, runOwnedHeads []string) bool {
+	for _, owned := range runOwnedHeads {
+		if owned = strings.TrimSpace(owned); owned != "" && owned == gateHead {
+			return true
+		}
+	}
+	return false
 }
 
 // ApplyStaleBranchReconciliation archives the planned head and then removes the
