@@ -273,3 +273,46 @@ func TestTestStep_FixMode_ContradictingTestStopsInsteadOfEditing(t *testing.T) {
 		t.Errorf("test fixer prompt still allows editing tests to pass:\n%s", fixPrompt)
 	}
 }
+
+func TestChangedTestAssertions_IgnoresNonTestFiles(t *testing.T) {
+	t.Parallel()
+	diff := "diff --git a/src/hooks.ts b/src/hooks.ts\n" +
+		"--- a/src/hooks.ts\n" +
+		"+++ b/src/hooks.ts\n" +
+		"@@ -4,3 +4,2 @@ export function format(names: string[]) {\n" +
+		"-    expect(names).toContain(pending);\n" +
+		"     return names.join();\n"
+	if got := changedTestAssertions(diff); len(got) != 0 {
+		t.Fatalf("changed assertions = %v, want none: a real assertion outside a test file is not a fix-round test edit", got)
+	}
+}
+
+func TestChangedTestAssertions_IgnoresCallsInsideLongerNames(t *testing.T) {
+	t.Parallel()
+	diff := "diff --git a/ui.test.ts b/ui.test.ts\n" +
+		"--- a/ui.test.ts\n" +
+		"+++ b/ui.test.ts\n" +
+		"@@ -8,5 +8,4 @@ test(\"renders\", () => {\n" +
+		"-    const render = useHook(label);\n" +
+		"-    if (isEqual(render, prev)) {\n" +
+		"-    if (protoEqual(render, prev)) {\n" +
+		"     expect(render.text).toBe(label);\n" +
+		" });\n"
+	if got := changedTestAssertions(diff); len(got) != 0 {
+		t.Fatalf("changed assertions = %v, want none: useHook holds ok( and protoEqual holds toEqual( without calling either", got)
+	}
+}
+
+func TestChangedTestAssertions_CountsDeletedTestFiles(t *testing.T) {
+	t.Parallel()
+	diff := "diff --git a/old_test.go b/old_test.go\n" +
+		"--- a/old_test.go\n" +
+		"+++ /dev/null\n" +
+		"@@ -3,3 +3,0 @@ func TestOld(t *testing.T) {\n" +
+		"-    require.Equal(t, 1, got)\n" +
+		" }\n"
+	got := changedTestAssertions(diff)
+	if len(got) != 1 || !strings.Contains(got[0], "old_test.go") {
+		t.Fatalf("changed assertions = %v, want the deleted test file assertion", got)
+	}
+}

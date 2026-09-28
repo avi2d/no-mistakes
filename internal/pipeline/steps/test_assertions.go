@@ -27,29 +27,53 @@ func isTestAssertionLine(content string) bool {
 		"assert ", "assertEqual(", "assertTrue(", "assertFalse(",
 		"pytest.raises", "pytest.fail(",
 	} {
-		if strings.Contains(trimmed, marker) {
+		if hasCallMarker(trimmed, marker) {
 			return true
 		}
 	}
 	return false
 }
 
+func hasCallMarker(line, marker string) bool {
+	for rest := line; ; {
+		i := strings.Index(rest, marker)
+		if i < 0 {
+			return false
+		}
+		if i == 0 || !isIdentChar(rest[i-1]) {
+			return true
+		}
+		rest = rest[i+len(marker):]
+	}
+}
+
+func isIdentChar(c byte) bool {
+	return c == '_' || c == '$' ||
+		'0' <= c && c <= '9' ||
+		'a' <= c && c <= 'z' ||
+		'A' <= c && c <= 'Z'
+}
+
 func changedTestAssertions(diff string) []string {
 	var out []string
-	file := ""
+	oldPath, newPath := "", ""
 	oldLine := 0
 	for _, line := range strings.Split(diff, "\n") {
 		switch {
+		case strings.HasPrefix(line, "--- "):
+			oldPath = strings.TrimPrefix(strings.TrimPrefix(line, "--- "), "a/")
 		case strings.HasPrefix(line, "+++ "):
-			path := strings.TrimPrefix(line, "+++ ")
-			path = strings.TrimPrefix(path, "b/")
-			file = path
+			newPath = strings.TrimPrefix(strings.TrimPrefix(line, "+++ "), "b/")
 		case strings.HasPrefix(line, "@@ "):
 			oldLine = parseOldStart(line)
-		case strings.HasPrefix(line, "--- ") || strings.HasPrefix(line, "diff --git"):
+		case strings.HasPrefix(line, "diff --git"):
 		case strings.HasPrefix(line, "-"):
 			oldLine++
-			if file != "" && isTestAssertionLine(line[1:]) {
+			file := newPath
+			if file == "" || file == "/dev/null" {
+				file = oldPath
+			}
+			if isTestFile(file) && isTestAssertionLine(line[1:]) {
 				out = append(out, fmt.Sprintf("%s:%d: %s", file, oldLine, strings.TrimSpace(line[1:])))
 			}
 		case strings.HasPrefix(line, "+"):
