@@ -86,7 +86,7 @@ func TestDoctorFailsWhenTheDaemonNamesAProxyNothingListensOn(t *testing.T) {
 	dead := deadProxyAddress(t)
 	live := liveProxyAddress(t)
 	t.Setenv("HTTPS_PROXY", "http://user:secret@"+dead)
-	t.Setenv("http_proxy", "http://"+live)
+	t.Setenv("ALL_PROXY", "http://"+live)
 	startDoctorDaemon(t)
 
 	out, err := executeCmd("doctor")
@@ -98,8 +98,8 @@ func TestDoctorFailsWhenTheDaemonNamesAProxyNothingListensOn(t *testing.T) {
 	if !failLine.MatchString(lines) {
 		t.Fatalf("doctor did not fail on the dead HTTPS_PROXY %s:\n%s", dead, out)
 	}
-	if !regexp.MustCompile(`✓.*daemon proxy.*http_proxy ` + regexp.QuoteMeta(live) + ` is listening`).MatchString(lines) {
-		t.Fatalf("doctor did not pass the listening http_proxy %s:\n%s", live, out)
+	if !regexp.MustCompile(`✓.*daemon proxy.*ALL_PROXY ` + regexp.QuoteMeta(live) + ` is listening`).MatchString(lines) {
+		t.Fatalf("doctor did not pass the listening ALL_PROXY %s:\n%s", live, out)
 	}
 	if strings.Contains(out, "secret") {
 		t.Fatalf("doctor printed the proxy credentials:\n%s", out)
