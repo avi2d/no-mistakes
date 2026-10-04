@@ -25,16 +25,18 @@ func TestReviewerChainFloorAndEnvironmentAreEntryScoped(t *testing.T) {
 	script := "#!/bin/sh\nprintf '%s' \"$REVIEWER_ACCOUNT\" > " + shellQuoteForTest(capture) + "\ncat >/dev/null\nprintf '%s\\n' '" + response + "'\n"
 	if runtime.GOOS == "windows" {
 		bin += ".cmd"
-		script = "@echo off\r\necho %REVIEWER_ACCOUNT% > \"" + capture + "\"\r\nmore > nul\r\necho " + response + "\r\n"
+		script = "@echo off\r\n>\"" + capture + "\" echo %REVIEWER_ACCOUNT%\r\nmore > nul\r\necho " + response + "\r\n"
 	}
 	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	floorCommand := `printf '%s\n' '{"remaining":20}'`
-	wantSkipReason := `"remaining 20% is below the 30% minimum"`
+	quota := filepath.Join(dir, "quota.json")
+	if err := os.WriteFile(quota, []byte(`{"remaining":20}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	floorCommand := "cat " + shellQuoteForTest(quota)
 	if runtime.GOOS == "windows" {
-		floorCommand = `exit /b 1`
-		wantSkipReason = `"quota command failed"`
+		floorCommand = "type " + quota
 	}
 	globalYAML := fmt.Sprintf(`agent: pi
 reviewer_chain:
@@ -65,7 +67,7 @@ reviewer_chain:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(account) != "second" || !strings.Contains(result.ReviewerChainTrace, `"selected":1`) || !strings.Contains(result.ReviewerChainTrace, wantSkipReason) {
+	if strings.TrimRight(string(account), "\r\n") != "second" || !strings.Contains(result.ReviewerChainTrace, `"selected":1`) || !strings.Contains(result.ReviewerChainTrace, `"remaining 20% is below the 30% minimum"`) {
 		t.Fatalf("account=%q trace=%q", account, result.ReviewerChainTrace)
 	}
 }
