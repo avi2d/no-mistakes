@@ -17,6 +17,20 @@ func configurableFixCommitScenario(t *testing.T, fixSummary string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "configurable-fix-commit-scenario.yaml")
 	content := strings.Replace(`actions:
+  - match: "Fix-round provenance:"
+    text: "reviewed the updated value"
+    structured:
+      findings:
+        - id: "configurable-fix-1"
+          severity: warning
+          file: "feature.txt"
+          line: 1
+          description: "the replacement value remains unchecked before use"
+          action: auto-fix
+      summary: "the replacement value still needs validation"
+      risk_level: medium
+      risk_rationale: "the replacement value is unchecked"
+      risk_scope: source-or-external
   - match: "Investigate previous review findings"
     text: "fixed unsafe value"
     edits:
