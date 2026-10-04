@@ -79,7 +79,7 @@ func TestCIWorkflow_RetainsFullRaceSuiteAsBroadRegressionOwner(t *testing.T) {
 	if !strings.Contains(content, "run: go test -race ./...") {
 		t.Fatal("CI workflow must still run go test -race ./... as the broad regression owner")
 	}
-	if !strings.Contains(content, "if: runner.os != 'Windows'") {
-		t.Fatal("CI workflow must keep the Unix race-test branch")
+	if got := ciJob(t, loadCIWorkflowDoc(t), "test-linux").Name; got != "test (ubuntu-latest)" {
+		t.Fatalf("the full race suite must stay on the required test (ubuntu-latest) check, got job name %q", got)
 	}
 }

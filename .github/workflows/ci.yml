@@ -33,37 +33,9 @@ jobs:
       - name: Vet
         run: go vet ./...
 
-  test:
-    name: ${{ matrix.name }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            name: test (ubuntu-latest)
-          - os: macos-latest
-            name: test (macos-latest)
-          - os: windows-latest
-            name: test (windows-core)
-            shard: core
-          - os: windows-latest
-            name: test (windows-git)
-            shard: git
-          - os: windows-latest
-            name: test (windows-steps)
-            shard: steps
-    runs-on: ${{ matrix.os }}
-    # Sized for each Windows shard, which still sets the floor: git.exe plus
-    # Defender tax makes git-backed packages ~10x their Linux time (see the
-    # Defender note below). A single Windows `./...` job compiled every binary
-    # and then ran those packages sequentially, so total wall could exceed
-    # timeout-minutes with no package hitting go test -timeout - an
-    # evidence-free cancellation. Git-heavy packages are split from the core
-    # remainder, and pipeline/steps is its own shard so it no longer serializes
-    # behind the other git-heavy packages on a 4-core GitHub-hosted runner.
-    # Each shard's wall stays below this cap so a real hang dumps goroutines.
-    # 40 is a runaway guard, not a target - Linux and macOS finish far inside
-    # it, and it still keeps a wedged runner well short of the six-hour default.
+  test-linux:
+    name: test (ubuntu-latest)
+    runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v6
@@ -72,17 +44,87 @@ jobs:
         with:
           go-version-file: go.mod
 
-      # The Windows suite is process-spawn bound, not compute bound: the
-      # git-backed packages run thousands of git.exe invocations, and Defender
-      # real-time scanning taxes every spawn and every file the temp repos
-      # create. That tax is why the same packages cost ~10x their Linux time
-      # (internal/git 5.7s -> 53s, internal/branchsync 31s -> 415s) and why the
-      # job repeatedly overran timeout-minutes and was cancelled. Excluding the
-      # ephemeral trees this job creates itself is the cheapest structural fix;
-      # the runner is disposable and no other workload shares it. Best effort on
-      # purpose - a runner image without the Defender cmdlets must not fail CI.
+      - name: Test on Linux
+        run: go test -race ./...
+
+      - name: Build
+        run: go build ./cmd/no-mistakes
+
+  # Every shard below is one matrix row: `packages` lists its packages, or
+  # `exclude` makes it the `go list ./...` remainder; `run` and `skip` split one
+  # package's tests by name. The workflow tests resolve every row and fail
+  # unless each test lands in exactly one shard per operating system.
+  test-macos:
+    name: test (${{ matrix.shard }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: macos-1
+            packages: ./internal/pipeline/steps/... ./internal/cli ./internal/scm/forgejo ./internal/scm/gitlab ./internal/db
+          - shard: macos-2
+            exclude: '/internal/(pipeline/steps(/.*)?|cli|scm/forgejo|scm/gitlab|db)$'
+    runs-on: macos-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Test on macOS
+        env:
+          NM_CI_PACKAGES: ${{ matrix.packages }}
+          NM_CI_EXCLUDE: ${{ matrix.exclude }}
+        run: |
+          if [ -n "$NM_CI_EXCLUDE" ]; then
+            pkgs=$(go list ./... | grep -Ev "$NM_CI_EXCLUDE")
+          else
+            pkgs=$NM_CI_PACKAGES
+          fi
+          go test -race $pkgs
+
+      - name: Build
+        run: go build ./cmd/no-mistakes
+
+  # The Windows leg is process-spawn bound: git-backed packages cost ~10x their
+  # Linux time (internal/git 5.7s -> 53s, internal/branchsync 31s -> 415s), so
+  # the slowest packages are split by test name across shards. Each row's go
+  # test -timeout stays well inside timeout-minutes so a hang dumps goroutines
+  # instead of ending in an evidence-free job cancellation.
+  test-windows-steps:
+    name: test (${{ matrix.shard }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: windows-steps-1
+            packages: ./internal/pipeline/steps/...
+            run: '^Test[A-D]'
+            timeout: 15m
+          - shard: windows-steps-2
+            packages: ./internal/pipeline/steps/...
+            run: '^Test([E-O]|P[^u])'
+            timeout: 15m
+          - shard: windows-steps-3
+            packages: ./internal/pipeline/steps/...
+            skip: '^Test([A-O]|P[^u])'
+            timeout: 15m
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps: &windows-test-steps
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      # Defender real-time scanning taxes every git.exe spawn and every file the
+      # temp repos create. The runner is disposable and runs nothing else, so
+      # excluding the trees this job creates is safe. Best effort on purpose: a
+      # runner image without the Defender cmdlets must not fail CI.
       - name: Exclude CI build and test trees from Defender scanning
-        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           try {
@@ -101,35 +143,104 @@ jobs:
             Write-Host "::warning::Defender exclusions unavailable, Windows tests run untuned: $_"
           }
 
-      - name: Test on Unix
-        if: runner.os != 'Windows'
-        run: go test -race ./...
-
-      # Git-heavy packages are the Windows wall floor. NM_CI_WINDOWS_GIT_EXCLUDE
-      # on the core shard is the union of the git and steps shards; the workflow
-      # tests resolve every shard through `go list` and fail if they drift or
-      # overlap. pipeline/steps is its own shard (~15 min) so it runs in
-      # parallel with the remaining git-heavy packages instead of serializing
-      # behind them.
-      - name: Test on Windows (git-heavy)
-        if: runner.os == 'Windows' && matrix.shard == 'git'
-        run: go test -v -timeout=15m ./internal/git ./internal/branchsync ./internal/gate ./internal/evidence ./internal/daemon ./internal/eval
-
-      - name: Test on Windows (pipeline/steps)
-        if: runner.os == 'Windows' && matrix.shard == 'steps'
-        run: go test -v -timeout=25m ./internal/pipeline/steps/...
-
-      - name: Test on Windows (core)
-        if: runner.os == 'Windows' && matrix.shard == 'core'
+      - name: Test on Windows
         shell: pwsh
         env:
-          NM_CI_WINDOWS_GIT_EXCLUDE: '/internal/(git|branchsync|gate|evidence|pipeline/steps(/.*)?|daemon|eval)$'
+          NM_CI_PACKAGES: ${{ matrix.packages }}
+          NM_CI_EXCLUDE: ${{ matrix.exclude }}
+          NM_CI_RUN: ${{ matrix.run }}
+          NM_CI_SKIP: ${{ matrix.skip }}
+          NM_CI_TIMEOUT: ${{ matrix.timeout }}
         run: |
-          $pkgs = go list ./... | Where-Object { $_ -notmatch $env:NM_CI_WINDOWS_GIT_EXCLUDE }
-          go test -v -timeout=15m @pkgs
+          if ($env:NM_CI_EXCLUDE) {
+            $pkgs = go list ./... | Where-Object { $_ -notmatch $env:NM_CI_EXCLUDE }
+          } else {
+            $pkgs = -split $env:NM_CI_PACKAGES
+          }
+          # go test with no packages silently tests the current directory.
+          if (-not $pkgs) { throw "shard resolved no packages" }
+          $filters = @()
+          if ($env:NM_CI_RUN) { $filters += "-run=$env:NM_CI_RUN" }
+          if ($env:NM_CI_SKIP) { $filters += "-skip=$env:NM_CI_SKIP" }
+          # Recording a cacheable result re-stats every file the tests touched,
+          # which on Windows ran for minutes after the tests themselves passed.
+          go test -v -count=1 "-timeout=$env:NM_CI_TIMEOUT" @filters @pkgs
 
       - name: Build
         run: go build ./cmd/no-mistakes
+
+  test-windows-git:
+    name: test (${{ matrix.shard }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: windows-git-1
+            packages: ./internal/branchsync
+            run: '^Test([A-Q]|Recover[A-K])'
+            timeout: 15m
+          - shard: windows-git-2
+            packages: ./internal/branchsync
+            skip: '^Test([A-Q]|Recover[A-K])'
+            timeout: 15m
+          - shard: windows-git-3
+            packages: ./internal/daemon
+            timeout: 15m
+          - shard: windows-git-4
+            packages: ./internal/eval ./internal/gate ./internal/git ./internal/evidence
+            timeout: 15m
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps: *windows-test-steps
+
+  test-windows-core:
+    name: test (${{ matrix.shard }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: windows-core-1
+            packages: ./internal/cli
+            run: '^Test(Axi[R-Z]|H|[S-Z])'
+            timeout: 15m
+          - shard: windows-core-2
+            packages: ./internal/cli
+            skip: '^Test(Axi[R-Z]|H|[S-Z])'
+            timeout: 15m
+          - shard: windows-core-3
+            exclude: '/internal/(cli|git|branchsync|gate|evidence|daemon|eval|pipeline/steps(/.*)?)$'
+            timeout: 15m
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps: *windows-test-steps
+
+  # Branch protection requires these check names, one per shard group.
+  test-gate:
+    name: test (${{ matrix.group }})
+    needs: [test-macos, test-windows-core, test-windows-git, test-windows-steps]
+    if: always()
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - group: macos-latest
+            job: test-macos
+          - group: windows-core
+            job: test-windows-core
+          - group: windows-git
+            job: test-windows-git
+          - group: windows-steps
+            job: test-windows-steps
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every shard in the group to pass
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+          JOB: ${{ matrix.job }}
+        run: |
+          result=$(jq -r --arg job "$JOB" '.[$job].result' <<<"$NEEDS")
+          echo "$JOB: $result"
+          test "$result" = success
 
   e2e:
     runs-on: ubuntu-latest
