@@ -186,3 +186,76 @@ func TestRunCleanupReapsRunLogsAcrossTheWholeTree(t *testing.T) {
 		t.Error("a fresh run log was removed by the whole-tree reap")
 	}
 }
+
+func TestReapRunLogsKeepsFailedAndCancelledRunsPastTheRunCeiling(t *testing.T) {
+	f := newRunLogFixture(t)
+
+	failed := f.seed("failed", types.RunFailed, 10*24*time.Hour)
+	cancelled := f.seed("cancelled", types.RunCancelled, 9*24*time.Hour)
+	oldCompleted := f.seed("old-completed", types.RunCompleted, 3*time.Hour)
+	newCompleted := f.seed("new-completed", types.RunCompleted, time.Hour)
+
+	reapRunLogs(f.db, f.root, evidenceReapPolicy{Retention: 14 * 24 * time.Hour, MaxRuns: 1}, time.Now())
+
+	if !f.exists(failed) {
+		t.Error("a failed run's log younger than 14 days was trimmed by the run ceiling")
+	}
+	if !f.exists(cancelled) {
+		t.Error("a cancelled run's log younger than 14 days was trimmed by the run ceiling")
+	}
+	if f.exists(oldCompleted) {
+		t.Error("the older completed run log survived the run ceiling")
+	}
+	if !f.exists(newCompleted) {
+		t.Error("kept failed and cancelled run logs took the newest completed run's ceiling slot")
+	}
+}
+
+func TestReapRunLogsKeepsFailedAndCancelledRunsPastAShortRetention(t *testing.T) {
+	f := newRunLogFixture(t)
+
+	failed := f.seed("failed", types.RunFailed, 2*24*time.Hour)
+	cancelled := f.seed("cancelled", types.RunCancelled, 2*24*time.Hour)
+	completed := f.seed("completed", types.RunCompleted, 2*24*time.Hour)
+
+	reapRunLogs(f.db, f.root, evidenceReapPolicy{Retention: time.Hour}, time.Now())
+
+	if !f.exists(failed) {
+		t.Error("a failed run's log younger than 14 days was removed by a shorter retention")
+	}
+	if !f.exists(cancelled) {
+		t.Error("a cancelled run's log younger than 14 days was removed by a shorter retention")
+	}
+	if f.exists(completed) {
+		t.Error("a completed run's log outlived the retention window")
+	}
+}
+
+func TestReapRunLogsReapsFailedAndCancelledRunsAfterFourteenDaysByRetention(t *testing.T) {
+	f := newRunLogFixture(t)
+
+	failed := f.seed("failed", types.RunFailed, 15*24*time.Hour)
+	cancelled := f.seed("cancelled", types.RunCancelled, 15*24*time.Hour)
+
+	reapRunLogs(f.db, f.root, evidenceReapPolicy{Retention: time.Hour}, time.Now())
+
+	if f.exists(failed) || f.exists(cancelled) {
+		t.Error("a failed or cancelled run's log outlived both 14 days and the retention window")
+	}
+}
+
+func TestReapRunLogsReapsFailedRunsAfterFourteenDaysByTheRunCeiling(t *testing.T) {
+	f := newRunLogFixture(t)
+
+	failed := f.seed("failed", types.RunFailed, 15*24*time.Hour)
+	newest := f.seed("newest", types.RunCompleted, time.Hour)
+
+	reapRunLogs(f.db, f.root, evidenceReapPolicy{MaxRuns: 1}, time.Now())
+
+	if f.exists(failed) {
+		t.Error("a failed run's log older than 14 days stayed outside the run ceiling")
+	}
+	if !f.exists(newest) {
+		t.Error("the newest run log was trimmed by the run ceiling")
+	}
+}
