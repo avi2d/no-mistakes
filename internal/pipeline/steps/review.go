@@ -469,6 +469,15 @@ Risk assessment (after listing all findings):
 			findings, err = parseReviewAnalyzerOutput(result)
 			if err == nil && sctx.Fixing {
 				err = rejectUnchangedFixFindings(sctx.PreviousFindings, findings)
+				if err != nil && attempt == reviewAnalyzerMaxAttempts {
+					var dropped int
+					findings, dropped = dropUnchangedFixFindings(sctx.PreviousFindings, findings)
+					if dropped > 0 {
+						findings.Summary = fmt.Sprintf("reviewed current head; dropped %d unchanged carried finding(s)", dropped)
+						sctx.Log(fmt.Sprintf("dropped %d unchanged carried finding(s) after rereview retries", dropped))
+						err = nil
+					}
+				}
 			}
 			if err == nil {
 				break
@@ -765,20 +774,39 @@ func (s *ReviewStep) appendOpenReviewQuestionFindings(sctx *pipeline.StepContext
 }
 
 func rejectUnchangedFixFindings(previousRaw string, current Findings) error {
-	previous, err := types.ParseFindingsJSON(previousRaw)
-	if err != nil {
-		return nil
-	}
-	previousDescriptions := make(map[string]struct{}, len(previous.Items))
-	for _, finding := range previous.Items {
-		previousDescriptions[finding.File+"\x00"+finding.Description] = struct{}{}
-	}
+	previousDescriptions := previousFixFindingDescriptions(previousRaw)
 	for _, finding := range current.Items {
 		if _, unchanged := previousDescriptions[finding.File+"\x00"+finding.Description]; unchanged {
 			return fmt.Errorf("finding %s repeats selected finding text unchanged; verify it against the current head, then restate it with current evidence or omit it if fixed", finding.ID)
 		}
 	}
 	return nil
+}
+
+func dropUnchangedFixFindings(previousRaw string, current Findings) (Findings, int) {
+	previousDescriptions := previousFixFindingDescriptions(previousRaw)
+	retained := current.Items[:0]
+	for _, finding := range current.Items {
+		if _, unchanged := previousDescriptions[finding.File+"\x00"+finding.Description]; unchanged {
+			continue
+		}
+		retained = append(retained, finding)
+	}
+	dropped := len(current.Items) - len(retained)
+	current.Items = retained
+	return current, dropped
+}
+
+func previousFixFindingDescriptions(raw string) map[string]struct{} {
+	previous, err := types.ParseFindingsJSON(raw)
+	if err != nil {
+		return nil
+	}
+	descriptions := make(map[string]struct{}, len(previous.Items))
+	for _, finding := range previous.Items {
+		descriptions[finding.File+"\x00"+finding.Description] = struct{}{}
+	}
+	return descriptions
 }
 
 // parseReviewAnalyzerOutput validates a review turn's structured findings. A

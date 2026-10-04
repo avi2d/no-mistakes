@@ -33,6 +33,14 @@ func axiScenario(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "axi-scenario.yaml")
 	content := `actions:
+  - match: "Fix-round provenance:"
+    text: "fixed potential nil dereference"
+    structured:
+      findings: []
+      summary: "no issues found"
+      risk_level: low
+      risk_rationale: "fix resolved the finding"
+      risk_scope: source-or-external
   - match: "Review the code changes and return structured findings"
     text: "review found a warning"
     structured:
@@ -85,6 +93,20 @@ func branchSyncScenario(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "branch-sync-scenario.yaml")
 	content := `actions:
+  - match: "Fix-round provenance:"
+    text: "reviewed updated value"
+    structured:
+      findings:
+        - id: "sync-1"
+          severity: warning
+          file: "feature.txt"
+          line: 1
+          description: "the replacement value remains unchecked before use"
+          action: auto-fix
+      summary: "updated value still needs validation"
+      risk_level: medium
+      risk_rationale: "the replacement remains unchecked"
+      risk_scope: source-or-external
   - match: "Investigate previous review findings"
     text: "fixed unsafe value"
     edits:
@@ -615,6 +637,20 @@ func rebaseCustodyScenario(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "rebase-custody-scenario.yaml")
 	content := `actions:
+  - match: "Fix-round provenance:"
+    text: "reviewed added guard helper"
+    structured:
+      findings:
+        - id: "rebase-1"
+          severity: warning
+          file: "guard.txt"
+          line: 1
+          description: "the added helper does not yet guard the feature path"
+          action: auto-fix
+      summary: "the helper leaves the feature path unguarded"
+      risk_level: medium
+      risk_rationale: "the helper does not cover the feature path"
+      risk_scope: source-or-external
   - match: "Investigate previous review findings"
     text: "added a guard helper"
     edits:
