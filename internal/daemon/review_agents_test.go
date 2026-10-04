@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -22,19 +23,28 @@ func TestReviewerChainFloorAndEnvironmentAreEntryScoped(t *testing.T) {
 	bin := filepath.Join(dir, "pi")
 	const response = `{"type":"agent_end","messages":[{"role":"assistant","content":[{"type":"text","text":"ok"}]}]}`
 	script := "#!/bin/sh\nprintf '%s' \"$REVIEWER_ACCOUNT\" > " + shellQuoteForTest(capture) + "\ncat >/dev/null\nprintf '%s\\n' '" + response + "'\n"
+	if runtime.GOOS == "windows" {
+		bin += ".cmd"
+		script = "@echo off\r\necho %REVIEWER_ACCOUNT% > \"" + capture + "\"\r\nmore > nul\r\necho " + response + "\r\n"
+	}
 	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	global, err := config.LoadGlobalFromBytes([]byte(`agent: pi
+	floorCommand := `echo {"remaining":20}`
+	if runtime.GOOS == "windows" {
+		floorCommand = `cmd /c echo {"remaining":20}`
+	}
+	globalYAML := fmt.Sprintf(`agent: pi
 reviewer_chain:
   - agent: pi
     model: first
     env: {REVIEWER_ACCOUNT: first}
-    floor: {command: "echo {\"remaining\":20}", field: remaining, minimum: 30}
+    floor: {command: %q, field: remaining, minimum: 30}
   - agent: pi
     model: second
     env: {REVIEWER_ACCOUNT: second}
-`))
+`, floorCommand)
+	global, err := config.LoadGlobalFromBytes([]byte(globalYAML))
 	if err != nil {
 		t.Fatal(err)
 	}
