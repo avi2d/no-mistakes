@@ -9,6 +9,29 @@ import (
 	"time"
 )
 
+func TestIsUsageLimitError(t *testing.T) {
+	for _, tt := range []struct {
+		message string
+		want    bool
+	}{
+		{"usage limit reached", true},
+		{"rate_limit_error: too many requests", true},
+		{"daily limit reached", true},
+		{"credits exhausted", true},
+		{"insufficient_quota", true},
+		{"invalid response", false},
+	} {
+		t.Run(tt.message, func(t *testing.T) {
+			if got := IsUsageLimitError(errors.New(tt.message)); got != tt.want {
+				t.Fatalf("IsUsageLimitError(%q) = %v, want %v", tt.message, got, tt.want)
+			}
+		})
+	}
+	if IsUsageLimitError(fmt.Errorf("quota reported during cancellation: %w", context.DeadlineExceeded)) {
+		t.Fatal("canceled quota result qualified for fallback")
+	}
+}
+
 func TestClassifyTransient_Positive(t *testing.T) {
 	cases := []struct {
 		name    string

@@ -1423,6 +1423,9 @@ func buildStepDetails(summaryLine string, sr *db.StepResult, rounds []*db.StepRo
 	missingRoundFindingsData := sr.FindingsJSON != nil && !roundsHaveFindings(rounds) && !roundsHaveParseFailure(rounds)
 
 	for _, r := range rounds {
+		if sr.StepName == types.StepReview && r.ReviewerAgent != nil && strings.TrimSpace(*r.ReviewerAgent) != "" {
+			inner.WriteString("Reviewed by " + *r.ReviewerAgent + ".\n\n")
+		}
 		isFixRound := r.IsFixRound()
 		if isFixRound {
 			inner.WriteString(fixRoundLine(r))

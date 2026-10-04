@@ -252,7 +252,9 @@ type Result struct {
 	ModelProvider string
 	// Provider is the adapter provider that served this invocation. It lets
 	// fallback wrappers persist a session against the provider that minted it.
-	Provider string
+	Provider           string
+	AgentIdentity      string
+	ReviewerChainTrace string
 	// Metrics is the bounded per-invocation activity evidence the adapter
 	// extracted from its event stream (round-trips, tool calls + categories,
 	// subprocess wait time). Nil means the adapter reported nothing, which is

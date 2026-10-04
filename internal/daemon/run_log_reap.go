@@ -9,7 +9,10 @@ import (
 	"time"
 
 	"github.com/kunchenguid/no-mistakes/internal/db"
+	"github.com/kunchenguid/no-mistakes/internal/types"
 )
+
+const failedRunLogRetention = 14 * 24 * time.Hour
 
 // reapRunLogs bounds <NM_HOME>/logs/<run_id>, the per-run step-log directory
 // Executor.Execute/Resume create (paths.RunLogDir) and never anything else
@@ -32,6 +35,9 @@ import (
 // "empty directory" rule - MkdirAll here always precedes at least one step
 // log being opened for append, so an empty log directory is not the dominant
 // case it is for evidence.
+//
+// A failed or cancelled run's log is the only record of why it stopped, so for
+// failedRunLogRetention it is exempt from both bounds and takes no ceiling slot.
 func reapRunLogs(d *db.DB, root string, policy evidenceReapPolicy, now time.Time) {
 	entries, err := os.ReadDir(root)
 	if err != nil {
@@ -42,6 +48,7 @@ func reapRunLogs(d *db.DB, root string, policy evidenceReapPolicy, now time.Time
 		path    string
 		modTime time.Time
 		runID   string
+		status  types.RunStatus
 	}
 	candidates := make([]candidate, 0, len(entries))
 	for _, entry := range entries {
@@ -77,7 +84,7 @@ func reapRunLogs(d *db.DB, root string, policy evidenceReapPolicy, now time.Time
 		if newest, ok := newestFileModTime(path); ok && newest.After(modTime) {
 			modTime = newest
 		}
-		candidates = append(candidates, candidate{path: path, modTime: modTime, runID: runID})
+		candidates = append(candidates, candidate{path: path, modTime: modTime, runID: runID, status: run.Status})
 	}
 
 	sort.SliceStable(candidates, func(i, j int) bool {
@@ -87,6 +94,9 @@ func reapRunLogs(d *db.DB, root string, policy evidenceReapPolicy, now time.Time
 	removed := 0
 	survivors := make([]candidate, 0, len(candidates))
 	for _, c := range candidates {
+		if keepsFailedRunLog(c.status, now.Sub(c.modTime)) {
+			continue
+		}
 		expired := policy.Retention > 0 && now.Sub(c.modTime) > policy.Retention
 		if expired {
 			if removeRunLogDir(c.path, c.runID) {
@@ -108,6 +118,10 @@ func reapRunLogs(d *db.DB, root string, policy evidenceReapPolicy, now time.Time
 	if removed > 0 {
 		slog.Info("reaped run logs", "root", root, "removed", removed)
 	}
+}
+
+func keepsFailedRunLog(status types.RunStatus, age time.Duration) bool {
+	return (status == types.RunFailed || status == types.RunCancelled) && age <= failedRunLogRetention
 }
 
 func removeRunLogDir(path, runID string) bool {

@@ -38,6 +38,58 @@ func loadGlobalConfigError(t *testing.T, data string) error {
 	return err
 }
 
+func TestLoadGlobal_ReviewerChainRejectsMixedSelection(t *testing.T) {
+	err := loadGlobalConfigError(t, `
+reviewer_chain:
+  - agent: pi
+    model: gpt-6.1-sol
+review_agents:
+  reviewer:
+    agent: pi
+    model: other
+`)
+	if !strings.Contains(err.Error(), "cannot be combined") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestLoadGlobal_ReviewerChain(t *testing.T) {
+	cfg := writeGlobalConfig(t, `
+reviewer_chain:
+  - agent: pi
+    model: openai-codex/gpt-6.1-sol
+    env:
+      CODEX_PROFILE: subscription
+    floor:
+      command: quota-axi --json
+      field: accounts.codex.remaining_percent
+      minimum: 30
+  - agent: pi
+    model: claude-bridge/claude-opus-5-5
+    env:
+      CLAUDE_CONFIG_DIR: /accounts/pro
+    floor:
+      command: clauth status --json
+      field: remaining_percent
+      minimum: 30
+`)
+	if len(cfg.ReviewerChain) != 2 {
+		t.Fatalf("reviewer chain has %d entries, want 2", len(cfg.ReviewerChain))
+	}
+	if got := cfg.ReviewerChain[0].Model; got != "openai-codex/gpt-6.1-sol" {
+		t.Fatalf("first reviewer = %q", got)
+	}
+	if got := cfg.ReviewerChain[1].Model; got != "claude-bridge/claude-opus-5-5" {
+		t.Fatalf("second reviewer = %q", got)
+	}
+	if got := cfg.ReviewerChain[0].Env["CODEX_PROFILE"]; got != "subscription" {
+		t.Fatalf("first reviewer environment = %q", got)
+	}
+	if floor := cfg.ReviewerChain[0].Floor; floor == nil || floor.Command != "quota-axi --json" || floor.Field != "accounts.codex.remaining_percent" || floor.Minimum != 30 {
+		t.Fatalf("first reviewer floor = %#v", floor)
+	}
+}
+
 func TestLoadGlobal_AgentConfig(t *testing.T) {
 	cfg := writeGlobalConfig(t, `
 agent_config:
@@ -202,6 +254,16 @@ func TestACPAliasAgentProfiles(t *testing.T) {
 // TestRepoConfigCannotSetAgentConfig keeps model and effort selection on the
 // operator's machine: they decide which model runs with the maintainer's
 // credentials, exactly like agent_args_override.
+func TestRepoConfigCannotSetReviewerChain(t *testing.T) {
+	repo, err := LoadRepoFromBytes([]byte("reviewer_chain:\n  - agent: pi\n    model: claude-bridge/claude-opus-5-5\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg := Merge(DefaultGlobalConfig(), repo); len(cfg.ReviewerChain) != 0 {
+		t.Fatalf("repository config set reviewer_chain: %#v", cfg.ReviewerChain)
+	}
+}
+
 func TestRepoConfigCannotSetAgentConfig(t *testing.T) {
 	repo, err := LoadRepoFromBytes([]byte("agent_config:\n  codex:\n    model: attacker-model\n"))
 	if err != nil {

@@ -3,11 +3,15 @@ package daemon
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"log/slog"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -314,18 +318,124 @@ func newPipelineAgent(ctx context.Context, cfg *config.Config, evidenceRoot stri
 		}
 		roles[role] = next
 	}
+	candidates := make([]agent.ReviewerCandidate, 0, len(cfg.ReviewerChain))
+	for i, entry := range cfg.ReviewerChain {
+		next, err := newConfiguredAgent(ctx, cfg.ForReviewAgent(entry), evidenceRoot, lookPath, reviewerEnvironment(environment, entry.Env))
+		if err != nil {
+			_ = primary.Close()
+			for _, existing := range roles {
+				_ = existing.Close()
+			}
+			for _, existing := range candidates {
+				_ = existing.Agent.Close()
+			}
+			return nil, fmt.Errorf("create reviewer_chain[%d]: %w", i, err)
+		}
+		label := reviewAgentEntryLabel(cfg, entry)
+		candidates = append(candidates, agent.ReviewerCandidate{Agent: next, Label: label, CheckFloor: reviewerFloorChecker(entry.Floor)})
+	}
+	reviewer := agent.RoundedRole{
+		Agent:      roles[config.RoleReviewer],
+		Late:       roles[config.RoleReviewerAfterRound],
+		LateFrom:   cfg.ReviewAgentTakeoverRound(config.RoleReviewerAfterRound),
+		AgentLabel: reviewAgentLabel(cfg, config.RoleReviewer),
+		LateLabel:  reviewAgentLabel(cfg, config.RoleReviewerAfterRound),
+	}
+	if len(candidates) > 0 {
+		reviewer.Candidates = candidates
+	}
 	return agent.WithReviewRoles(primary, agent.ReviewRoles{
-		Reviewer: agent.RoundedRole{
-			Agent:    roles[config.RoleReviewer],
-			Late:     roles[config.RoleReviewerAfterRound],
-			LateFrom: cfg.ReviewAgentTakeoverRound(config.RoleReviewerAfterRound),
-		},
+		Reviewer: reviewer,
 		Fixer: agent.RoundedRole{
 			Agent:    roles[config.RoleFixer],
 			Late:     roles[config.RoleFixerAfterRound],
 			LateFrom: cfg.ReviewAgentTakeoverRound(config.RoleFixerAfterRound),
 		},
 	}), nil
+}
+
+func reviewerEnvironment(base runenv.Overlay, entry map[string]string) runenv.Overlay {
+	overlay := base.Clone()
+	if overlay.Set == nil {
+		overlay.Set = make(map[string]string, len(entry))
+	}
+	for key, value := range entry {
+		overlay.Set[key] = value
+	}
+	return overlay
+}
+
+func reviewerFloorChecker(floor *config.ReviewerFloor) func(context.Context) (string, error) {
+	if floor == nil {
+		return nil
+	}
+	return func(ctx context.Context) (string, error) {
+		if strings.TrimSpace(floor.Command) == "" {
+			return "", fmt.Errorf("quota command is empty")
+		}
+		shell, flag := "sh", "-c"
+		if runtime.GOOS == "windows" {
+			shell, flag = "cmd.exe", "/C"
+		}
+		output, err := exec.CommandContext(ctx, shell, flag, floor.Command).Output()
+		if err != nil {
+			return "", fmt.Errorf("quota command failed: %w", err)
+		}
+		var value any
+		if err := json.Unmarshal(output, &value); err != nil {
+			return "", fmt.Errorf("quota command returned invalid JSON: %w", err)
+		}
+		for _, part := range strings.Split(floor.Field, ".") {
+			object, ok := value.(map[string]any)
+			if !ok {
+				return "", fmt.Errorf("quota field %q is missing", floor.Field)
+			}
+			value, ok = object[part]
+			if !ok {
+				return "", fmt.Errorf("quota field %q is missing", floor.Field)
+			}
+		}
+		var percent float64
+		switch current := value.(type) {
+		case float64:
+			percent = current
+		case string:
+			parsed, parseErr := strconv.ParseFloat(strings.TrimSuffix(strings.TrimSpace(current), "%"), 64)
+			if parseErr != nil {
+				return "", fmt.Errorf("quota field %q is not a percentage", floor.Field)
+			}
+			percent = parsed
+		default:
+			return "", fmt.Errorf("quota field %q is not a percentage", floor.Field)
+		}
+		if math.IsNaN(percent) || math.IsInf(percent, 0) || percent < 0 || percent > 100 {
+			return "", fmt.Errorf("quota field %q is not a valid percentage", floor.Field)
+		}
+		if percent < float64(floor.Minimum) {
+			return fmt.Sprintf("remaining %.2g%% is below the %d%% minimum", percent, floor.Minimum), nil
+		}
+		return "", nil
+	}
+}
+
+func reviewAgentLabel(cfg *config.Config, role string) string {
+	entry, ok := cfg.ReviewAgents[role]
+	if !ok {
+		return ""
+	}
+	return reviewAgentEntryLabel(cfg, entry)
+}
+
+func reviewAgentEntryLabel(cfg *config.Config, entry config.ReviewAgent) string {
+	model := strings.Join(strings.Fields(entry.Model), " ")
+	if model == "" {
+		model = cfg.ForReviewAgent(entry).AgentProfile().Model
+	}
+	model = strings.Join(strings.Fields(model), " ")
+	if model == "" {
+		return string(entry.Agent)
+	}
+	return string(entry.Agent) + "/" + model
 }
 
 func newConfiguredAgent(ctx context.Context, cfg *config.Config, evidenceRoot string, lookPath func(string) (string, error), environment runenv.Overlay) (agent.Agent, error) {

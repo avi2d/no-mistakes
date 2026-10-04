@@ -56,10 +56,12 @@ type StepRound struct {
 	SelectedFindingIDs *string
 	SelectionSource    *string
 	// FixSummary, when non-nil, records a fix round's result.
-	FixSummary      *string
-	RepairPublished bool
-	DurationMS      int64
-	CreatedAt       int64
+	FixSummary         *string
+	ReviewerAgent      *string
+	ReviewerChainTrace *string
+	RepairPublished    bool
+	DurationMS         int64
+	CreatedAt          int64
 }
 
 // StepRoundStats summarizes execution rounds for a step. It lets status
@@ -214,6 +216,26 @@ func (d *DB) insertStepRound(stepResultID string, round int, trigger string, fin
 	return r, nil
 }
 
+func (d *DB) SetStepRoundReviewerAgent(id, reviewer string) error {
+	if reviewer == "" {
+		return nil
+	}
+	if _, err := d.sql.Exec(`UPDATE step_rounds SET reviewer_agent = ? WHERE id = ?`, reviewer, id); err != nil {
+		return fmt.Errorf("set step round reviewer: %w", err)
+	}
+	return nil
+}
+
+func (d *DB) SetStepRoundReviewerChainTrace(id, trace string) error {
+	if trace == "" {
+		return nil
+	}
+	if _, err := d.sql.Exec(`UPDATE step_rounds SET reviewer_chain_trace = ? WHERE id = ?`, trace, id); err != nil {
+		return fmt.Errorf("set step round reviewer chain trace: %w", err)
+	}
+	return nil
+}
+
 // SetStepRoundSelection records which findings were selected for fix AFTER the
 // given round produced its findings, along with whether that selection came
 // from the user or auto-fix filtering.
@@ -277,7 +299,7 @@ func (d *DB) SetStepRoundUserFindings(id string, userFindingsJSON *string) error
 // GetRoundsByStep returns all rounds for a step result, ordered by round number.
 func (d *DB) GetRoundsByStep(stepResultID string) ([]*StepRound, error) {
 	rows, err := d.sql.Query(
-		`SELECT id, step_result_id, round, trigger_type, findings_json, reviewed_head_sha, starting_head_sha, trusted_config_sha, global_config_yaml, repo_config_yaml, user_findings_json, selected_finding_ids, selection_source, fix_summary, repair_published, duration_ms, created_at FROM step_rounds WHERE step_result_id = ? ORDER BY round`,
+		`SELECT id, step_result_id, round, trigger_type, findings_json, reviewed_head_sha, starting_head_sha, trusted_config_sha, global_config_yaml, repo_config_yaml, user_findings_json, selected_finding_ids, selection_source, fix_summary, reviewer_agent, reviewer_chain_trace, repair_published, duration_ms, created_at FROM step_rounds WHERE step_result_id = ? ORDER BY round`,
 		stepResultID,
 	)
 	if err != nil {
@@ -287,7 +309,7 @@ func (d *DB) GetRoundsByStep(stepResultID string) ([]*StepRound, error) {
 	var rounds []*StepRound
 	for rows.Next() {
 		r := &StepRound{}
-		if err := rows.Scan(&r.ID, &r.StepResultID, &r.Round, &r.Trigger, &r.FindingsJSON, &r.ReviewedHeadSHA, &r.StartingHeadSHA, &r.TrustedConfigSHA, &r.GlobalConfigYAML, &r.RepoConfigYAML, &r.UserFindingsJSON, &r.SelectedFindingIDs, &r.SelectionSource, &r.FixSummary, &r.RepairPublished, &r.DurationMS, &r.CreatedAt); err != nil {
+		if err := rows.Scan(&r.ID, &r.StepResultID, &r.Round, &r.Trigger, &r.FindingsJSON, &r.ReviewedHeadSHA, &r.StartingHeadSHA, &r.TrustedConfigSHA, &r.GlobalConfigYAML, &r.RepoConfigYAML, &r.UserFindingsJSON, &r.SelectedFindingIDs, &r.SelectionSource, &r.FixSummary, &r.ReviewerAgent, &r.ReviewerChainTrace, &r.RepairPublished, &r.DurationMS, &r.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan step round: %w", err)
 		}
 		rounds = append(rounds, r)

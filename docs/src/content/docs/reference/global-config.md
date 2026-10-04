@@ -342,24 +342,47 @@ Repository `.no-mistakes.yaml` cannot set these profiles. Omitted roles keep the
 normal `agent` selection and fallback chain; other pipeline steps are unchanged.
 
 ```yaml
+reviewer_chain:
+  - agent: pi
+    model: openai-codex/gpt-6.1-sol
+    floor:
+      command: quota-axi --json
+      field: accounts.codex.remaining_percent
+      minimum: 30
+  - agent: pi
+    model: claude-bridge/claude-opus-5-5
+    env:
+      CLAUDE_CONFIG_DIR: /Users/you/.claude-pro
+    floor:
+      command: clauth status --json
+      field: remaining_percent
+      minimum: 30
+  - agent: pi
+    model: claude-bridge/claude-opus-5-5
+    env:
+      CLAUDE_CONFIG_DIR: /Users/you/.claude-max
 review_agents:
-  reviewer:
-    agent: pi
-    model: anthropic-vertex/claude-opus-4-8
-    effort: max
   fixer:
     agent: pi
     model: google-vertex/gemini-3.8-flash
     effort: max
 ```
 
-The role keys are `reviewer`, `fixer`, and their optional later-round overlays
-`reviewer_after_round` and `fixer_after_round`. Each configured role requires one
-explicit `agent` (the same harness names as `agent_config`; no `auto` or lists).
-Model and effort are optional and inherit `agent_config` for that harness when
-empty. Nonempty role values override that profile, but native
-`agent_args_override` flags still win. Model availability, credentials, and
-supported effort levels remain the harness/provider's responsibility.
+`reviewer_chain` is an ordered list.
+Each entry requires an explicit `agent` with a name from `agent_config`.
+This example checks the Codex account first, then the Claude Pro account, then the Claude Max account.
+The floor command must print JSON, and `field` names the numeric percentage to read with a dotted path.
+Before using an entry with a floor, the review step skips it when the command fails, the field is unusable, or the remaining percentage is below `minimum`.
+The last entry is always tried, even when it has a floor.
+The review step also tries the next entry after a usage-limit or quota error.
+Other agent errors fail the review round.
+`env` overrides environment variables only for that entry's agent process.
+Model and effort are optional and inherit `agent_config` for that harness when empty.
+Nonempty role values override that profile, but native `agent_args_override` flags still win.
+The selected reviewer and skipped entries with their reasons are stored with the review round.
+The `review_agents` keys are `fixer` and the optional later-round overlays `reviewer_after_round` and `fixer_after_round`.
+Each configured role requires one explicit `agent` with a name from `agent_config`.
+Model availability, credentials, and supported effort levels remain the harness provider's responsibility.
 
 #### Later-round role overrides
 
@@ -1129,7 +1152,7 @@ Reaping runs after each finished run and again at daemon startup. An upgraded da
 
 The publication fields are global defaults. Repo config can override `store_in_repo`, `attach_media`, and `dir`; it can override `branch` only through the trusted default-branch copy. `local_root`, `retention`, and `max_runs` are global-only: a repository does not get to name a filesystem path this machine's daemon writes to, or set the retention budget for a directory every repository on the machine shares.
 
-`test.evidence.retention` and `test.evidence.max_runs` also bound `<NM_HOME>/logs/<run-id>` (per-run step logs), reaped on the same cadence rather than through a second config surface for the same kind of per-run diagnostic artifact.
+`test.evidence.retention` and `test.evidence.max_runs` also bound `<NM_HOME>/logs/<run-id>` (per-run step logs), reaped on the same cadence rather than through a second config surface for the same kind of per-run diagnostic artifact. A failed or cancelled run's step logs are the record of why it stopped, so they survive 14 days regardless of either bound and do not count toward `max_runs`; after that they are reaped like any other run's.
 
 ### eval
 

@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -15,6 +16,59 @@ import (
 	"github.com/kunchenguid/no-mistakes/internal/runenv"
 	"github.com/kunchenguid/no-mistakes/internal/types"
 )
+
+func TestReviewerChainFloorAndEnvironmentAreEntryScoped(t *testing.T) {
+	dir := t.TempDir()
+	capture := filepath.Join(dir, "account")
+	bin := filepath.Join(dir, "pi")
+	const response = `{"type":"agent_end","messages":[{"role":"assistant","content":[{"type":"text","text":"ok"}]}]}`
+	script := "#!/bin/sh\nprintf '%s' \"$REVIEWER_ACCOUNT\" > " + shellQuoteForTest(capture) + "\ncat >/dev/null\nprintf '%s\\n' '" + response + "'\n"
+	if runtime.GOOS == "windows" {
+		bin += ".cmd"
+		script = "@echo off\r\necho %REVIEWER_ACCOUNT% > \"" + capture + "\"\r\nmore > nul\r\necho " + response + "\r\n"
+	}
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	floorCommand := `printf '%s\n' '{"remaining":20}'`
+	wantSkipReason := `"remaining 20% is below the 30% minimum"`
+	if runtime.GOOS == "windows" {
+		floorCommand = `exit /b 1`
+		wantSkipReason = `"quota command failed"`
+	}
+	globalYAML := fmt.Sprintf(`agent: pi
+reviewer_chain:
+  - agent: pi
+    model: first
+    env: {REVIEWER_ACCOUNT: first}
+    floor: {command: %q, field: remaining, minimum: 30}
+  - agent: pi
+    model: second
+    env: {REVIEWER_ACCOUNT: second}
+`, floorCommand)
+	global, err := config.LoadGlobalFromBytes([]byte(globalYAML))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Merge(global, &config.RepoConfig{})
+	cfg.AgentPathOverride = map[string]string{"pi": bin}
+	ag, err := newPipelineAgent(context.Background(), cfg, t.TempDir(), fakeLookPath, runenv.Overlay{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ag.Close()
+	result, err := ag.Run(context.Background(), agent.RunOpts{Purpose: "review", Prompt: "review", CWD: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	account, err := os.ReadFile(capture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(account) != "second" || !strings.Contains(result.ReviewerChainTrace, `"selected":1`) || !strings.Contains(result.ReviewerChainTrace, wantSkipReason) {
+		t.Fatalf("account=%q trace=%q", account, result.ReviewerChainTrace)
+	}
+}
 
 func TestPipelineReviewRolesUseIndependentPiProfiles(t *testing.T) {
 	dir := t.TempDir()

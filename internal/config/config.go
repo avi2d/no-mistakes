@@ -170,9 +170,10 @@ type GlobalConfig struct {
 	// which model runs with the operator's credentials, so no pushed branch may
 	// set it.
 	AgentConfig map[string]agentcfg.Profile `yaml:"agent_config"`
-	// ReviewAgents selects independent review-loop harnesses and profiles.
-	// Global-only: repository input must not select credential/model profiles.
-	ReviewAgents map[string]ReviewAgent `yaml:"review_agents"`
+	// ReviewAgents and ReviewerChain select review-loop harnesses and profiles.
+	// Repository input must not select credential or model profiles.
+	ReviewAgents  map[string]ReviewAgent `yaml:"review_agents"`
+	ReviewerChain []ReviewAgent          `yaml:"reviewer_chain"`
 	// WorktreeRoots places a repository's pipeline run worktrees under a
 	// directory the operator chose instead of the default
 	// <NM_HOME>/worktrees/<repoID>. Keys are registered checkout paths
@@ -244,6 +245,7 @@ type globalConfigRaw struct {
 	AgentArgsOverride         map[string][]string        `yaml:"agent_args_override"`
 	AgentConfig               map[string]agentProfileRaw `yaml:"agent_config"`
 	ReviewAgents              map[string]ReviewAgent     `yaml:"review_agents"`
+	ReviewerChain             []ReviewAgent              `yaml:"reviewer_chain"`
 	WorktreeRoots             map[string]string          `yaml:"worktree_roots"`
 	Worktree                  WorktreeRaw                `yaml:"worktree"`
 	CITimeout                 string                     `yaml:"ci_timeout"`
@@ -733,6 +735,7 @@ type Config struct {
 	AgentArgsOverride         map[string][]string
 	AgentConfig               map[string]agentcfg.Profile
 	ReviewAgents              map[string]ReviewAgent
+	ReviewerChain             []ReviewAgent
 	CITimeout                 time.Duration
 	StepQuietWarning          time.Duration
 	AgentTimeout              time.Duration
@@ -2325,7 +2328,25 @@ func LoadGlobalFromBytes(data []byte) (*GlobalConfig, error) {
 	if err := validateReviewAgents(raw.ReviewAgents); err != nil {
 		return nil, err
 	}
+	if len(raw.ReviewerChain) > 0 && (raw.ReviewAgents[RoleReviewer].Agent != "" || raw.ReviewAgents[RoleReviewerAfterRound].Agent != "") {
+		return nil, fmt.Errorf("reviewer_chain cannot be combined with reviewer role overlays")
+	}
+	for i, entry := range raw.ReviewerChain {
+		if !agentcfg.Known(entry.Agent) {
+			return nil, fmt.Errorf("reviewer_chain[%d].agent must name an explicit harness, got %q", i, entry.Agent)
+		}
+		if entry.AfterRound != nil {
+			return nil, fmt.Errorf("reviewer_chain[%d] does not accept after_round", i)
+		}
+		if err := agentcfg.Validate(entry.Agent, agentcfg.Profile{Model: strings.TrimSpace(entry.Model), Effort: entry.Effort}); err != nil {
+			return nil, fmt.Errorf("invalid reviewer_chain[%d]: %w", i, err)
+		}
+		if err := validateReviewerEntry(entry); err != nil {
+			return nil, fmt.Errorf("invalid reviewer_chain[%d]: %w", i, err)
+		}
+	}
 	cfg.ReviewAgents = raw.ReviewAgents
+	cfg.ReviewerChain = raw.ReviewerChain
 	if raw.WorktreeRoots != nil {
 		if err := ValidateWorktreeRoots(raw.WorktreeRoots); err != nil {
 			return nil, err
@@ -3407,6 +3428,7 @@ func merge(global *GlobalConfig, repo *RepoConfig, override *RepositoryOverride)
 		AgentArgsOverride:         global.AgentArgsOverride,
 		AgentConfig:               global.AgentConfig,
 		ReviewAgents:              global.ReviewAgents,
+		ReviewerChain:             append([]ReviewAgent(nil), global.ReviewerChain...),
 		CITimeout:                 global.CITimeout,
 		StepQuietWarning:          global.StepQuietWarning,
 		AgentTimeout:              global.AgentTimeout,

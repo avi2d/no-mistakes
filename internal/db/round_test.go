@@ -28,6 +28,31 @@ func TestInsertReviewStepRoundPersistsNonAuthoritativeCandidate(t *testing.T) {
 	}
 }
 
+func TestReviewRoundPersistsReviewerIdentity(t *testing.T) {
+	d := openTestDB(t)
+	repo, _ := d.InsertRepo("/tmp/review-agent", "https://example.com/repo.git", "main")
+	run, _ := d.InsertRun(repo.ID, "feature", "head", "base")
+	step, _ := d.InsertStepResult(run.ID, types.StepReview)
+	round, err := d.InsertReviewStepRound(step.ID, 1, "initial", nil, nil, "head", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.SetStepRoundReviewerAgent(round.ID, "pi/claude-bridge/claude-opus-5-5"); err != nil {
+		t.Fatal(err)
+	}
+	const chainTrace = `{"selected":2,"skipped":[{"entry":0,"reason":"below floor"}]}`
+	if err := d.SetStepRoundReviewerChainTrace(round.ID, chainTrace); err != nil {
+		t.Fatal(err)
+	}
+	rounds, err := d.GetRoundsByStep(step.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rounds) != 1 || rounds[0].ReviewerAgent == nil || *rounds[0].ReviewerAgent != "pi/claude-bridge/claude-opus-5-5" || rounds[0].ReviewerChainTrace == nil || *rounds[0].ReviewerChainTrace != chainTrace {
+		t.Fatalf("reviewer identity and chain = %#v", rounds)
+	}
+}
+
 func TestReviewRoundPersistsExactReplayProvenance(t *testing.T) {
 	d := openTestDB(t)
 	repo, _ := d.InsertRepo("/tmp/review-provenance", "https://example.com/repo.git", "main")
