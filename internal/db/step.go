@@ -40,6 +40,16 @@ type StepResult struct {
 	// SkipReason records an automatic PR/CI skip, distinct from an explicit
 	// per-run skip. Legacy rows have no recorded reason.
 	SkipReason *string
+	// Stall is non-nil while the step's agent has been silent for at least
+	// step_quiet_warning.
+	Stall *AgentStall
+}
+
+// AgentStall names the agent a step is waiting on and the unix-seconds time
+// it last produced anything.
+type AgentStall struct {
+	Agent       string
+	SilentSince int64
 }
 
 const stepResultColumns = `id, run_id, step_name, step_order, status, exit_code, duration_ms, log_path, findings_json, error, started_at, completed_at, last_activity_at, last_activity, agent_pid, auto_fix_limit`
@@ -71,7 +81,25 @@ func (d *DB) readableStepResultColumns() string {
 	} else {
 		columns += ", NULL AS approval_reason"
 	}
+	if d.hasColumn("step_results", "stalled_agent") {
+		columns += ", stalled_agent, stalled_since"
+	} else {
+		columns += ", NULL AS stalled_agent, NULL AS stalled_since"
+	}
 	return columns
+}
+
+func scanStepResult(row interface{ Scan(...any) error }) (*StepResult, error) {
+	s := &StepResult{}
+	var stalledAgent sql.NullString
+	var stalledSince sql.NullInt64
+	if err := row.Scan(&s.ID, &s.RunID, &s.StepName, &s.StepOrder, &s.Status, &s.ExitCode, &s.DurationMS, &s.LogPath, &s.FindingsJSON, &s.Error, &s.StartedAt, &s.CompletedAt, &s.LastActivityAt, &s.LastActivity, &s.AgentPID, &s.AutoFixLimit, &s.RoundStartedAt, &s.OverrideReason, &s.SkipReason, &s.ApprovalReason, &stalledAgent, &stalledSince); err != nil {
+		return nil, err
+	}
+	if stalledAgent.Valid && stalledSince.Valid {
+		s.Stall = &AgentStall{Agent: stalledAgent.String, SilentSince: stalledSince.Int64}
+	}
+	return s, nil
 }
 
 // InsertStepResult creates a new step result record.
@@ -95,10 +123,9 @@ func (d *DB) InsertStepResult(runID string, stepName types.StepName) (*StepResul
 
 // GetStepResult returns a step result by ID.
 func (d *DB) GetStepResult(id string) (*StepResult, error) {
-	s := &StepResult{}
-	err := d.sql.QueryRow(
+	s, err := scanStepResult(d.sql.QueryRow(
 		`SELECT `+d.readableStepResultColumns()+` FROM step_results WHERE id = ?`, id,
-	).Scan(&s.ID, &s.RunID, &s.StepName, &s.StepOrder, &s.Status, &s.ExitCode, &s.DurationMS, &s.LogPath, &s.FindingsJSON, &s.Error, &s.StartedAt, &s.CompletedAt, &s.LastActivityAt, &s.LastActivity, &s.AgentPID, &s.AutoFixLimit, &s.RoundStartedAt, &s.OverrideReason, &s.SkipReason, &s.ApprovalReason)
+	))
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -127,8 +154,8 @@ func (d *DB) GetStepsByRun(runID string) ([]*StepResult, error) {
 	defer rows.Close()
 	var steps []*StepResult
 	for rows.Next() {
-		s := &StepResult{}
-		if err := rows.Scan(&s.ID, &s.RunID, &s.StepName, &s.StepOrder, &s.Status, &s.ExitCode, &s.DurationMS, &s.LogPath, &s.FindingsJSON, &s.Error, &s.StartedAt, &s.CompletedAt, &s.LastActivityAt, &s.LastActivity, &s.AgentPID, &s.AutoFixLimit, &s.RoundStartedAt, &s.OverrideReason, &s.SkipReason, &s.ApprovalReason); err != nil {
+		s, err := scanStepResult(rows)
+		if err != nil {
 			return nil, fmt.Errorf("scan step result: %w", err)
 		}
 		steps = append(steps, s)
@@ -142,7 +169,8 @@ func (d *DB) ResetStepsFrom(runID string, stepOrder int) error {
 		SET status = ?, exit_code = NULL, duration_ms = NULL, log_path = NULL,
 			findings_json = NULL, error = NULL, started_at = NULL,
 			round_started_at = NULL, completed_at = NULL, last_activity_at = NULL, last_activity = NULL,
-			agent_pid = NULL, auto_fix_limit = NULL, override_reason = NULL, approval_reason = NULL
+			agent_pid = NULL, auto_fix_limit = NULL, override_reason = NULL, approval_reason = NULL,
+			stalled_agent = NULL, stalled_since = NULL
 		WHERE run_id = ? AND step_order >= ? AND status != ?`, types.StepStatusPending, runID, stepOrder, types.StepStatusSkipped)
 	if err != nil {
 		return fmt.Errorf("reset steps for revalidation: %w", err)
@@ -219,7 +247,7 @@ func (d *DB) StartStep(id string) error {
 // auto-fix limit that status surfaces use while the step is active.
 func (d *DB) StartStepWithAutoFixLimit(id string, autoFixLimit int) error {
 	ts := now()
-	_, err := d.sql.Exec(`UPDATE step_results SET status = ?, started_at = ?, round_started_at = ?, last_activity_at = ?, last_activity = ?, agent_pid = NULL, auto_fix_limit = ? WHERE id = ?`, types.StepStatusRunning, ts, ts, ts, "step started", autoFixLimitDBValue(autoFixLimit), id)
+	_, err := d.sql.Exec(`UPDATE step_results SET status = ?, started_at = ?, round_started_at = ?, last_activity_at = ?, last_activity = ?, agent_pid = NULL, auto_fix_limit = ?, stalled_agent = NULL, stalled_since = NULL WHERE id = ?`, types.StepStatusRunning, ts, ts, ts, "step started", autoFixLimitDBValue(autoFixLimit), id)
 	if err != nil {
 		return fmt.Errorf("start step: %w", err)
 	}
@@ -232,7 +260,7 @@ func (d *DB) StartStepWithAutoFixLimit(id string, autoFixLimit int) error {
 // one recorded by an earlier execution.
 func (d *DB) StartStepFixRound(id string, autoFixLimit int) error {
 	ts := now()
-	_, err := d.sql.Exec(`UPDATE step_results SET status = ?, round_started_at = ?, last_activity_at = ?, last_activity = ?, auto_fix_limit = ?, override_reason = NULL, approval_reason = NULL WHERE id = ?`, types.StepStatusFixing, ts, ts, fmt.Sprintf("status: %s", types.StepStatusFixing), autoFixLimitDBValue(autoFixLimit), id)
+	_, err := d.sql.Exec(`UPDATE step_results SET status = ?, round_started_at = ?, last_activity_at = ?, last_activity = ?, auto_fix_limit = ?, override_reason = NULL, approval_reason = NULL, stalled_agent = NULL, stalled_since = NULL WHERE id = ?`, types.StepStatusFixing, ts, ts, fmt.Sprintf("status: %s", types.StepStatusFixing), autoFixLimitDBValue(autoFixLimit), id)
 	if err != nil {
 		return fmt.Errorf("start step fix round: %w", err)
 	}
@@ -423,6 +451,25 @@ func (d *DB) SetStepAgentActivity(id string, text string, agentPID *int) error {
 	_, err := d.sql.Exec(`UPDATE step_results SET last_activity_at = ?, last_activity = ?, agent_pid = ? WHERE id = ?`, now(), text, agentPID, id)
 	if err != nil {
 		return fmt.Errorf("set step agent activity: %w", err)
+	}
+	return nil
+}
+
+// SetStepStall records that agent has produced nothing since silentSince
+// (unix seconds).
+func (d *DB) SetStepStall(id, agent string, silentSince int64) error {
+	_, err := d.sql.Exec(`UPDATE step_results SET stalled_agent = ?, stalled_since = ? WHERE id = ?`, agent, silentSince, id)
+	if err != nil {
+		return fmt.Errorf("set step stall: %w", err)
+	}
+	return nil
+}
+
+// ClearStepStall records that the step's agent is no longer silent.
+func (d *DB) ClearStepStall(id string) error {
+	_, err := d.sql.Exec(`UPDATE step_results SET stalled_agent = NULL, stalled_since = NULL WHERE id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("clear step stall: %w", err)
 	}
 	return nil
 }

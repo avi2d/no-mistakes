@@ -251,6 +251,51 @@ func TestStepActivity(t *testing.T) {
 	}
 }
 
+func TestStepStallIsRecordedClearedAndResetByANewRound(t *testing.T) {
+	d := openTestDB(t)
+	repo, _ := d.InsertRepo("/home/user/project", "git@github.com:user/project.git", "main")
+	run, _ := d.InsertRun(repo.ID, "feature", "abc", "def")
+	step, _ := d.InsertStepResult(run.ID, types.StepReview)
+	if err := d.StartStep(step.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := d.SetStepStall(step.ID, "pi", 1700000000); err != nil {
+		t.Fatalf("set stall: %v", err)
+	}
+	got, _ := d.GetStepResult(step.ID)
+	if got.Stall == nil || *got.Stall != (AgentStall{Agent: "pi", SilentSince: 1700000000}) {
+		t.Fatalf("stall = %+v, want pi silent since 1700000000", got.Stall)
+	}
+	steps, _ := d.GetStepsByRun(run.ID)
+	if len(steps) != 1 || steps[0].Stall == nil || steps[0].Stall.Agent != "pi" {
+		t.Fatalf("steps by run lost the stall: %+v", steps)
+	}
+
+	if err := d.ClearStepStall(step.ID); err != nil {
+		t.Fatalf("clear stall: %v", err)
+	}
+	if got, _ := d.GetStepResult(step.ID); got.Stall != nil {
+		t.Fatalf("stall = %+v after clear, want nil", got.Stall)
+	}
+
+	for name, restart := range map[string]func() error{
+		"start":     func() error { return d.StartStep(step.ID) },
+		"fix round": func() error { return d.StartStepFixRound(step.ID, 0) },
+		"reset":     func() error { return d.ResetStepsFrom(run.ID, 0) },
+	} {
+		if err := d.SetStepStall(step.ID, "pi", 1700000000); err != nil {
+			t.Fatal(err)
+		}
+		if err := restart(); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if got, _ := d.GetStepResult(step.ID); got.Stall != nil {
+			t.Fatalf("%s kept a previous turn's stall: %+v", name, got.Stall)
+		}
+	}
+}
+
 func TestCompleteStep(t *testing.T) {
 	d := openTestDB(t)
 	repo, _ := d.InsertRepo("/home/user/project", "git@github.com:user/project.git", "main")

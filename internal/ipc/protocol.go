@@ -31,6 +31,7 @@ const (
 	MethodGateContext               = "gate_context"
 	MethodAdmitPush                 = "admit_push"
 	MethodHealth                    = "health"
+	MethodDaemonEnvironment         = "daemon_environment"
 	MethodShutdown                  = "shutdown"
 	MethodUpdateRunClosingIssueRefs = "update_run_closing_issue_refs"
 )
@@ -282,6 +283,9 @@ type AdmitPushParams struct {
 // HealthParams has no fields but exists for consistency.
 type HealthParams struct{}
 
+// DaemonEnvironmentParams has no fields but exists for consistency.
+type DaemonEnvironmentParams struct{}
+
 // ShutdownParams has no fields but exists for consistency.
 type ShutdownParams struct{}
 
@@ -426,6 +430,17 @@ type HealthResult struct {
 	Status string `json:"status"`
 }
 
+// DaemonEnvironmentResult carries the proxy variables every agent the daemon
+// spawns inherits. Values can embed credentials.
+type DaemonEnvironmentResult struct {
+	Proxies []EnvVar `json:"proxies"`
+}
+
+type EnvVar struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
+}
+
 // ShutdownResult confirms shutdown was initiated.
 type ShutdownResult struct {
 	OK bool `json:"ok"`
@@ -519,6 +534,16 @@ type StepResultInfo struct {
 	// pipeline.ApprovalOverrideVerifier and db.StepResult.OverrideReason.
 	OverrideReason string `json:"override_reason,omitempty"`
 	SkipReason     string `json:"skip_reason,omitempty"`
+	// Stall is set while the step's agent has been silent for at least
+	// step_quiet_warning.
+	Stall *AgentStall `json:"stall,omitempty"`
+}
+
+// AgentStall names the agent a step is waiting on and the unix-seconds time
+// it last produced anything.
+type AgentStall struct {
+	Agent       string `json:"agent"`
+	SilentSince int64  `json:"silent_since"`
 }
 
 // --- Events (for subscribe stream) ---

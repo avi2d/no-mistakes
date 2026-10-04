@@ -1163,6 +1163,10 @@ func registerHandlers(srv *ipc.Server, mgr *RunManager, d *db.DB, shutdown func(
 		return &ipc.HealthResult{Status: "ok"}, nil
 	})
 
+	srv.Handle(ipc.MethodDaemonEnvironment, func(_ context.Context, _ json.RawMessage) (interface{}, error) {
+		return &ipc.DaemonEnvironmentResult{Proxies: proxyEnvironment()}, nil
+	})
+
 	srv.Handle(ipc.MethodShutdown, func(ctx context.Context, _ json.RawMessage) (interface{}, error) {
 		if err := refuseNested(ctx, false); err != nil {
 			return nil, err
@@ -1646,6 +1650,9 @@ func stepToInfo(d *db.DB, s *db.StepResult) ipc.StepResultInfo {
 	}
 	if s.SkipReason != nil {
 		info.SkipReason = *s.SkipReason
+	}
+	if s.Stall != nil {
+		info.Stall = &ipc.AgentStall{Agent: s.Stall.Agent, SilentSince: s.Stall.SilentSince}
 	}
 	if s.AutoFixLimit != nil {
 		info.AutoFixLimit = *s.AutoFixLimit

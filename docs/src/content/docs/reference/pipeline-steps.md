@@ -427,4 +427,5 @@ When a non-terminal run has a step in `awaiting_approval` or `fix_review`, AXI r
 The signal clears as soon as the approval wait ends, including `axi respond` and cancellation, and does not change how gates resolve.
 For the `active_steps` status fields, including active-round timing and compatibility with older runs, see [`axi status`](/no-mistakes/reference/cli/#no-mistakes-axi-status).
 If the latest activity is older than `step_quiet_warning`, AXI prefixes it with `quiet` to make possible wedges visible without changing the run state.
+An agent invocation silent for that long is recorded on its step as a stall, written once to the step log, and listed under `stalled_agents` until the agent speaks again or its invocation ends.
 Step logs also record native subprocess start, exit, and retry lifecycle lines plus explicit auto-fix and user-fix round markers.

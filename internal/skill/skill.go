@@ -172,7 +172,8 @@ Run the pipeline and decide on its findings as they come up:
    ` + "`last_activity`" + `, a native ` + "`agent_pid`" + ` when a subprocess agent is running, and the current round such as ` + "`round 1`" + `,
    ` + "`auto-fix 1/3`" + `, or ` + "`fix 2`" + `. If ` + "`last_activity`" + ` is prefixed with
    ` + "`quiet`" + `, no step log or native-agent lifecycle activity has arrived for
-   longer than ` + "`step_quiet_warning`" + `. Treat that as a liveness clue, not as
+   longer than ` + "`step_quiet_warning`" + `, and ` + "`stalled_agents`" + ` names an agent that
+   has produced no output for that long. Treat both as liveness clues, not as
    permission to cancel, rerun, or edit the worktree yourself.
 2. If the output contains a ` + "`gate:`" + ` object, the pipeline is waiting on you.
    Read its ` + "`findings`" + ` table. Each finding has an ` + "`id`" + `, ` + "`severity`" + `,
