@@ -22,7 +22,7 @@ func TestFilelessSelectedReviewFindingRequiresCompleteVerification(t *testing.T)
 	}{
 		{name: "full coverage clears", clears: true},
 		{name: "partial coverage parks", coverage: "      reviewed_paths: [service.txt]"},
-		{name: "rereported finding parks", rereport: "        - id: rereported\n          severity: warning\n          description: Unanchored legacy concern\n          action: ask-user"},
+		{name: "rereported finding parks", rereport: "        - id: rereported\n          severity: warning\n          description: Unanchored legacy concern remains after reviewing the updated changed files\n          action: ask-user"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			findings := "[]"
