@@ -682,6 +682,7 @@ Checks:
 - Data directory (`~/.no-mistakes/`)
 - SQLite database
 - Daemon status
+- The running daemon's proxy variables (`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, and their lower-case spellings), reported as `daemon proxy`: each one must name an address that accepts a TCP connection within 2 seconds, because every agent the daemon starts inherits it. A proxy where nothing listens is a failed check naming the variable and its `host:port`, never the credentials a proxy URL can carry
 - Agent runners: native binaries `claude`, `codex`, `grok`, `acli`, `opencode`, `pi`, `copilot`, and `agy` (Antigravity), plus the optional ACP bridge `acpx`
 - ACP alias default binaries: `cursor-agent` plus `acpx` for `cursor`, and `devin` plus `acpx` for `devin`
 - Effective global agent configuration, reported as `gate validation`; an unavailable configured runner is a failed check because the gate cannot validate without it

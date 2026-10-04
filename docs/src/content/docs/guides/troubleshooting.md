@@ -145,9 +145,11 @@ no-mistakes daemon start
 
 ## Agents fail or stall behind a proxy
 
-Symptom: agents cannot reach the network, and the step log shows errors such as `403 Request not allowed`. Or an agent starts, prints nothing more, and sits idle until the agent timeout.
+Symptom: agents cannot reach the network, and the step log shows errors such as `403 Request not allowed`. Or an agent starts, prints nothing more, `no-mistakes axi status` lists it under `stalled_agents`, and it sits idle until the agent timeout.
 
 A managed daemon started by launchd or systemd does not inherit the environment of the shell that started it. It takes proxy variables (`HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`, `ALL_PROXY`) only from your login shell, so export them in your login shell's rc files and run `no-mistakes daemon restart`.
+
+Run `no-mistakes doctor` first: its `daemon proxy` check reads the running daemon's own proxy variables and fails on any that names an address where nothing listens, naming the variable and the address.
 
 An agent that stalls with no output usually means the daemon has a proxy that no longer exists, often a local proxy from an agent sandbox session that has ended. Run `no-mistakes daemon restart` to refresh the service definition, which removes proxy variables that older versions copied into `~/Library/LaunchAgents/com.kunchenguid.no-mistakes.daemon.*.plist` on macOS or `~/.config/systemd/user/no-mistakes-daemon-*.service` on Linux. Then check that your login shell does not export the stale proxy. Windows Task Scheduler inherits your logon environment.
 
@@ -310,6 +312,7 @@ Symptom: `no-mistakes axi status` shows an active step with `last_activity` pref
 It is only a liveness signal.
 It does not cancel the step, fail the run, or mean the pipeline is safe to bypass.
 `stalled_agents` narrows it to the agent: that agent has produced no output at all for `silent_for`.
+An agent that is silent from its start often cannot reach its provider; see [Agents fail or stall behind a proxy](#agents-fail-or-stall-behind-a-proxy).
 
 A quiet Review step still ends on its own: each fixer or reviewer invocation is independently bounded by [`review_agent_timeout`](/no-mistakes/reference/global-config/#review_agent_timeout).
 A silent invocation is cancelled at that budget. A still-working one continues only until its configured still-working cap, and otherwise stops at this budget. The run then fails with a timeout diagnostic in the step log.

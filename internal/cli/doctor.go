@@ -105,6 +105,9 @@ func newDoctorCmd() *cobra.Command {
 					alive, _ := daemon.IsRunning(p)
 					if alive {
 						ok("daemon        ", "running")
+						if !doctorDaemonProxies(p, ok, warn, fail) {
+							allOK = false
+						}
 					} else {
 						warn("daemon        ", "stopped")
 					}

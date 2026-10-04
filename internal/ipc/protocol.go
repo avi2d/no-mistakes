@@ -31,6 +31,7 @@ const (
 	MethodGateContext               = "gate_context"
 	MethodAdmitPush                 = "admit_push"
 	MethodHealth                    = "health"
+	MethodDaemonEnvironment         = "daemon_environment"
 	MethodShutdown                  = "shutdown"
 	MethodUpdateRunClosingIssueRefs = "update_run_closing_issue_refs"
 )
@@ -282,6 +283,9 @@ type AdmitPushParams struct {
 // HealthParams has no fields but exists for consistency.
 type HealthParams struct{}
 
+// DaemonEnvironmentParams has no fields but exists for consistency.
+type DaemonEnvironmentParams struct{}
+
 // ShutdownParams has no fields but exists for consistency.
 type ShutdownParams struct{}
 
@@ -424,6 +428,17 @@ type AdmitPushResult struct {
 // HealthResult confirms the daemon is alive.
 type HealthResult struct {
 	Status string `json:"status"`
+}
+
+// DaemonEnvironmentResult carries the proxy variables every agent the daemon
+// spawns inherits. Values can embed credentials.
+type DaemonEnvironmentResult struct {
+	Proxies []EnvVar `json:"proxies"`
+}
+
+type EnvVar struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
 }
 
 // ShutdownResult confirms shutdown was initiated.
