@@ -387,7 +387,7 @@ func TestCIWorkflow_WindowsTestStepRunsItsMatrixRow(t *testing.T) {
 		`if (-not $pkgs) { throw "shard resolved no packages" }`,
 		`if ($env:NM_CI_RUN) { $filters += "-run=$env:NM_CI_RUN" }`,
 		`if ($env:NM_CI_SKIP) { $filters += "-skip=$env:NM_CI_SKIP" }`,
-		`go test -v "-timeout=$env:NM_CI_TIMEOUT" @filters @pkgs`,
+		`go test -v -count=1 "-timeout=$env:NM_CI_TIMEOUT" @filters @pkgs`,
 	}
 	for _, name := range windowsShardJobs {
 		_, step := namedStep(t, ciJob(t, wf, name), "Test on Windows")
