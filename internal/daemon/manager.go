@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -369,11 +370,14 @@ func reviewerFloorChecker(floor *config.ReviewerFloor) func(context.Context) (st
 		return nil
 	}
 	return func(ctx context.Context) (string, error) {
-		args := strings.Fields(floor.Command)
-		if len(args) == 0 {
+		if strings.TrimSpace(floor.Command) == "" {
 			return "", fmt.Errorf("quota command is empty")
 		}
-		output, err := exec.CommandContext(ctx, args[0], args[1:]...).Output()
+		shell, flag := "sh", "-c"
+		if runtime.GOOS == "windows" {
+			shell, flag = "cmd.exe", "/C"
+		}
+		output, err := exec.CommandContext(ctx, shell, flag, floor.Command).Output()
 		if err != nil {
 			return "", fmt.Errorf("quota command failed: %w", err)
 		}

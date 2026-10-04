@@ -30,9 +30,11 @@ func TestReviewerChainFloorAndEnvironmentAreEntryScoped(t *testing.T) {
 	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	floorCommand := `echo {"remaining":20}`
+	floorCommand := `printf '%s\n' '{"remaining":20}'`
+	wantSkipReason := `"remaining 20% is below the 30% minimum"`
 	if runtime.GOOS == "windows" {
-		floorCommand = `cmd /c echo {"remaining":20}`
+		floorCommand = `exit /b 1`
+		wantSkipReason = `"quota command failed"`
 	}
 	globalYAML := fmt.Sprintf(`agent: pi
 reviewer_chain:
@@ -63,7 +65,7 @@ reviewer_chain:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(account) != "second" || !strings.Contains(result.ReviewerChainTrace, `"selected":1`) || !strings.Contains(result.ReviewerChainTrace, `"remaining 20% is below the 30% minimum"`) {
+	if string(account) != "second" || !strings.Contains(result.ReviewerChainTrace, `"selected":1`) || !strings.Contains(result.ReviewerChainTrace, wantSkipReason) {
 		t.Fatalf("account=%q trace=%q", account, result.ReviewerChainTrace)
 	}
 }
