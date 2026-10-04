@@ -58,8 +58,20 @@ func TestLoadGlobal_ReviewerChain(t *testing.T) {
 reviewer_chain:
   - agent: pi
     model: openai-codex/gpt-6.1-sol
+    env:
+      CODEX_PROFILE: subscription
+    floor:
+      command: quota-axi --json
+      field: accounts.codex.remaining_percent
+      minimum: 30
   - agent: pi
     model: claude-bridge/claude-opus-5-5
+    env:
+      CLAUDE_CONFIG_DIR: /accounts/pro
+    floor:
+      command: clauth status --json
+      field: remaining_percent
+      minimum: 30
 `)
 	if len(cfg.ReviewerChain) != 2 {
 		t.Fatalf("reviewer chain has %d entries, want 2", len(cfg.ReviewerChain))
@@ -69,6 +81,12 @@ reviewer_chain:
 	}
 	if got := cfg.ReviewerChain[1].Model; got != "claude-bridge/claude-opus-5-5" {
 		t.Fatalf("second reviewer = %q", got)
+	}
+	if got := cfg.ReviewerChain[0].Env["CODEX_PROFILE"]; got != "subscription" {
+		t.Fatalf("first reviewer environment = %q", got)
+	}
+	if floor := cfg.ReviewerChain[0].Floor; floor == nil || floor.Command != "quota-axi --json" || floor.Field != "accounts.codex.remaining_percent" || floor.Minimum != 30 {
+		t.Fatalf("first reviewer floor = %#v", floor)
 	}
 }
 

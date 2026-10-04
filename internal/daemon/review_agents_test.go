@@ -16,6 +16,48 @@ import (
 	"github.com/kunchenguid/no-mistakes/internal/types"
 )
 
+func TestReviewerChainFloorAndEnvironmentAreEntryScoped(t *testing.T) {
+	dir := t.TempDir()
+	capture := filepath.Join(dir, "account")
+	bin := filepath.Join(dir, "pi")
+	const response = `{"type":"agent_end","messages":[{"role":"assistant","content":[{"type":"text","text":"ok"}]}]}`
+	script := "#!/bin/sh\nprintf '%s' \"$REVIEWER_ACCOUNT\" > " + shellQuoteForTest(capture) + "\ncat >/dev/null\nprintf '%s\\n' '" + response + "'\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	global, err := config.LoadGlobalFromBytes([]byte(`agent: pi
+reviewer_chain:
+  - agent: pi
+    model: first
+    env: {REVIEWER_ACCOUNT: first}
+    floor: {command: "echo {\"remaining\":20}", field: remaining, minimum: 30}
+  - agent: pi
+    model: second
+    env: {REVIEWER_ACCOUNT: second}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Merge(global, &config.RepoConfig{})
+	cfg.AgentPathOverride = map[string]string{"pi": bin}
+	ag, err := newPipelineAgent(context.Background(), cfg, t.TempDir(), fakeLookPath, runenv.Overlay{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ag.Close()
+	result, err := ag.Run(context.Background(), agent.RunOpts{Purpose: "review", Prompt: "review", CWD: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	account, err := os.ReadFile(capture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(account) != "second" || !strings.Contains(result.ReviewerChainTrace, `"selected":1`) || !strings.Contains(result.ReviewerChainTrace, `"remaining 20% is below the 30% minimum"`) {
+		t.Fatalf("account=%q trace=%q", account, result.ReviewerChainTrace)
+	}
+}
+
 func TestPipelineReviewRolesUseIndependentPiProfiles(t *testing.T) {
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "pi")

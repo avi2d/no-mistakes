@@ -32,9 +32,11 @@ var baseRoleFor = map[string]string{
 // ReviewAgent pins one review-loop role to an explicit harness. Empty model or
 // effort inherits agent_config for that harness; native argument overrides win.
 type ReviewAgent struct {
-	Agent  types.AgentName `yaml:"agent"`
-	Model  string          `yaml:"model"`
-	Effort agentcfg.Effort `yaml:"effort"`
+	Agent  types.AgentName   `yaml:"agent"`
+	Model  string            `yaml:"model"`
+	Effort agentcfg.Effort   `yaml:"effort"`
+	Env    map[string]string `yaml:"env"`
+	Floor  *ReviewerFloor    `yaml:"floor"`
 	// AfterRound is the number of leading review rounds that stay on the base
 	// role; this entry serves every round above it. Only the *_after_round
 	// roles accept it, and an unset value means 1 (take over from round 2).
@@ -43,6 +45,12 @@ type ReviewAgent struct {
 	// omitted key, so a value the documented contract rejects fails closed
 	// instead of being read as the default.
 	AfterRound *int `yaml:"after_round"`
+}
+
+type ReviewerFloor struct {
+	Command string `yaml:"command"`
+	Field   string `yaml:"field"`
+	Minimum int    `yaml:"minimum"`
 }
 
 // TakesOverFromRound is the first 1-based round an *_after_round entry serves.
@@ -64,6 +72,9 @@ func validateReviewAgents(roles map[string]ReviewAgent) error {
 		if err := agentcfg.Validate(entry.Agent, agentcfg.Profile{Model: strings.TrimSpace(entry.Model), Effort: entry.Effort}); err != nil {
 			return fmt.Errorf("invalid review_agents.%s: %w", role, err)
 		}
+		if len(entry.Env) > 0 || entry.Floor != nil {
+			return fmt.Errorf("review_agents.%s does not accept env or floor", role)
+		}
 		if _, isOverlay := baseRoleFor[role]; !isOverlay {
 			if entry.AfterRound != nil {
 				return fmt.Errorf("review_agents.%s does not accept after_round; configure review_agents.%s_after_round instead", role, role)
@@ -77,6 +88,23 @@ func validateReviewAgents(roles map[string]ReviewAgent) error {
 			if *entry.AfterRound >= math.MaxInt {
 				return fmt.Errorf("review_agents.%s.after_round overflows the takeover round", role)
 			}
+		}
+	}
+	return nil
+}
+
+func validateReviewerEntry(entry ReviewAgent) error {
+	for key, value := range entry.Env {
+		if strings.TrimSpace(key) == "" || strings.ContainsAny(key, "=\x00") || strings.ContainsRune(value, '\x00') {
+			return fmt.Errorf("invalid environment entry %q", key)
+		}
+	}
+	if entry.Floor != nil {
+		if strings.TrimSpace(entry.Floor.Command) == "" || strings.TrimSpace(entry.Floor.Field) == "" {
+			return fmt.Errorf("floor requires command and field")
+		}
+		if entry.Floor.Minimum < 0 || entry.Floor.Minimum > 100 {
+			return fmt.Errorf("floor.minimum must be between 0 and 100, got %d", entry.Floor.Minimum)
 		}
 	}
 	return nil

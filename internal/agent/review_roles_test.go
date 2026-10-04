@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 )
@@ -100,6 +101,39 @@ func TestReviewRoleFallsBackOnQuotaError(t *testing.T) {
 	result, err := ag.Run(context.Background(), RunOpts{Purpose: "review", Round: 1})
 	if err != nil || result.Provider != "opus-5-5" || result.AgentIdentity != "Opus 5.5" || len(primary.calls) != 1 || len(firstFallback.calls) != 1 || len(secondFallback.calls) != 1 {
 		t.Fatalf("result=%+v err=%v calls=%d/%d/%d", result, err, len(primary.calls), len(firstFallback.calls), len(secondFallback.calls))
+	}
+}
+
+func TestReviewerCandidatesSkipBelowFloorAndRecordTrace(t *testing.T) {
+	first := &roleRecorder{name: "codex"}
+	second := &roleRecorder{name: "claude-pro", err: errors.New("quota exceeded")}
+	last := &roleRecorder{name: "claude-max"}
+	floorChecks := 0
+	role := RoundedRole{Candidates: []ReviewerCandidate{
+		{Agent: first, Label: "Codex Pro", CheckFloor: func(context.Context) (string, error) {
+			floorChecks++
+			return "remaining 20% is below the 30% minimum", nil
+		}},
+		{Agent: second, Label: "Claude Pro", CheckFloor: func(context.Context) (string, error) {
+			floorChecks++
+			return "", nil
+		}},
+		{Agent: last, Label: "Claude Max", CheckFloor: func(context.Context) (string, error) {
+			t.Fatal("last candidate floor must not run")
+			return "", nil
+		}},
+	}}
+	ag := WithReviewRoles(&roleRecorder{name: "default"}, ReviewRoles{Reviewer: role})
+	result, err := ag.Run(context.Background(), RunOpts{Purpose: "review"})
+	if err != nil || result.AgentIdentity != "Claude Max" || len(first.calls) != 0 || len(second.calls) != 1 || len(last.calls) != 1 || floorChecks != 2 {
+		t.Fatalf("result=%+v err=%v calls=%d/%d/%d floorChecks=%d", result, err, len(first.calls), len(second.calls), len(last.calls), floorChecks)
+	}
+	var trace reviewerTrace
+	if err := json.Unmarshal([]byte(result.ReviewerChainTrace), &trace); err != nil {
+		t.Fatalf("trace %q: %v", result.ReviewerChainTrace, err)
+	}
+	if trace.Selected != 2 || len(trace.Skipped) != 2 || trace.Skipped[0].Entry != 0 || trace.Skipped[1].Entry != 1 {
+		t.Fatalf("trace = %+v", trace)
 	}
 }
 
