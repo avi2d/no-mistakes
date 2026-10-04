@@ -604,31 +604,20 @@ func TestExecutor_ReviewCarryForward_PendingSelectionsSurviveLaterRounds(t *test
 	done, _ := startExecutor(t, exec, run, repo, workDir)
 
 	waitForStepStatus(t, database, run.ID, types.StepReview, types.StepStatusAwaitingApproval)
-	waitForRounds := func(want int) {
-		t.Helper()
-		deadline := time.Now().Add(10 * time.Second)
-		for time.Now().Before(deadline) {
-			steps, err := database.GetStepsByRun(run.ID)
-			if err == nil && len(steps) > 0 {
-				rounds, roundsErr := database.GetRoundsByStep(steps[0].ID)
-				if roundsErr == nil && len(rounds) >= want && steps[0].Status == types.StepStatusFixReview {
-					return
-				}
-			}
-			time.Sleep(25 * time.Millisecond)
-		}
-		t.Fatalf("review did not reach round %d", want)
+	steps, err := database.GetStepsByRun(run.ID)
+	if err != nil {
+		t.Fatal(err)
 	}
 	if err := exec.Respond(types.StepReview, types.ActionFix, []string{"review-1"}); err != nil {
 		t.Fatal(err)
 	}
-	waitForRounds(2)
+	waitForParkedRounds(t, database, steps[0].ID, types.StepStatusFixReview, 2)
 	if err := exec.Respond(types.StepReview, types.ActionFix, []string{"review-2"}); err != nil {
 		t.Fatal(err)
 	}
-	waitForRounds(3)
+	waitForParkedRounds(t, database, steps[0].ID, types.StepStatusFixReview, 3)
 
-	steps, err := database.GetStepsByRun(run.ID)
+	steps, err = database.GetStepsByRun(run.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -941,22 +930,9 @@ func TestExecutor_ReviewCarryForward_AnAnswerRoundSilenceKeepsAnUnrelatedFinding
 	// Respond returns before the round runs, so the pre-answer snapshot is
 	// still on the step. The finalize turn is the one that settles the
 	// question, so its disappearance is the signal that the round landed.
-	var steps []*db.StepResult
-	deadline := time.Now().Add(20 * time.Second)
-	for {
-		var err error
-		steps, err = database.GetStepsByRun(run.ID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(steps) > 0 && steps[0].FindingsJSON != nil && !strings.Contains(*steps[0].FindingsJSON, "question-q1") {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("the answer round never landed")
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
+	steps := waitForParkedFindings(t, database, run.ID, types.StepStatusAwaitingApproval, func(findings string) bool {
+		return !strings.Contains(findings, "question-q1")
+	})
 	if steps[0].FindingsJSON == nil {
 		t.Fatal("the gate lost every finding, including the unrelated one")
 	}
@@ -1510,22 +1486,7 @@ func TestExecutor_ReviewCarryForward_AnAnswerRoundCannotWithdrawTheOperatorsOwnF
 	if err := exec.Respond(types.StepReview, types.ActionAnswer, nil); err != nil {
 		t.Fatal(err)
 	}
-	// The gate is already fix_review, so the status cannot say the answer round
-	// landed; its own finding is what does.
-	deadline := time.Now().Add(20 * time.Second)
-	for {
-		steps, err = database.GetStepsByRun(run.ID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(steps) > 0 && steps[0].FindingsJSON != nil && strings.Contains(*steps[0].FindingsJSON, "finalize turn ran") {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("the answer round never landed")
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
+	steps = waitForParkedFindings(t, database, run.ID, types.StepStatusFixReview, containing("finalize turn ran"))
 	// Parsed, not substring-matched: an applied retraction records the id it
 	// removed on the round, so the id is present in the payload either way.
 	after, err := types.ParseFindingsJSON(*steps[0].FindingsJSON)
@@ -1644,7 +1605,7 @@ func TestExecutor_ReviewCarryForward_ARetractionIsRecordedOnlyOnTheRoundThatMade
 	if err := exec.Respond(types.StepReview, types.ActionAnswer, nil); err != nil {
 		t.Fatal(err)
 	}
-	steps := waitForFindings(t, database, run.ID, "answer round finding")
+	steps := waitForParkedFindings(t, database, run.ID, types.StepStatusAwaitingApproval, containing("answer round finding"))
 	if got := withdrawnIDs(t, *steps[0].FindingsJSON); len(got) != 1 || got[0] != "review-1" {
 		t.Fatalf("the answer round did not record the retraction it made: %v (%s)", got, *steps[0].FindingsJSON)
 	}
@@ -1658,7 +1619,7 @@ func TestExecutor_ReviewCarryForward_ARetractionIsRecordedOnlyOnTheRoundThatMade
 	if err := exec.Respond(types.StepReview, types.ActionAnswer, nil); err != nil {
 		t.Fatal(err)
 	}
-	rounds := waitForRounds(t, database, steps[0].ID, 3)
+	rounds := waitForParkedRounds(t, database, steps[0].ID, types.StepStatusAwaitingApproval, 3)
 	last := rounds[len(rounds)-1]
 	if last.FindingsJSON == nil {
 		t.Fatal("the silent round persisted no findings at all")
@@ -1718,8 +1679,7 @@ func TestExecutor_ReviewCarryForward_AnEmptyOutstandingSetRecordsNoRetraction(t 
 	if err := exec.Respond(types.StepReview, types.ActionAnswer, nil); err != nil {
 		t.Fatal(err)
 	}
-	steps := waitForFindings(t, database, run.ID, "finalize turn finding")
-	waitForStepStatus(t, database, run.ID, types.StepReview, types.StepStatusAwaitingApproval)
+	steps := waitForParkedFindings(t, database, run.ID, types.StepStatusAwaitingApproval, containing("finalize turn finding"))
 	if got := withdrawnIDs(t, *steps[0].FindingsJSON); len(got) != 0 {
 		t.Fatalf("a retraction the executor never applied was recorded as if it had been: %v (%s)", got, *steps[0].FindingsJSON)
 	}
@@ -1730,44 +1690,60 @@ func TestExecutor_ReviewCarryForward_AnEmptyOutstandingSetRecordsNoRetraction(t 
 	waitExecutorDone(t, done)
 }
 
-// waitForFindings blocks until the step's persisted findings carry marker. The
-// gate status alone cannot say a round landed when consecutive rounds park the
-// same way, which is how an earlier version of these tests read a pre-round
-// snapshot and passed vacuously.
-func waitForFindings(t *testing.T, database *db.DB, runID, marker string) []*db.StepResult {
+func containing(marker string) func(findings string) bool {
+	return func(findings string) bool { return strings.Contains(findings, marker) }
+}
+
+// waitForParkedFindings blocks until the round whose findings satisfy landed
+// has parked the step at status, so Respond can reach it. Both are read from
+// one row: the executor writes a round's findings before it parks, and the
+// status alone may still be the previous round's identical park.
+func waitForParkedFindings(t *testing.T, database *db.DB, runID string, status types.StepStatus, landed func(findings string) bool) []*db.StepResult {
 	t.Helper()
 	deadline := time.Now().Add(20 * time.Second)
+	var last types.StepStatus
 	for {
 		steps, err := database.GetStepsByRun(runID)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(steps) > 0 && steps[0].FindingsJSON != nil && strings.Contains(*steps[0].FindingsJSON, marker) {
-			return steps
+		if len(steps) > 0 {
+			last = steps[0].Status
+			if steps[0].FindingsJSON != nil && landed(*steps[0].FindingsJSON) && last == status {
+				return steps
+			}
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("the round carrying %q never landed", marker)
+			t.Fatalf("the round never parked at %s; last status %s", status, last)
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
 }
 
-// waitForRounds blocks until the step has persisted at least want rounds. A
-// round that reports nothing changes no marker, so its row is the only place
-// its arrival is visible.
-func waitForRounds(t *testing.T, database *db.DB, stepResultID string, want int) []*db.StepRound {
+// waitForParkedRounds blocks until the step has persisted at least want rounds
+// and the last of them has parked the step at status. A round that reports
+// nothing changes no marker, so its row is the only place its arrival is
+// visible. The rounds are read before the status: the executor inserts a
+// round's row before it parks.
+func waitForParkedRounds(t *testing.T, database *db.DB, stepResultID string, status types.StepStatus, want int) []*db.StepRound {
 	t.Helper()
 	deadline := time.Now().Add(20 * time.Second)
+	var last types.StepStatus
 	for {
 		rounds, err := database.GetRoundsByStep(stepResultID)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(rounds) >= want {
+		step, err := database.GetStepResult(stepResultID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		last = step.Status
+		if len(rounds) >= want && last == status {
 			return rounds
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("only %d of %d rounds landed", len(rounds), want)
+			t.Fatalf("only %d of %d rounds landed; last status %s, want %s", len(rounds), want, last, status)
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
@@ -1808,7 +1784,7 @@ func TestExecutor_ReviewCarryForward_ARecoveredRoundInheritsNoRetractionRecord(t
 		t.Fatalf("respond to recovered review: %v", respondErr)
 	}
 
-	rounds := waitForRounds(t, database, stepResult.ID, 2)
+	rounds := waitForParkedRounds(t, database, stepResult.ID, types.StepStatusAwaitingApproval, 2)
 	last := rounds[len(rounds)-1]
 	if last.FindingsJSON == nil {
 		t.Fatal("the recovered round persisted no findings at all")

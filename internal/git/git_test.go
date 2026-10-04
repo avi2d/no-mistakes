@@ -2,11 +2,13 @@ package git
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/kunchenguid/no-mistakes/internal/runenv"
@@ -470,5 +472,40 @@ func TestWorktreeAddRemoveOnBareRepoUnderSafeBareRepositoryExplicit(t *testing.T
 	}
 	if err := WorktreeRemove(ctx, bare, wt); err != nil {
 		t.Fatalf("worktree remove from bare repo: %v", err)
+	}
+}
+
+// A run's worktree is removed while the next run's is added on the same gate.
+// git deletes an empty <gate>/worktrees after a remove, which an add needs
+// between creating that directory and creating its own entry in it.
+func TestWorktreeAddDoesNotRaceARemoveOnTheSameRepository(t *testing.T) {
+	ctx := context.Background()
+	work := initTestRepo(t)
+	bare := filepath.Join(t.TempDir(), "gate.git")
+	if err := InitBare(ctx, bare); err != nil {
+		t.Fatalf("init bare: %v", err)
+	}
+	run(t, work, "git", "push", bare, "HEAD:refs/heads/main")
+	sha := run(t, work, "git", "rev-parse", "HEAD")
+	root := t.TempDir()
+
+	finished := filepath.Join(root, "run-0")
+	if err := WorktreeAdd(ctx, bare, finished, sha); err != nil {
+		t.Fatalf("add the first run's worktree: %v", err)
+	}
+	for i := 1; i <= 100; i++ {
+		starting := filepath.Join(root, fmt.Sprintf("run-%d", i))
+		var removeErr, addErr error
+		var wg sync.WaitGroup
+		wg.Go(func() { removeErr = WorktreeRemove(ctx, bare, finished) })
+		wg.Go(func() { addErr = WorktreeAdd(ctx, bare, starting, sha) })
+		wg.Wait()
+		if removeErr != nil {
+			t.Fatalf("run %d: remove the finished run's worktree: %v", i, removeErr)
+		}
+		if addErr != nil {
+			t.Fatalf("run %d: add a worktree while the finished run's is removed: %v", i, addErr)
+		}
+		finished = starting
 	}
 }
