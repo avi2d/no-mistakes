@@ -50,6 +50,7 @@ type wfDoc struct {
 
 type wfJob struct {
 	name           string
+	Name           string `yaml:"name"`
 	RunsOn         any    `yaml:"runs-on"`
 	Environment    any    `yaml:"environment"`
 	Needs          any    `yaml:"needs"`
