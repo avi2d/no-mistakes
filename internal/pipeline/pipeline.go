@@ -21,6 +21,7 @@ type StepContext struct {
 	WorkDir          string
 	GateDir          string
 	Agent            agent.Agent
+	ReviewerAgent    string
 	Config           *config.Config
 	ForgeContext     *forgecontext.Context
 	DB               *db.DB

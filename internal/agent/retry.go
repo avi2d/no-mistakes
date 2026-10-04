@@ -174,6 +174,9 @@ var terminalNeedles = []struct {
 	{"freeusagelimit", "free usage limit"},
 	{"free usage limit", "free usage limit"},
 	{"free_usage_limit", "free usage limit"},
+	{"usage limit", "usage limit"},
+	{"usage_limit", "usage limit"},
+	{"subscription limit", "subscription limit"},
 	{"insufficient quota", "insufficient quota"},
 	{"insufficient_quota", "insufficient quota"},
 	{"exceeded your current quota", "quota exceeded"},
@@ -206,6 +209,23 @@ func classifyTransient(err error) (string, bool) {
 		return "http " + m, true
 	}
 	return "", false
+}
+
+// IsUsageLimitError excludes canceled turns from reviewer fallback.
+func IsUsageLimitError(err error) bool {
+	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	if isTerminalRetryError(msg) {
+		return true
+	}
+	for _, needle := range []string{"rate_limit", "rate limit", "rate-limit", "too many requests", "daily limit", "monthly limit", "five-hour limit", "5-hour limit", "insufficient credits", "credits exhausted", "out of credits"} {
+		if strings.Contains(msg, needle) {
+			return true
+		}
+	}
+	return false
 }
 
 func isTerminalRetryError(msg string) bool {

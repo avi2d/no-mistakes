@@ -161,6 +161,13 @@ func annotateRunView(env *axiEnv, rv *runView) {
 				step.FixRoundCount = stats.FixRounds
 				step.PendingFixSource = stats.PendingFixSource
 			}
+			if rounds, err := env.d.GetRoundsByStep(step.ID); err == nil {
+				for _, round := range rounds {
+					if round.ReviewerAgent != nil && strings.TrimSpace(*round.ReviewerAgent) != "" {
+						step.ReviewerAgent = *round.ReviewerAgent
+					}
+				}
+			}
 		}
 		if step.LastActivityAt == nil {
 			logPath := filepath.Join(env.p.RunLogDir(rv.ID), step.Name+".log")

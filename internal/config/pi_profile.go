@@ -11,9 +11,9 @@ import (
 
 // ResolvePiProfile resolves only opt-in requests. Native selection overrides
 // are ambiguous with a run pin and are refused, not silently given precedence.
-// Global agent and review_agents must already be Pi-only so a mixed harness is
-// refused before any active run is superseded. Trusted default-branch agent
-// selection is a separate pre-cancel check in the daemon.
+// Global agent, review_agents, and reviewer_chain must be Pi-only before a
+// mixed harness can be refused without superseding an active run. Trusted
+// default-branch agent selection is a separate pre-cancel check in the daemon.
 func (c *GlobalConfig) ResolvePiProfile(request *agentcfg.PiProfile) (*agentcfg.PiProfile, error) {
 	if request == nil {
 		return nil, nil
@@ -21,7 +21,7 @@ func (c *GlobalConfig) ResolvePiProfile(request *agentcfg.PiProfile) (*agentcfg.
 	if err := request.ValidateRequest(); err != nil {
 		return nil, err
 	}
-	if err := validatePiProfileAgents(c.Agent, c.Agents, c.ReviewAgents); err != nil {
+	if err := validatePiProfileAgents(c.Agent, c.Agents, c.ReviewAgents, c.ReviewerChain); err != nil {
 		return nil, err
 	}
 	if slices.Contains(c.AgentArgsOverride["pi"], "--") {
@@ -45,12 +45,12 @@ func (c *GlobalConfig) ResolvePiProfile(request *agentcfg.PiProfile) (*agentcfg.
 }
 
 // ValidatePiProfileAgents runs after trusted repository config is merged. A
-// single-model pin must not silently drop a configured non-Pi reviewer/fallback.
+// single-model pin must not silently drop a configured non-Pi reviewer.
 func (c *Config) ValidatePiProfileAgents() error {
-	return validatePiProfileAgents(c.Agent, c.Agents, c.ReviewAgents)
+	return validatePiProfileAgents(c.Agent, c.Agents, c.ReviewAgents, c.ReviewerChain)
 }
 
-func validatePiProfileAgents(agent types.AgentName, agents []types.AgentName, reviewAgents map[string]ReviewAgent) error {
+func validatePiProfileAgents(agent types.AgentName, agents []types.AgentName, reviewAgents map[string]ReviewAgent, reviewerChain []ReviewAgent) error {
 	names := agents
 	if len(names) == 0 {
 		names = []types.AgentName{agent}
@@ -63,6 +63,11 @@ func validatePiProfileAgents(agent types.AgentName, agents []types.AgentName, re
 	for _, entry := range reviewAgents {
 		if entry.Agent != types.AgentPi {
 			return fmt.Errorf("Pi run profile conflicts with non-Pi review_agents")
+		}
+	}
+	for _, entry := range reviewerChain {
+		if entry.Agent != types.AgentPi {
+			return fmt.Errorf("Pi run profile conflicts with non-Pi reviewer_chain")
 		}
 	}
 	return nil
@@ -84,6 +89,7 @@ func (c *Config) ApplyPiProfile(pin *agentcfg.PiProfile) error {
 	c.Agent = types.AgentPi
 	c.Agents = []types.AgentName{types.AgentPi}
 	c.ReviewAgents = nil // both roles now use the same pinned primary
+	c.ReviewerChain = nil
 	c.AgentConfig = map[string]agentcfg.Profile{"pi": {Model: pin.Model, Effort: pin.Effort}}
 	args := pin.PinnedBaseArgs(c.AgentArgsFor(types.AgentPi))
 	c.AgentArgsOverride = maps.Clone(c.AgentArgsOverride)

@@ -314,18 +314,64 @@ func newPipelineAgent(ctx context.Context, cfg *config.Config, evidenceRoot stri
 		}
 		roles[role] = next
 	}
+	chain := make([]agent.Agent, 0, len(cfg.ReviewerChain))
+	chainLabels := make([]string, 0, len(cfg.ReviewerChain))
+	for i, entry := range cfg.ReviewerChain {
+		next, err := newConfiguredAgent(ctx, cfg.ForReviewAgent(entry), evidenceRoot, lookPath, environment)
+		if err != nil {
+			_ = primary.Close()
+			for _, existing := range roles {
+				_ = existing.Close()
+			}
+			for _, existing := range chain {
+				_ = existing.Close()
+			}
+			return nil, fmt.Errorf("create reviewer_chain[%d]: %w", i, err)
+		}
+		chain = append(chain, next)
+		chainLabels = append(chainLabels, reviewAgentEntryLabel(cfg, entry))
+	}
+	reviewer := agent.RoundedRole{
+		Agent:      roles[config.RoleReviewer],
+		Late:       roles[config.RoleReviewerAfterRound],
+		LateFrom:   cfg.ReviewAgentTakeoverRound(config.RoleReviewerAfterRound),
+		AgentLabel: reviewAgentLabel(cfg, config.RoleReviewer),
+		LateLabel:  reviewAgentLabel(cfg, config.RoleReviewerAfterRound),
+	}
+	if len(chain) > 0 {
+		reviewer.Agent = chain[0]
+		reviewer.AgentLabel = chainLabels[0]
+		reviewer.Fallback = chain[1:]
+		reviewer.FallbackLabels = chainLabels[1:]
+	}
 	return agent.WithReviewRoles(primary, agent.ReviewRoles{
-		Reviewer: agent.RoundedRole{
-			Agent:    roles[config.RoleReviewer],
-			Late:     roles[config.RoleReviewerAfterRound],
-			LateFrom: cfg.ReviewAgentTakeoverRound(config.RoleReviewerAfterRound),
-		},
+		Reviewer: reviewer,
 		Fixer: agent.RoundedRole{
 			Agent:    roles[config.RoleFixer],
 			Late:     roles[config.RoleFixerAfterRound],
 			LateFrom: cfg.ReviewAgentTakeoverRound(config.RoleFixerAfterRound),
 		},
 	}), nil
+}
+
+func reviewAgentLabel(cfg *config.Config, role string) string {
+	entry, ok := cfg.ReviewAgents[role]
+	if !ok {
+		return ""
+	}
+	return reviewAgentEntryLabel(cfg, entry)
+}
+
+func reviewAgentEntryLabel(cfg *config.Config, entry config.ReviewAgent) string {
+	model := strings.Join(strings.Fields(entry.Model), " ")
+	if model == "" {
+		model = cfg.ForReviewAgent(entry).AgentProfile().Model
+	}
+	model = strings.Join(strings.Fields(model), " ")
+	if model == "" {
+		return string(entry.Agent)
+	}
+	return string(entry.Agent) + "/" + model
 }
 
 func newConfiguredAgent(ctx context.Context, cfg *config.Config, evidenceRoot string, lookPath func(string) (string, error), environment runenv.Overlay) (agent.Agent, error) {

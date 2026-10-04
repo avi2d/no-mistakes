@@ -107,6 +107,7 @@ type stepView struct {
 	FixRoundCount    int
 	AutoFixLimit     int
 	PendingFixSource string
+	ReviewerAgent    string
 	QuietWarning     time.Duration
 	SkipReason       string
 }
@@ -428,7 +429,11 @@ func (s stepView) roundSummary() string {
 		return "fixing"
 	}
 	if s.RoundCount > 0 {
-		return fmt.Sprintf("round %d", s.RoundCount)
+		round := fmt.Sprintf("round %d", s.RoundCount)
+		if s.ReviewerAgent != "" {
+			return round + " by " + s.ReviewerAgent
+		}
+		return round
 	}
 	return "starting"
 }
@@ -519,6 +524,12 @@ func runObjectFieldWithKey(key string, rv runView) toon.Field {
 		}
 	}
 	fields = append(fields, toon.Field{Key: "steps", Value: rows})
+	for _, step := range rv.Steps {
+		if step.Name == string(types.StepReview) && step.ReviewerAgent != "" {
+			fields = append(fields, toon.Field{Key: "reviewer_agent", Value: step.ReviewerAgent})
+			break
+		}
+	}
 	if skips := rv.automaticSkips(); len(skips) > 0 {
 		fields = append(fields, toon.Field{Key: "automatic_skips", Value: skips})
 	}

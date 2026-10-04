@@ -6,15 +6,15 @@ import (
 	"time"
 )
 
-// RoundedRole is one review-loop role: the agent that serves it, plus an
-// optional later-round agent the operator opted into. Late serves rounds at or
-// above LateFrom; every earlier round, and any invocation whose round is
-// unknown (RunOpts.Round <= 0), stays on Agent. A zero RoundedRole keeps the
-// default agent, so an unconfigured role behaves exactly as before.
+// RoundedRole retries only usage-limit errors through Fallback.
 type RoundedRole struct {
-	Agent    Agent
-	Late     Agent
-	LateFrom int
+	Agent          Agent
+	Late           Agent
+	LateFrom       int
+	Fallback       []Agent
+	AgentLabel     string
+	LateLabel      string
+	FallbackLabels []string
 }
 
 // ReviewRoles carries both review-loop roles with their optional later-round
@@ -30,6 +30,7 @@ func (r RoundedRole) agents() []Agent {
 	if r.Late != nil {
 		out = append(out, r.Late)
 	}
+	out = append(out, r.Fallback...)
 	return out
 }
 
@@ -45,6 +46,20 @@ func (r RoundedRole) pick(round int, fallback Agent) Agent {
 		return r.Agent
 	}
 	return fallback
+}
+
+func (r RoundedRole) label(round int) string {
+	if r.Late != nil && r.LateFrom > 0 && round >= r.LateFrom {
+		return r.LateLabel
+	}
+	return r.AgentLabel
+}
+
+func (r RoundedRole) fallbackLabel(index int, fallback Agent) string {
+	if index < len(r.FallbackLabels) && r.FallbackLabels[index] != "" {
+		return r.FallbackLabels[index]
+	}
+	return fallback.Name()
 }
 
 // WithReviewAgents routes only review and review-fix invocations to dedicated
@@ -137,13 +152,37 @@ func (a *reviewAgents) Run(ctx context.Context, opts RunOpts) (*Result, error) {
 	case "review-fix":
 		selected = a.fixer.pick(opts.Round, a.primary)
 	}
+	var label string
+	if opts.Purpose == "review" || opts.Purpose == "review-coverage" {
+		label = a.reviewer.label(opts.Round)
+	}
 	started := time.Now()
 	result, err := selected.Run(ctx, opts)
+	if err != nil && (opts.Purpose == "review" || opts.Purpose == "review-coverage") && IsUsageLimitError(err) {
+		for i, fallback := range a.reviewer.Fallback {
+			if ctx.Err() != nil {
+				break
+			}
+			selected = fallback
+			label = a.reviewer.fallbackLabel(i, fallback)
+			result, err = selected.Run(ctx, opts)
+			if err == nil || !IsUsageLimitError(err) {
+				break
+			}
+		}
+	}
 	if !ReportsAgentAttempts(selected) {
 		emitAgentAttempt(opts, selected.Name(), result, err, started, time.Now())
 	}
-	if result != nil && result.Provider == "" {
-		result.Provider = selected.Name()
+	if result != nil {
+		if label != "" {
+			result.AgentIdentity = label
+		} else {
+			result.AgentIdentity = selected.Name()
+		}
+		if result.Provider == "" {
+			result.Provider = selected.Name()
+		}
 	}
 	return result, err
 }

@@ -9,6 +9,17 @@ import (
 	"github.com/kunchenguid/no-mistakes/internal/types"
 )
 
+func TestBuildPipelineSummaryShowsReviewerPerRound(t *testing.T) {
+	reviewer := "pi/claude-bridge/claude-opus-5-5"
+	findings := `{"findings":[],"summary":"clean"}`
+	steps := []*db.StepResult{{ID: "review", StepName: types.StepReview, Status: types.StepStatusCompleted}}
+	rounds := map[string][]*db.StepRound{"review": {{Round: 1, Trigger: "initial", FindingsJSON: &findings, ReviewerAgent: &reviewer}}}
+	body, _ := BuildPipelineSummary(steps, rounds, testPipelineHeadSHA)
+	if !strings.Contains(body, "Reviewed by pi/claude-bridge/claude-opus-5-5.") {
+		t.Fatalf("PR summary omitted reviewer identity:\n%s", body)
+	}
+}
+
 func TestBuildPipelineSummary_AutoFix(t *testing.T) {
 	t.Parallel()
 	findings1 := `{"findings":[{"id":"lint-1","severity":"error","file":"pkg/foo.go","line":18,"description":"unused import"},{"id":"lint-2","severity":"warning","file":"pkg/bar.go","line":35,"description":"missing error check"}],"summary":"2 issues"}`

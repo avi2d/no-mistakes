@@ -1362,6 +1362,17 @@ func TestSkillExitCodeGuidanceDistinguishesDecisionGates(t *testing.T) {
 // string-splitting the finding's prose, so it is keyed on the review-question
 // CATEGORY. A gate parked on ordinary findings must still be told to respond,
 // not to answer.
+func TestAxiStatusShowsReviewerIdentity(t *testing.T) {
+	out := axiDoc(runObjectField(runView{Steps: []stepView{{
+		Name:          "review",
+		Status:        string(types.StepStatusCompleted),
+		ReviewerAgent: "pi/claude-bridge/claude-opus-5-5",
+	}}}))
+	if !strings.Contains(out, "reviewer_agent: pi/claude-bridge/claude-opus-5-5") {
+		t.Fatalf("axi status omitted reviewer identity:\n%s", out)
+	}
+}
+
 func TestAxiHomeLeadsWithAnsweringWhenTheGateHasAnOpenQuestion(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
