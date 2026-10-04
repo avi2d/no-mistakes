@@ -32,11 +32,10 @@ const maxGateSummary = 1200
 // Row types carry `toon` tags so the encoder renders a []row slice as a
 // tabular array (name[N]{cols}:) with one comma-delimited line per element.
 type stepRow struct {
-	Step          string `toon:"step"`
-	Status        string `toon:"status"`
-	Findings      int    `toon:"findings"`
-	DurationMS    int64  `toon:"duration_ms"`
-	ReviewerAgent string `toon:"reviewer_agent"`
+	Step       string `toon:"step"`
+	Status     string `toon:"status"`
+	Findings   int    `toon:"findings"`
+	DurationMS int64  `toon:"duration_ms"`
 }
 
 type automaticSkipRow struct {
@@ -519,12 +518,18 @@ func runObjectFieldWithKey(key string, rv runView) toon.Field {
 	rows := make([]stepRow, 0, len(rv.Steps))
 	sharedRows := make([]sharedWorkRow, 0, 1)
 	for _, s := range rv.Steps {
-		rows = append(rows, stepRow{Step: s.Name, Status: s.Status, Findings: s.findingCount(), DurationMS: s.DurationMS, ReviewerAgent: s.ReviewerAgent})
+		rows = append(rows, stepRow{Step: s.Name, Status: s.Status, Findings: s.findingCount(), DurationMS: s.DurationMS})
 		if s.WorkScope != "" {
 			sharedRows = append(sharedRows, sharedWorkRow{AttributedTo: s.Name, Scope: s.WorkScope, DurationMS: s.DurationMS})
 		}
 	}
 	fields = append(fields, toon.Field{Key: "steps", Value: rows})
+	for _, step := range rv.Steps {
+		if step.Name == string(types.StepReview) && step.ReviewerAgent != "" {
+			fields = append(fields, toon.Field{Key: "reviewer_agent", Value: step.ReviewerAgent})
+			break
+		}
+	}
 	if skips := rv.automaticSkips(); len(skips) > 0 {
 		fields = append(fields, toon.Field{Key: "automatic_skips", Value: skips})
 	}

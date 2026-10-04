@@ -1368,7 +1368,7 @@ func TestAxiStatusShowsReviewerIdentity(t *testing.T) {
 		Status:        string(types.StepStatusCompleted),
 		ReviewerAgent: "pi/claude-bridge/claude-opus-5-5",
 	}}}))
-	if !strings.Contains(out, "review,completed,0,0,pi/claude-bridge/claude-opus-5-5") {
+	if !strings.Contains(out, "reviewer_agent: pi/claude-bridge/claude-opus-5-5") {
 		t.Fatalf("axi status omitted reviewer identity:\n%s", out)
 	}
 }
