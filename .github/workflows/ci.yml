@@ -61,9 +61,9 @@ jobs:
       matrix:
         include:
           - shard: macos-1
-            packages: ./internal/cli ./internal/daemon ./internal/scm/forgejo ./internal/db ./internal/scm/gitlab
+            packages: ./internal/pipeline/steps/... ./internal/cli ./internal/scm/forgejo ./internal/scm/gitlab ./internal/db
           - shard: macos-2
-            exclude: '/internal/(cli|daemon|scm/forgejo|db|scm/gitlab)$'
+            exclude: '/internal/(pipeline/steps(/.*)?|cli|scm/forgejo|scm/gitlab|db)$'
     runs-on: macos-latest
     timeout-minutes: 40
     steps:
@@ -151,7 +151,9 @@ jobs:
           NM_CI_RUN: ${{ matrix.run }}
           NM_CI_SKIP: ${{ matrix.skip }}
           NM_CI_TIMEOUT: ${{ matrix.timeout }}
+          GOFLAGS: -debug-trace=${{ runner.temp }}/go-trace.json
         run: |
+          $stepStart = Get-Date
           if ($env:NM_CI_EXCLUDE) {
             $pkgs = go list ./... | Where-Object { $_ -notmatch $env:NM_CI_EXCLUDE }
           } else {
@@ -163,6 +165,17 @@ jobs:
           if ($env:NM_CI_RUN) { $filters += "-run=$env:NM_CI_RUN" }
           if ($env:NM_CI_SKIP) { $filters += "-skip=$env:NM_CI_SKIP" }
           go test -v "-timeout=$env:NM_CI_TIMEOUT" @filters @pkgs
+          $code = $LASTEXITCODE
+          Write-Host "DIAG go test exited at $(Get-Date -Format o)"
+          Get-CimInstance Win32_Process | Where-Object { $_.CreationDate -gt $stepStart } | Format-Table -AutoSize ProcessId,ParentProcessId,Name,CreationDate,CommandLine | Out-String -Width 400 | Write-Host
+          exit $code
+
+      - name: Upload go trace
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: go-trace-${{ matrix.shard }}
+          path: ${{ runner.temp }}/go-trace.json
 
       - name: Build
         run: go build ./cmd/no-mistakes
