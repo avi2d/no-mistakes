@@ -469,6 +469,18 @@ Risk assessment (after listing all findings):
 		result, err := s.runReviewAgent(sctx, "agent review", sessionRole, opts)
 		if err == nil {
 			findings, err = parseReviewAnalyzerOutput(result)
+			if err == nil && sctx.Fixing {
+				err = rejectUnchangedFixFindings(sctx.PreviousFindings, findings)
+				if err != nil && attempt == reviewAnalyzerMaxAttempts {
+					var dropped int
+					findings, dropped = dropUnchangedFixFindings(sctx.PreviousFindings, findings)
+					if dropped > 0 {
+						findings.Summary = fmt.Sprintf("reviewed current head; dropped %d unchanged carried finding(s)", dropped)
+						sctx.Log(fmt.Sprintf("dropped %d unchanged carried finding(s) after rereview retries", dropped))
+						err = nil
+					}
+				}
+			}
 			if err == nil {
 				break
 			}
@@ -763,6 +775,42 @@ func (s *ReviewStep) appendOpenReviewQuestionFindings(sctx *pipeline.StepContext
 	return nil
 }
 
+func rejectUnchangedFixFindings(previousRaw string, current Findings) error {
+	previousDescriptions := previousFixFindingDescriptions(previousRaw)
+	for _, finding := range current.Items {
+		if _, unchanged := previousDescriptions[finding.File+"\x00"+finding.Description]; unchanged {
+			return fmt.Errorf("finding %s repeats selected finding text unchanged; verify it against the current head, then restate it with current evidence or omit it if fixed", finding.ID)
+		}
+	}
+	return nil
+}
+
+func dropUnchangedFixFindings(previousRaw string, current Findings) (Findings, int) {
+	previousDescriptions := previousFixFindingDescriptions(previousRaw)
+	retained := current.Items[:0]
+	for _, finding := range current.Items {
+		if _, unchanged := previousDescriptions[finding.File+"\x00"+finding.Description]; unchanged {
+			continue
+		}
+		retained = append(retained, finding)
+	}
+	dropped := len(current.Items) - len(retained)
+	current.Items = retained
+	return current, dropped
+}
+
+func previousFixFindingDescriptions(raw string) map[string]struct{} {
+	previous, err := types.ParseFindingsJSON(raw)
+	if err != nil {
+		return nil
+	}
+	descriptions := make(map[string]struct{}, len(previous.Items))
+	for _, finding := range previous.Items {
+		descriptions[finding.File+"\x00"+finding.Description] = struct{}{}
+	}
+	return descriptions
+}
+
 // parseReviewAnalyzerOutput validates a review turn's structured findings. A
 // review that produced no structured output, or one whose risk assessment is
 // absent, cannot certify the head: an unrun or unreadable analyzer must not
@@ -884,6 +932,7 @@ Fix-round provenance:
 - This is a re-review after this run's automated fix round(s): every commit after the starting head, plus any uncommitted worktree changes, was authored by the pipeline's own fixer agent, not by the change author.
 - Review that pipeline-authored code with exactly the same adversarial standard as the author's original changes. It is unreviewed new code, not a settled resolution of the findings that prompted it.
 - Prior findings and fix summaries are claims, not evidence. Verify each claimed fix against the current code, and independently judge whether behavior the fix rounds introduced is correct, not merely whether it implements what was prescribed.
+- For every finding selected for a fix round, inspect the current head. Do not copy a selected finding forward unchanged: restate it with evidence from the current code if the defect remains, or omit it if the defect is gone.
 - A test added or changed in the same fix round as the code it exercises is part of that round's claim, not independent proof: judge whether its asserted outcome is the right outcome and whether it could still pass with the code wrong.
 - When a defect you report is in code a prior fix round changed, or is a sibling site of an invariant a prior fix round addressed, say so in the description: name the round, and whether that fix introduced the defect, left this sibling behind, or moved the defect. List every remaining sibling site so one fix round can close the class.
 - When the defects you are reporting are located in code a prior fix round introduced, and that code exceeds what the original finding required, report a single "ask-user" finding recommending that the prior round be reverted to the minimal fix, instead of filing further repairs on that machinery.
@@ -900,6 +949,7 @@ Fix-round provenance:
 - Commits after %s through %s on this branch were authored by a previous run's fixer and were never certified: that run's re-review did not complete. Review them as pipeline-authored code under the same adversarial standard.
 - Review that pipeline-authored code with exactly the same adversarial standard as the author's original changes. It is unreviewed new code, not a settled resolution of the findings that prompted it.
 - Prior findings and fix summaries are claims, not evidence. Verify each claimed fix against the current code, and independently judge whether behavior the fix rounds introduced is correct, not merely whether it implements what was prescribed.
+- For every finding selected for a fix round, inspect the current head. Do not copy a selected finding forward unchanged: restate it with evidence from the current code if the defect remains, or omit it if the defect is gone.
 - A test added or changed in the same fix round as the code it exercises is part of that round's claim, not independent proof: judge whether its asserted outcome is the right outcome and whether it could still pass with the code wrong.
 - When a defect you report is in code a prior fix round changed, or is a sibling site of an invariant a prior fix round addressed, say so in the description: name the round, and whether that fix introduced the defect, left this sibling behind, or moved the defect. List every remaining sibling site so one fix round can close the class.
 - When the defects you are reporting are located in code a prior fix round introduced, and that code exceeds what the original finding required, report a single "ask-user" finding recommending that the prior round be reverted to the minimal fix, instead of filing further repairs on that machinery.

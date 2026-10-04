@@ -324,6 +324,7 @@ func TestReviewStep_EachAgentInvocationGetsItsOwnBudget(t *testing.T) {
 	var calls []call
 
 	findings := `{"findings":[{"file":"feature.txt","line":1,"severity":"warning","action":"auto-fix","description":"tidy"}],"risk_level":"low","risk_rationale":"tidy finding","risk_scope":"source-or-external"}`
+	rereviewFindings := `{"findings":[{"file":"feature.txt","line":1,"severity":"warning","action":"auto-fix","description":"feature.txt still contains the redundant value at line 1"}],"risk_level":"low","risk_rationale":"redundant value remains","risk_scope":"source-or-external"}`
 	ag := &mockAgent{
 		name: "budget-probe",
 		runFn: func(ctx context.Context, opts agent.RunOpts) (*agent.Result, error) {
@@ -338,8 +339,11 @@ func TestReviewStep_EachAgentInvocationGetsItsOwnBudget(t *testing.T) {
 			}
 			// Initial review and the first rereview each request another fix;
 			// the second independent rereview certifies the result.
-			if len(calls) == 1 || len(calls) == 3 {
+			if len(calls) == 1 {
 				return &agent.Result{Output: json.RawMessage(findings)}, nil
+			}
+			if len(calls) == 3 {
+				return &agent.Result{Output: json.RawMessage(rereviewFindings)}, nil
 			}
 			// The final rereview must report reviewed_paths covering the
 			// finding's file to positively clear it under the append-only
@@ -1059,14 +1063,25 @@ func TestReviewStep_AuthorizationPrivacyTracingContract(t *testing.T) {
 	}
 }
 
-// The rereview that certifies a fix round examines code the pipeline itself
-// authored, moments earlier, to the previous review turn's prescription. The
-// prompt must reframe that code as unreviewed new work under the same
-// adversarial standard as the author's changes - prior findings and fix
-// summaries are claims, and a same-round test is part of the claim, not
-// independent proof. This pins the contract wording; the initial review must
-// stay unchanged. Class regression for a pipeline-authored defect (code plus
-// blessing test written by one fix round) certified with zero findings.
+func TestUnchangedFixFindingIsDroppedAfterReviewRetries(t *testing.T) {
+	previous := `{"findings":[{"id":"review-1","file":"service.go","description":"nil dereference when loading the cache"}]}`
+	current := Findings{Items: []types.Finding{{ID: "review-1", File: "service.go", Description: "nil dereference when loading the cache"}}}
+	if err := rejectUnchangedFixFindings(previous, current); err == nil {
+		t.Fatal("unchanged selected finding passed rereview without a retry")
+	}
+
+	current, dropped := dropUnchangedFixFindings(previous, current)
+	if dropped != 1 || len(current.Items) != 0 {
+		t.Fatalf("unchanged finding not dropped: dropped=%d items=%+v", dropped, current.Items)
+	}
+
+	current = Findings{Items: []types.Finding{{ID: "review-1", File: "service.go", Description: "cache lookup dereferences a nil entry at service.go:42"}}}
+	current, dropped = dropUnchangedFixFindings(previous, current)
+	if dropped != 0 || len(current.Items) != 1 {
+		t.Fatalf("restated finding was dropped: dropped=%d items=%+v", dropped, current.Items)
+	}
+}
+
 func TestReviewStep_RereviewTreatsFixRoundsAsPipelineAuthoredCode(t *testing.T) {
 	t.Parallel()
 	provenanceContract := []string{
@@ -1075,6 +1090,9 @@ func TestReviewStep_RereviewTreatsFixRoundsAsPipelineAuthoredCode(t *testing.T) 
 		"same adversarial standard as the author's original changes",
 		"unreviewed new code, not a settled resolution of the findings that prompted it",
 		"Prior findings and fix summaries are claims, not evidence",
+		"For every finding selected for a fix round, inspect the current head",
+		"Do not copy a selected finding forward unchanged",
+		"restate it with evidence from the current code if the defect remains, or omit it if the defect is gone",
 		"not merely whether it implements what was prescribed",
 		"part of that round's claim, not independent proof",
 		"whether it could still pass with the code wrong",
@@ -1094,8 +1112,9 @@ func TestReviewStep_RereviewTreatsFixRoundsAsPipelineAuthoredCode(t *testing.T) 
 					os.WriteFile(filepath.Join(dir, "review-fix.txt"), []byte("fixed"), 0o644)
 					return &agent.Result{Output: json.RawMessage(`{"summary":"address findings"}`)}, nil
 				}
-				// The fixer added review-fix.txt, so the rereview's coverage
-				// record spans both changed files and completes in one turn.
+				if callCount > 1 {
+					return &agent.Result{Output: json.RawMessage(`{"findings":[{"id":"review-1","severity":"warning","file":"main.go","description":"possible nil deref"}],"reviewed_paths":["feature.txt","review-fix.txt"],"risk_level":"low","risk_rationale":"clean","risk_scope":"source-or-external"}`)}, nil
+				}
 				findings := cleanReviewFindings()
 				findings.ReviewedPaths = []string{"feature.txt", "review-fix.txt"}
 				j, _ := json.Marshal(findings)
@@ -1107,13 +1126,22 @@ func TestReviewStep_RereviewTreatsFixRoundsAsPipelineAuthoredCode(t *testing.T) 
 		sctx.Fixing = true
 		sctx.PreviousFindings = `{"findings":[{"id":"review-1","severity":"warning","file":"main.go","description":"possible nil deref"}],"summary":"1 issue"}`
 
-		if _, err := (&ReviewStep{}).Execute(sctx); err != nil {
+		outcome, err := (&ReviewStep{}).Execute(sctx)
+		if err != nil {
 			t.Fatal(err)
 		}
-		if len(ag.calls) != 2 {
-			t.Fatalf("expected fix + rereview calls, got %d", len(ag.calls))
+		if parsed, err := types.ParseFindingsJSON(outcome.Findings); err != nil || len(parsed.Items) != 0 {
+			t.Fatalf("unchanged selected finding survived exhausted rereview retries: findings=%+v err=%v", parsed.Items, err)
+		} else if !strings.Contains(parsed.Summary, "dropped 1 unchanged carried finding") {
+			t.Fatalf("summary does not describe the dropped stale finding: %q", parsed.Summary)
+		}
+		if len(ag.calls) != 4 {
+			t.Fatalf("expected fix and three rereview attempts, got %d calls", len(ag.calls))
 		}
 		rereviewPrompt := ag.calls[1].Prompt
+		if !strings.Contains(ag.calls[3].Prompt, "repeats selected finding text unchanged") {
+			t.Fatalf("unchanged finding did not trigger the final corrective rereview prompt: %s", ag.calls[3].Prompt)
+		}
 		for _, want := range provenanceContract {
 			if !strings.Contains(rereviewPrompt, want) {
 				t.Errorf("rereview prompt missing provenance contract %q:\n%s", want, rereviewPrompt)
