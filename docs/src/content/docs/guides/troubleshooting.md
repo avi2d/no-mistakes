@@ -143,11 +143,13 @@ no-mistakes daemon stop
 no-mistakes daemon start
 ```
 
-## Agents fail with "403 Request not allowed" behind a proxy
+## Agents fail or stall behind a proxy
 
-Symptom: runs fail and the step log shows agents (for example `claude --print`) unable to reach the network, often with `403 Request not allowed`.
+Symptom: agents cannot reach the network, and the step log shows errors such as `403 Request not allowed`. Or an agent starts, prints nothing more, and sits idle until the agent timeout.
 
-A managed daemon started by launchd or systemd inherits only a minimal environment, so it does not see the `HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY` / `ALL_PROXY` variables from your shell. `no-mistakes` bakes any proxy variables that are set when you install or refresh the service into the generated service definition. If you set up the proxy after installing, re-run the installer or `no-mistakes daemon restart` (with the proxy variables exported) so they get baked in, then confirm them in `~/.config/systemd/user/no-mistakes-daemon-*.service` on Linux or `~/Library/LaunchAgents/com.kunchenguid.no-mistakes.daemon.*.plist` on macOS. Once baked in, the values survive later restarts and binary upgrades even from a shell that does not export them, so you only need the variables exported the first time. Windows Task Scheduler inherits your logon environment and needs no forwarding.
+A managed daemon started by launchd or systemd does not inherit the environment of the shell that started it. It takes proxy variables (`HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`, `ALL_PROXY`) only from your login shell, so export them in your login shell's rc files and run `no-mistakes daemon restart`.
+
+An agent that stalls with no output usually means the daemon has a proxy that no longer exists, often a local proxy from an agent sandbox session that has ended. Run `no-mistakes daemon restart` to refresh the service definition, which removes proxy variables that older versions copied into `~/Library/LaunchAgents/com.kunchenguid.no-mistakes.daemon.*.plist` on macOS or `~/.config/systemd/user/no-mistakes-daemon-*.service` on Linux. Then check that your login shell does not export the stale proxy. Windows Task Scheduler inherits your logon environment.
 
 ## macOS App Management prompts during agent runs
 

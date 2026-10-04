@@ -95,8 +95,8 @@ func (p *Paths) EvalDir() string { return filepath.Join(p.root, "eval") }
 // underneath it.
 //
 // Evidence lives under the app root rather than the system temp directory on
-// purpose. The daemon runs from a service unit that exports only HOME, PATH,
-// and proxy variables, so TMPDIR is unset and os.TempDir() resolves to the
+// purpose. The daemon runs from a service unit that exports only HOME and
+// PATH, so TMPDIR is unset and os.TempDir() resolves to the
 // shared /tmp - which current Ubuntu mounts as a systemd tmpfs, putting every
 // screenshot and rendered-HTML artifact in RAM. The app root is disk backed on
 // macOS, Linux, and Windows alike, so this needs no per-OS branch, and it is

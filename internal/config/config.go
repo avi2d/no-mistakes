@@ -1000,8 +1000,8 @@ type EvalRaw struct {
 // Eval is the resolved local evaluation-corpus config. It is deliberately a
 // first-class configuration key rather than an environment variable: the
 // daemon is a long-lived launchd/systemd service whose unit file is re-rendered
-// on install and update, and only proxy variables survive that re-render, so an
-// environment-gated corpus would silently stop collecting after an update.
+// on install and update, and no variable from the installing shell survives
+// that re-render, so an environment-gated corpus would silently stop collecting after an update.
 //
 // CaptureProvenance is the upstream half: it makes every review round record
 // the exact commit and configuration inputs a replay needs. A round written
