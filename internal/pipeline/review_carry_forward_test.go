@@ -1719,6 +1719,7 @@ func TestExecutor_ReviewCarryForward_AnEmptyOutstandingSetRecordsNoRetraction(t 
 		t.Fatal(err)
 	}
 	steps := waitForFindings(t, database, run.ID, "finalize turn finding")
+	waitForStepStatus(t, database, run.ID, types.StepReview, types.StepStatusAwaitingApproval)
 	if got := withdrawnIDs(t, *steps[0].FindingsJSON); len(got) != 0 {
 		t.Fatalf("a retraction the executor never applied was recorded as if it had been: %v (%s)", got, *steps[0].FindingsJSON)
 	}
