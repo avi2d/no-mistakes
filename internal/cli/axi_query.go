@@ -112,9 +112,24 @@ func runAxiStatus(cmd *cobra.Command, runID string) error {
 		if rv.CIOverrideReason != "" {
 			fields = append(fields, toon.Field{Key: "ci_override_reason", Value: rv.CIOverrideReason})
 		}
+	} else if stalled := rv.stalledAgentRows(); len(stalled) > 0 {
+		fields = append(fields, toon.Field{Key: "help", Value: stalledAgentHelp(stalled, runID)})
 	}
 	emitDoc(cmd, fields...)
 	return nil
+}
+
+func stalledAgentHelp(stalled []stalledAgentRow, runID string) []string {
+	logsCmd := "no-mistakes axi logs"
+	if runID != "" {
+		logsCmd += " --run " + runID
+	}
+	help := make([]string, 0, len(stalled))
+	for _, row := range stalled {
+		help = append(help, fmt.Sprintf("%s has produced no output in %s for %s; the step keeps waiting until the agent's timeout. Read `%s --step %s`, and run `no-mistakes doctor` to check the daemon's proxy settings",
+			row.Agent, row.Step, row.SilentFor, logsCmd, row.Step))
+	}
+	return help
 }
 
 // emitNoRunForCaller answers `axi status` when the caller has no run of its
@@ -410,6 +425,8 @@ type progressPrinter struct {
 	w         io.Writer
 	seen      map[string]string
 	runStatus string
+	// stalls holds the silent-since time of each step's announced stall.
+	stalls map[string]int64
 }
 
 func (p *progressPrinter) update(run *ipc.RunInfo) {
@@ -430,5 +447,21 @@ func (p *progressPrinter) update(run *ipc.RunInfo) {
 			p.seen[name] = status
 			fmt.Fprintf(p.w, "  %s: %s\n", name, status)
 		}
+		p.announceStall(name, s.Stall)
 	}
+}
+
+func (p *progressPrinter) announceStall(step string, stall *ipc.AgentStall) {
+	if stall == nil {
+		delete(p.stalls, step)
+		return
+	}
+	if since, announced := p.stalls[step]; announced && since == stall.SilentSince {
+		return
+	}
+	if p.stalls == nil {
+		p.stalls = map[string]int64{}
+	}
+	p.stalls[step] = stall.SilentSince
+	fmt.Fprintf(p.w, "  %s: %s has produced no output for %s\n", step, stall.Agent, formatDurationSince(stall.SilentSince))
 }

@@ -359,6 +359,7 @@ When the resolved run has a `running` or `fixing` step, the run object includes 
 Each row reports the whole step's elapsed time as `active_for`, the displayed execution or fix round's elapsed time as `round_active_for`, the latest meaningful log or native-agent lifecycle activity, the native agent PID if one is currently running, and the current round such as `round 1`, `auto-fix 1/3`, or `fix 2`.
 `round_active_for` resets when a fix round starts; older active runs created before this timing was recorded show it as empty.
 If no activity arrives for longer than `step_quiet_warning`, `last_activity` is prefixed with `quiet`; this is only a liveness signal and does not cancel the step.
+When an agent invocation itself has produced nothing for that long, the run object also includes `stalled_agents`, one row per stalled step with its `agent`, `silent_for`, and `agent_pid`, and the status help names the agent and the step log to read.
 For older active runs with no recorded activity timestamp, AXI falls back to the step log file modification time.
 Finding descriptions are always rendered in full, so an `ask-user` finding can be relayed verbatim. Gate summaries are bounded in this default status view because a command gate's summary carries its command output; a truncated summary discloses its original length, and the gate help points to `no-mistakes axi logs --step <step> --full` for an implicitly resolved run or `no-mistakes axi logs --run <id> --step <step> --full` for an explicitly selected run.
 Relevant current-branch states also include a cached `branch_sync` object with full SHAs, the run's status, the persisted pipeline push binding, target kind and ref, relation, safety result, PR lifecycle, and a structured next action.
@@ -681,6 +682,7 @@ Checks:
 - Data directory (`~/.no-mistakes/`)
 - SQLite database
 - Daemon status
+- The running daemon's proxy variables (`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, and their lower-case spellings), reported as `daemon proxy`: each one must name an address that accepts a TCP connection within 2 seconds, because every agent the daemon starts inherits it. A proxy where nothing listens is a failed check naming the variable and its `host:port`, never the credentials a proxy URL can carry
 - Agent runners: native binaries `claude`, `codex`, `grok`, `acli`, `opencode`, `pi`, `copilot`, and `agy` (Antigravity), plus the optional ACP bridge `acpx`
 - ACP alias default binaries: `cursor-agent` plus `acpx` for `cursor`, and `devin` plus `acpx` for `devin`
 - Effective global agent configuration, reported as `gate validation`; an unavailable configured runner is a failed check because the gate cannot validate without it

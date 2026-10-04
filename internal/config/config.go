@@ -1220,8 +1220,9 @@ forgejo_axi_path: forgejo-axi
 ci_timeout: "168h"
 
 # AXI status marks a running/fixing step as quiet when no step log or native
-# agent lifecycle activity has appeared for this long. This is observability
-# only; it never cancels work.
+# agent lifecycle activity has appeared for this long, and lists an agent that
+# has been silent this long under stalled_agents. This is observability only;
+# it never cancels work.
 step_quiet_warning: "10m"
 
 # Silent-kill budget for one pipeline agent invocation that does not install a
