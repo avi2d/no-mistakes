@@ -1647,6 +1647,9 @@ func stepToInfo(d *db.DB, s *db.StepResult) ipc.StepResultInfo {
 	if s.SkipReason != nil {
 		info.SkipReason = *s.SkipReason
 	}
+	if s.Stall != nil {
+		info.Stall = &ipc.AgentStall{Agent: s.Stall.Agent, SilentSince: s.Stall.SilentSince}
+	}
 	if s.AutoFixLimit != nil {
 		info.AutoFixLimit = *s.AutoFixLimit
 	}

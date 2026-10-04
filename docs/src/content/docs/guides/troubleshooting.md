@@ -304,11 +304,12 @@ Use `no-mistakes axi abort` only when you mean to cancel the whole active run.
 
 ## Step looks quiet or wedged
 
-Symptom: `no-mistakes axi status` shows an active step with `last_activity` prefixed by `quiet`, or a review/test/lint step appears to run for longer than expected.
+Symptom: `no-mistakes axi status` shows an active step with `last_activity` prefixed by `quiet`, lists the step under `stalled_agents`, or a review/test/lint step appears to run for longer than expected.
 
 `quiet` means the step has not recorded a step-log line or native-agent lifecycle event for longer than [`step_quiet_warning`](/no-mistakes/reference/global-config/#step_quiet_warning).
 It is only a liveness signal.
 It does not cancel the step, fail the run, or mean the pipeline is safe to bypass.
+`stalled_agents` narrows it to the agent: that agent has produced no output at all for `silent_for`.
 
 A quiet Review step still ends on its own: each fixer or reviewer invocation is independently bounded by [`review_agent_timeout`](/no-mistakes/reference/global-config/#review_agent_timeout).
 A silent invocation is cancelled at that budget. A still-working one continues only until its configured still-working cap, and otherwise stops at this budget. The run then fails with a timeout diagnostic in the step log.

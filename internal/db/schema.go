@@ -379,4 +379,8 @@ var migrationStatements = []string{
 	// a late --closes can still reach the Issues section; non-NULL closes that window
 	// (see UpdateRunClosingIssueRefs / ClaimClosingIssueRefsForPRBody).
 	`ALTER TABLE runs ADD COLUMN closing_issue_refs_locked_at INTEGER`,
+	// Both set or both NULL: set while the step's agent has been silent for
+	// step_quiet_warning, cleared when it is heard from again or its turn ends.
+	`ALTER TABLE step_results ADD COLUMN stalled_agent TEXT`,
+	`ALTER TABLE step_results ADD COLUMN stalled_since INTEGER`,
 }

@@ -59,6 +59,13 @@ type activeStepRow struct {
 	Round          string `toon:"round"`
 }
 
+type stalledAgentRow struct {
+	Step      string `toon:"step"`
+	Agent     string `toon:"agent"`
+	SilentFor string `toon:"silent_for"`
+	AgentPID  string `toon:"agent_pid"`
+}
+
 type findingRow struct {
 	ID          string `toon:"id"`
 	Severity    string `toon:"severity"`
@@ -110,6 +117,7 @@ type stepView struct {
 	ReviewerAgent    string
 	QuietWarning     time.Duration
 	SkipReason       string
+	Stall            *ipc.AgentStall
 }
 
 // runView is a render-ready view of a pipeline run.
@@ -169,6 +177,7 @@ func runViewFromIPC(r *ipc.RunInfo) runView {
 			PendingFixSource: s.PendingFixSource,
 			WorkScope:        s.WorkScope,
 			SkipReason:       s.SkipReason,
+			Stall:            s.Stall,
 		}
 		if s.LastActivity != nil {
 			sv.LastActivity = *s.LastActivity
@@ -212,6 +221,9 @@ func runViewFromDB(r *db.Run, steps []*db.StepResult, database *db.DB) runView {
 		}
 		if s.SkipReason != nil {
 			sv.SkipReason = *s.SkipReason
+		}
+		if s.Stall != nil {
+			sv.Stall = &ipc.AgentStall{Agent: s.Stall.Agent, SilentSince: s.Stall.SilentSince}
 		}
 		if s.LastActivity != nil {
 			sv.LastActivity = *s.LastActivity
@@ -356,7 +368,7 @@ func (rv runView) fixRows() []fixRow {
 func (rv runView) activeRows() []activeStepRow {
 	var rows []activeStepRow
 	for _, s := range rv.Steps {
-		if s.Status != string(types.StepStatusRunning) && s.Status != string(types.StepStatusFixing) {
+		if !s.active() {
 			continue
 		}
 		rows = append(rows, activeStepRow{
@@ -367,6 +379,28 @@ func (rv runView) activeRows() []activeStepRow {
 			LastActivity:   s.lastActivitySummary(),
 			AgentPID:       s.agentPIDString(),
 			Round:          s.roundSummary(),
+		})
+	}
+	return rows
+}
+
+func (s stepView) active() bool {
+	return s.Status == string(types.StepStatusRunning) || s.Status == string(types.StepStatusFixing)
+}
+
+// stalledAgentRows ignores a stall left on a step that is no longer active,
+// such as one a daemon crash never cleared.
+func (rv runView) stalledAgentRows() []stalledAgentRow {
+	var rows []stalledAgentRow
+	for _, s := range rv.Steps {
+		if s.Stall == nil || !s.active() {
+			continue
+		}
+		rows = append(rows, stalledAgentRow{
+			Step:      s.Name,
+			Agent:     s.Stall.Agent,
+			SilentFor: formatDurationSince(s.Stall.SilentSince),
+			AgentPID:  s.agentPIDString(),
 		})
 	}
 	return rows
@@ -488,6 +522,9 @@ func runObjectFieldWithKey(key string, rv runView) toon.Field {
 	// while genuinely parked (non-nil marker on a non-terminal run).
 	if rv.AwaitingAgentSince != nil && !terminalStatus(rv.Status) {
 		fields = append(fields, toon.Field{Key: "awaiting_agent", Value: formatParkedFor(*rv.AwaitingAgentSince)})
+	}
+	if stalled := rv.stalledAgentRows(); len(stalled) > 0 {
+		fields = append(fields, toon.Field{Key: "stalled_agents", Value: stalled})
 	}
 	fields = append(fields, toon.Field{Key: "head", Value: shortSHA(rv.HeadSHA)})
 	fields = append(fields, toon.Field{Key: "head_sha", Value: rv.HeadSHA})

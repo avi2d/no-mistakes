@@ -951,7 +951,11 @@ func (e *Executor) executeStep(ctx context.Context, step Step, sr *db.StepResult
 			}
 		}
 	}
-	writeLog := func(text string) {
+	// The stall watch writes from its own timer goroutine.
+	var logMu sync.Mutex
+	appendLog := func(text string) string {
+		logMu.Lock()
+		defer logMu.Unlock()
 		if text != "" {
 			prefix := ""
 			if !lastChunkNewline {
@@ -962,16 +966,39 @@ func (e *Executor) executeStep(ctx context.Context, step Step, sr *db.StepResult
 		}
 		e.emitLogChunk(run, repo, stepName, text)
 		fmt.Fprint(logFile, text)
-		touchLogActivity(text, true)
+		return text
+	}
+	writeLog := func(text string) {
+		touchLogActivity(appendLog(text), true)
 	}
 	writeLogChunk := func(text string) {
+		logMu.Lock()
 		if text != "" {
 			lastChunkNewline = strings.HasSuffix(text, "\n")
 		}
 		e.emitLogChunk(run, repo, stepName, text)
 		fmt.Fprint(logFile, text)
+		logMu.Unlock()
 		touchLogActivity(text, strings.Contains(text, "\n"))
 	}
+	// A stall notice is not agent activity, so it is appended without
+	// touching last_activity, which is when the silence began.
+	reportStall := func(agentName string, silentSince time.Time) {
+		if dbErr := e.db.SetStepStall(sr.ID, agentName, silentSince.Unix()); dbErr != nil {
+			slog.Warn("failed to record step stall in db", "step", stepName, "error", dbErr)
+		}
+		silent := roundActivity(time.Since(silentSince))
+		slog.Warn("agent stalled", "run_id", run.ID, "step", stepName, "agent", agentName, "silent_for", silent)
+		appendLog(fmt.Sprintf("%s has produced no output for %s; the step keeps waiting until the agent's timeout", agentName, silent))
+		e.onEvent(ipc.Event{Type: ipc.EventRunUpdated, RunID: run.ID, RepoID: repo.ID})
+	}
+	clearStall := func() {
+		if dbErr := e.db.ClearStepStall(sr.ID); dbErr != nil {
+			slog.Warn("failed to clear step stall in db", "step", stepName, "error", dbErr)
+		}
+		e.onEvent(ipc.Event{Type: ipc.EventRunUpdated, RunID: run.ID, RepoID: repo.ID})
+	}
+	quiet := stepQuietWarning(e.config)
 	onAgentLifecycle := func(event agent.LifecycleEvent) {
 		text := event.Message
 		if text == "" {
@@ -1046,7 +1073,13 @@ func (e *Executor) executeStep(ctx context.Context, step Step, sr *db.StepResult
 		// that calls Agent.Run directly cannot hang the run.
 		stepAgent = &timeoutAgent{inner: stepAgent, timeout: AgentTimeout(e.config), working: AgentWorkingTimeout(e.config)}
 		stepAgent = &gateStepBoundaryAgent{inner: stepAgent, phase: stepName}
-		stepAgent = &lifecycleAgent{inner: stepAgent, onLifecycle: onAgentLifecycle}
+		stepAgent = &lifecycleAgent{
+			inner:       stepAgent,
+			onLifecycle: onAgentLifecycle,
+			watchStall: func(agentName string) *agentStallWatch {
+				return watchAgentStall(agentName, quiet, reportStall, clearStall)
+			},
+		}
 		stepAgent = &perfRecordingAgent{
 			inner:    stepAgent,
 			db:       e.db,
@@ -1696,6 +1729,7 @@ func (a *gateStepBoundaryAgent) NeutralizesGateInstructions() bool {
 type lifecycleAgent struct {
 	inner       agent.Agent
 	onLifecycle func(agent.LifecycleEvent)
+	watchStall  func(agentName string) *agentStallWatch
 }
 
 func (a *lifecycleAgent) Name() string {
@@ -1703,8 +1737,21 @@ func (a *lifecycleAgent) Name() string {
 }
 
 func (a *lifecycleAgent) Run(ctx context.Context, opts agent.RunOpts) (*agent.Result, error) {
+	var stall *agentStallWatch
+	if a.watchStall != nil {
+		stall = a.watchStall(a.inner.Name())
+		defer stall.end()
+	}
+	// A nil OnChunk stays nil: some adapters only stream when it is set.
+	if onChunk := opts.OnChunk; onChunk != nil {
+		opts.OnChunk = func(text string) {
+			stall.heard("")
+			onChunk(text)
+		}
+	}
 	previous := opts.OnLifecycle
 	opts.OnLifecycle = func(event agent.LifecycleEvent) {
+		stall.heard(event.Agent)
 		if previous != nil {
 			previous(event)
 		}

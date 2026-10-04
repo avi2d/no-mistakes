@@ -174,3 +174,36 @@ func TestStepToInfoNoFixSummariesWithoutFixRounds(t *testing.T) {
 		t.Errorf("fix summaries = %v, want none", info.FixSummaries)
 	}
 }
+
+func TestStepToInfoCarriesTheStalledAgent(t *testing.T) {
+	d, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer d.Close()
+
+	repo, err := d.InsertRepo("/home/user/project", "git@github.com:user/project.git", "main")
+	if err != nil {
+		t.Fatalf("insert repo: %v", err)
+	}
+	run, err := d.InsertRun(repo.ID, "feature", "abc", "def")
+	if err != nil {
+		t.Fatalf("insert run: %v", err)
+	}
+	step, err := d.InsertStepResult(run.ID, types.StepReview)
+	if err != nil {
+		t.Fatalf("insert step: %v", err)
+	}
+	if err := d.SetStepStall(step.ID, "pi", 1700000000); err != nil {
+		t.Fatalf("set stall: %v", err)
+	}
+	step, err = d.GetStepResult(step.ID)
+	if err != nil {
+		t.Fatalf("reload step: %v", err)
+	}
+
+	info := stepToInfo(d, step)
+	if info.Stall == nil || *info.Stall != (ipc.AgentStall{Agent: "pi", SilentSince: 1700000000}) {
+		t.Fatalf("stall = %+v, want pi silent since 1700000000", info.Stall)
+	}
+}

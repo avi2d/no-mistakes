@@ -519,6 +519,16 @@ type StepResultInfo struct {
 	// pipeline.ApprovalOverrideVerifier and db.StepResult.OverrideReason.
 	OverrideReason string `json:"override_reason,omitempty"`
 	SkipReason     string `json:"skip_reason,omitempty"`
+	// Stall is set while the step's agent has been silent for at least
+	// step_quiet_warning.
+	Stall *AgentStall `json:"stall,omitempty"`
+}
+
+// AgentStall names the agent a step is waiting on and the unix-seconds time
+// it last produced anything.
+type AgentStall struct {
+	Agent       string `json:"agent"`
+	SilentSince int64  `json:"silent_since"`
 }
 
 // --- Events (for subscribe stream) ---
