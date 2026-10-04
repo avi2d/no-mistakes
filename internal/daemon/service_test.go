@@ -434,20 +434,16 @@ func TestStartRestoresStaleSystemdUnitWhenRefreshInstallFails(t *testing.T) {
 
 // TestStartRestoresStaleSystemdUnitAtOriginalModeWhenRefreshInstallFails guards
 // the drift-reinstall restore path against re-opening the 0644 credential leak
-// that writeFileAtomic closed for the install path. A prior proxy install
-// leaves the unit at 0600 with credential-bearing content (a forwarded proxy
-// URL can embed user:pass). A drift reinstall from a shell without the proxy
-// vars rewrites the unit at the conventional 0644; if that reinstall then
-// fails, the restore writes the original 0600 credential content back - but an
+// for a unit an older build wrote at 0600 with credential-bearing content (a
+// forwarded proxy URL can embed user:pass). A drift reinstall rewrites the unit
+// at the conventional 0644; if that reinstall then fails, the restore writes
+// the original 0600 credential content back - but an
 // in-place os.WriteFile only re-applies its mode on create, so it would leave
 // the credentials world-readable at 0644. The restore must re-apply the
 // captured 0600 mode.
 func TestStartRestoresStaleSystemdUnitAtOriginalModeWhenRefreshInstallFails(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX file modes (0600) are not enforced on Windows; the proxy-bearing service file is only generated on macOS/Linux")
-	}
-	for _, key := range proxyEnvKeys {
-		t.Setenv(key, "")
 	}
 	p := paths.WithRoot(filepath.Join(t.TempDir(), "nm-home"))
 	if err := p.EnsureDirs(); err != nil {
