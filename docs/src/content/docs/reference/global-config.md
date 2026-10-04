@@ -345,8 +345,22 @@ normal `agent` selection and fallback chain; other pipeline steps are unchanged.
 reviewer_chain:
   - agent: pi
     model: openai-codex/gpt-6.1-sol
+    floor:
+      command: quota-axi --json
+      field: accounts.codex.remaining_percent
+      minimum: 30
   - agent: pi
     model: claude-bridge/claude-opus-5-5
+    env:
+      CLAUDE_CONFIG_DIR: /Users/you/.claude-pro
+    floor:
+      command: clauth status --json
+      field: remaining_percent
+      minimum: 30
+  - agent: pi
+    model: claude-bridge/claude-opus-5-5
+    env:
+      CLAUDE_CONFIG_DIR: /Users/you/.claude-max
 review_agents:
   fixer:
     agent: pi
@@ -356,11 +370,16 @@ review_agents:
 
 `reviewer_chain` is an ordered list.
 Each entry requires an explicit `agent` with a name from `agent_config`.
-This example tries pi on GPT-6.1 Sol first and pi on Claude Opus 5.5 second.
-The review step tries the next entry only when the current reviewer fails with a usage-limit or quota error.
-Other failures still fail the round.
+This example checks the Codex account first, then the Claude Pro account, then the Claude Max account.
+The floor command must print JSON, and `field` names the numeric percentage to read with a dotted path.
+Before using an entry with a floor, the review step skips it when the command fails, the field is unusable, or the remaining percentage is below `minimum`.
+The last entry is always tried, even when it has a floor.
+The review step also tries the next entry after a usage-limit or quota error.
+Other agent errors fail the review round.
+`env` overrides environment variables only for that entry's agent process.
 Model and effort are optional and inherit `agent_config` for that harness when empty.
 Nonempty role values override that profile, but native `agent_args_override` flags still win.
+The selected reviewer and skipped entries with their reasons are stored with the review round.
 The `review_agents` keys are `fixer` and the optional later-round overlays `reviewer_after_round` and `fixer_after_round`.
 Each configured role requires one explicit `agent` with a name from `agent_config`.
 Model availability, credentials, and supported effort levels remain the harness provider's responsibility.

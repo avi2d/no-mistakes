@@ -2341,6 +2341,9 @@ func LoadGlobalFromBytes(data []byte) (*GlobalConfig, error) {
 		if err := agentcfg.Validate(entry.Agent, agentcfg.Profile{Model: strings.TrimSpace(entry.Model), Effort: entry.Effort}); err != nil {
 			return nil, fmt.Errorf("invalid reviewer_chain[%d]: %w", i, err)
 		}
+		if err := validateReviewerEntry(entry); err != nil {
+			return nil, fmt.Errorf("invalid reviewer_chain[%d]: %w", i, err)
+		}
 	}
 	cfg.ReviewAgents = raw.ReviewAgents
 	cfg.ReviewerChain = raw.ReviewerChain

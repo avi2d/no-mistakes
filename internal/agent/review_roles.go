@@ -2,11 +2,18 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 )
 
-// RoundedRole retries only usage-limit errors through Fallback.
+type ReviewerCandidate struct {
+	Agent      Agent
+	Label      string
+	CheckFloor func(context.Context) (string, error)
+}
+
 type RoundedRole struct {
 	Agent          Agent
 	Late           Agent
@@ -15,14 +22,23 @@ type RoundedRole struct {
 	AgentLabel     string
 	LateLabel      string
 	FallbackLabels []string
+	Candidates     []ReviewerCandidate
 }
 
 // ReviewRoles carries both review-loop roles with their optional later-round
 // overlays.
 type ReviewRoles struct{ Reviewer, Fixer RoundedRole }
 
-// agents lists every non-nil agent this role owns, primary first.
 func (r RoundedRole) agents() []Agent {
+	if len(r.Candidates) > 0 {
+		var candidates []Agent
+		for _, candidate := range r.Candidates {
+			if candidate.Agent != nil {
+				candidates = append(candidates, candidate.Agent)
+			}
+		}
+		return candidates
+	}
 	var out []Agent
 	if r.Agent != nil {
 		out = append(out, r.Agent)
@@ -153,21 +169,28 @@ func (a *reviewAgents) Run(ctx context.Context, opts RunOpts) (*Result, error) {
 		selected = a.fixer.pick(opts.Round, a.primary)
 	}
 	var label string
-	if opts.Purpose == "review" || opts.Purpose == "review-coverage" {
+	isReview := opts.Purpose == "review" || opts.Purpose == "review-coverage"
+	if isReview {
 		label = a.reviewer.label(opts.Round)
 	}
 	started := time.Now()
-	result, err := selected.Run(ctx, opts)
-	if err != nil && (opts.Purpose == "review" || opts.Purpose == "review-coverage") && IsUsageLimitError(err) {
-		for i, fallback := range a.reviewer.Fallback {
-			if ctx.Err() != nil {
-				break
-			}
-			selected = fallback
-			label = a.reviewer.fallbackLabel(i, fallback)
-			result, err = selected.Run(ctx, opts)
-			if err == nil || !IsUsageLimitError(err) {
-				break
+	var result *Result
+	var err error
+	if isReview && len(a.reviewer.Candidates) > 0 {
+		result, err, selected, label = runReviewerCandidates(ctx, opts, a.reviewer.Candidates)
+	} else {
+		result, err = selected.Run(ctx, opts)
+		if err != nil && isReview && IsUsageLimitError(err) {
+			for i, fallback := range a.reviewer.Fallback {
+				if ctx.Err() != nil {
+					break
+				}
+				selected = fallback
+				label = a.reviewer.fallbackLabel(i, fallback)
+				result, err = selected.Run(ctx, opts)
+				if err == nil || !IsUsageLimitError(err) {
+					break
+				}
 			}
 		}
 	}
@@ -185,6 +208,43 @@ func (a *reviewAgents) Run(ctx context.Context, opts RunOpts) (*Result, error) {
 		}
 	}
 	return result, err
+}
+
+type reviewerTraceEntry struct {
+	Entry  int    `json:"entry"`
+	Reason string `json:"reason"`
+}
+
+type reviewerTrace struct {
+	Selected int                  `json:"selected"`
+	Skipped  []reviewerTraceEntry `json:"skipped,omitempty"`
+}
+
+func runReviewerCandidates(ctx context.Context, opts RunOpts, candidates []ReviewerCandidate) (*Result, error, Agent, string) {
+	var skipped []reviewerTraceEntry
+	for i, candidate := range candidates {
+		if i < len(candidates)-1 && candidate.CheckFloor != nil {
+			reason, err := candidate.CheckFloor(ctx)
+			if err != nil || reason != "" {
+				if err != nil {
+					reason = err.Error()
+				}
+				skipped = append(skipped, reviewerTraceEntry{Entry: i, Reason: reason})
+				continue
+			}
+		}
+		result, err := candidate.Agent.Run(ctx, opts)
+		if err != nil && IsUsageLimitError(err) && i < len(candidates)-1 {
+			skipped = append(skipped, reviewerTraceEntry{Entry: i, Reason: err.Error()})
+			continue
+		}
+		if result != nil {
+			trace, _ := json.Marshal(reviewerTrace{Selected: i, Skipped: skipped})
+			result.ReviewerChainTrace = string(trace)
+		}
+		return result, err, candidate.Agent, candidate.Label
+	}
+	return nil, fmt.Errorf("reviewer chain has no usable candidate"), nil, ""
 }
 
 func (a *reviewAgents) Close() error {

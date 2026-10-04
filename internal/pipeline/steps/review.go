@@ -25,6 +25,7 @@ func (s *ReviewStep) Name() types.StepName { return types.StepReview }
 
 func (s *ReviewStep) Execute(sctx *pipeline.StepContext) (*pipeline.StepOutcome, error) {
 	sctx.ReviewerAgent = ""
+	sctx.ReviewerChainTrace = ""
 	planSection, err := verificationPlanPromptSection(sctx)
 	if err != nil {
 		return nil, err
@@ -969,8 +970,9 @@ func (s *ReviewStep) executeReviewFixWithTimeout(sctx *pipeline.StepContext, ste
 func (s *ReviewStep) runReviewAgent(sctx *pipeline.StepContext, prefix string, role pipeline.SessionRole, opts agent.RunOpts) (*agent.Result, error) {
 	timeout := reviewAgentTimeout(sctx.Config)
 	result, err := sctx.RunAgentSessionBudget(sctx.Ctx, timeout, reviewAgentWorkingTimeout(sctx.Config), errReviewAgentTimeout, role, opts)
-	if err == nil && result != nil {
+	if result != nil {
 		sctx.ReviewerAgent = result.AgentIdentity
+		sctx.ReviewerChainTrace = result.ReviewerChainTrace
 		if sctx.ReviewerAgent == "" {
 			sctx.ReviewerAgent = result.Provider
 		}

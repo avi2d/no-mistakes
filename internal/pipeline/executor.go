@@ -1279,9 +1279,12 @@ rounds:
 			slog.Warn("failed to insert step round", "step", stepName, "round", roundNum, "error", dbErr)
 		} else {
 			currentRoundID = roundInsertID(currentRoundID, inserted, nil)
-			if stepName == types.StepReview && sctx.ReviewerAgent != "" {
+			if stepName == types.StepReview {
 				if dbErr := e.db.SetStepRoundReviewerAgent(inserted.ID, sctx.ReviewerAgent); dbErr != nil {
 					slog.Warn("failed to record review agent", "step", stepName, "round", roundNum, "error", dbErr)
+				}
+				if dbErr := e.db.SetStepRoundReviewerChainTrace(inserted.ID, sctx.ReviewerChainTrace); dbErr != nil {
+					slog.Warn("failed to record reviewer chain trace", "step", stepName, "round", roundNum, "error", dbErr)
 				}
 			}
 		}

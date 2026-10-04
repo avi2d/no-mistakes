@@ -40,12 +40,16 @@ func TestReviewRoundPersistsReviewerIdentity(t *testing.T) {
 	if err := d.SetStepRoundReviewerAgent(round.ID, "pi/claude-bridge/claude-opus-5-5"); err != nil {
 		t.Fatal(err)
 	}
+	const chainTrace = `{"selected":2,"skipped":[{"entry":0,"reason":"below floor"}]}`
+	if err := d.SetStepRoundReviewerChainTrace(round.ID, chainTrace); err != nil {
+		t.Fatal(err)
+	}
 	rounds, err := d.GetRoundsByStep(step.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rounds) != 1 || rounds[0].ReviewerAgent == nil || *rounds[0].ReviewerAgent != "pi/claude-bridge/claude-opus-5-5" {
-		t.Fatalf("reviewer identity = %#v", rounds)
+	if len(rounds) != 1 || rounds[0].ReviewerAgent == nil || *rounds[0].ReviewerAgent != "pi/claude-bridge/claude-opus-5-5" || rounds[0].ReviewerChainTrace == nil || *rounds[0].ReviewerChainTrace != chainTrace {
+		t.Fatalf("reviewer identity and chain = %#v", rounds)
 	}
 }
 
