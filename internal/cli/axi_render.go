@@ -32,10 +32,11 @@ const maxGateSummary = 1200
 // Row types carry `toon` tags so the encoder renders a []row slice as a
 // tabular array (name[N]{cols}:) with one comma-delimited line per element.
 type stepRow struct {
-	Step       string `toon:"step"`
-	Status     string `toon:"status"`
-	Findings   int    `toon:"findings"`
-	DurationMS int64  `toon:"duration_ms"`
+	Step          string `toon:"step"`
+	Status        string `toon:"status"`
+	Findings      int    `toon:"findings"`
+	DurationMS    int64  `toon:"duration_ms"`
+	ReviewerAgent string `toon:"reviewer_agent"`
 }
 
 type automaticSkipRow struct {
@@ -107,6 +108,7 @@ type stepView struct {
 	FixRoundCount    int
 	AutoFixLimit     int
 	PendingFixSource string
+	ReviewerAgent    string
 	QuietWarning     time.Duration
 	SkipReason       string
 }
@@ -428,7 +430,11 @@ func (s stepView) roundSummary() string {
 		return "fixing"
 	}
 	if s.RoundCount > 0 {
-		return fmt.Sprintf("round %d", s.RoundCount)
+		round := fmt.Sprintf("round %d", s.RoundCount)
+		if s.ReviewerAgent != "" {
+			return round + " by " + s.ReviewerAgent
+		}
+		return round
 	}
 	return "starting"
 }
@@ -513,7 +519,7 @@ func runObjectFieldWithKey(key string, rv runView) toon.Field {
 	rows := make([]stepRow, 0, len(rv.Steps))
 	sharedRows := make([]sharedWorkRow, 0, 1)
 	for _, s := range rv.Steps {
-		rows = append(rows, stepRow{Step: s.Name, Status: s.Status, Findings: s.findingCount(), DurationMS: s.DurationMS})
+		rows = append(rows, stepRow{Step: s.Name, Status: s.Status, Findings: s.findingCount(), DurationMS: s.DurationMS, ReviewerAgent: s.ReviewerAgent})
 		if s.WorkScope != "" {
 			sharedRows = append(sharedRows, sharedWorkRow{AttributedTo: s.Name, Scope: s.WorkScope, DurationMS: s.DurationMS})
 		}

@@ -334,12 +334,12 @@ func TestReplayPinsCandidateModelAndEffortOnTheHarness(t *testing.T) {
 // only thing that may decide what the harness runs as.
 func TestCaptureStripsEveryHarnessPinFromThePinnedConfig(t *testing.T) {
 	pinned := []byte("agent: codex\nagent_args_override:\n  codex:\n    - -m\n    - gpt-5.4\nagent_config:\n  codex:\n    model: gpt-5.4\n    effort: high\nlog_level: warn\n")
-	pinned = append(pinned, []byte("review_agents:\n  reviewer: {agent: pi, model: review-model, effort: max}\n  fixer: {agent: pi, model: fix-model, effort: high}\n")...)
+	pinned = append(pinned, []byte("review_agents:\n  fixer: {agent: pi, model: fix-model, effort: high}\nreviewer_chain:\n  - {agent: pi, model: chain-review-model}\n")...)
 	neutral, err := agentNeutralGlobalConfig(pinned)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, key := range []string{"agent:", "agent_args_override", "agent_config"} {
+	for _, key := range []string{"agent:", "agent_args_override", "agent_config", "reviewer_chain"} {
 		if strings.Contains(string(neutral), key) {
 			t.Errorf("pinned config still carries %q: %s", key, neutral)
 		}
@@ -351,8 +351,8 @@ func TestCaptureStripsEveryHarnessPinFromThePinnedConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.AgentConfig != nil || cfg.ReviewAgents != nil {
-		t.Fatalf("neutral config resolves profiles: %#v, %#v", cfg.AgentConfig, cfg.ReviewAgents)
+	if cfg.AgentConfig != nil || cfg.ReviewAgents != nil || len(cfg.ReviewerChain) != 0 {
+		t.Fatalf("neutral config resolves profiles: %#v, %#v, %#v", cfg.AgentConfig, cfg.ReviewAgents, cfg.ReviewerChain)
 	}
 }
 

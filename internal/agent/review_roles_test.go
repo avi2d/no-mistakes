@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"testing"
 )
 
@@ -10,12 +11,13 @@ type roleRecorder struct {
 	calls              []RunOpts
 	closed             int
 	resumable, neutral bool
+	err                error
 }
 
 func (a *roleRecorder) Name() string { return a.name }
 func (a *roleRecorder) Run(_ context.Context, opts RunOpts) (*Result, error) {
 	a.calls = append(a.calls, opts)
-	return &Result{SessionID: "fix-session"}, nil
+	return &Result{SessionID: "fix-session"}, a.err
 }
 func (a *roleRecorder) Close() error                      { a.closed++; return nil }
 func (a *roleRecorder) SupportsSessionResume() bool       { return a.resumable }
@@ -87,6 +89,27 @@ func TestReviewAgentsDefaults(t *testing.T) {
 	ag = WithReviewAgents(primary, nil, &roleRecorder{name: "cold"})
 	if SupportsSessionResume(ag) {
 		t.Fatal("nonresumable fixer inherited primary capability")
+	}
+}
+
+func TestReviewRoleFallsBackOnQuotaError(t *testing.T) {
+	primary := &roleRecorder{name: "sol", err: errors.New("provider quota exceeded")}
+	firstFallback := &roleRecorder{name: "opus-4", err: errors.New("usage limit reached")}
+	secondFallback := &roleRecorder{name: "opus-5-5"}
+	ag := WithReviewRoles(primary, ReviewRoles{Reviewer: RoundedRole{Agent: primary, Fallback: []Agent{firstFallback, secondFallback}, AgentLabel: "Sol", FallbackLabels: []string{"Opus 4", "Opus 5.5"}}})
+	result, err := ag.Run(context.Background(), RunOpts{Purpose: "review", Round: 1})
+	if err != nil || result.Provider != "opus-5-5" || result.AgentIdentity != "Opus 5.5" || len(primary.calls) != 1 || len(firstFallback.calls) != 1 || len(secondFallback.calls) != 1 {
+		t.Fatalf("result=%+v err=%v calls=%d/%d/%d", result, err, len(primary.calls), len(firstFallback.calls), len(secondFallback.calls))
+	}
+}
+
+func TestReviewRoleDoesNotFallbackOnNonQuotaError(t *testing.T) {
+	primary := &roleRecorder{name: "sol", err: errors.New("invalid response")}
+	fallback := &roleRecorder{name: "opus"}
+	ag := WithReviewRoles(primary, ReviewRoles{Reviewer: RoundedRole{Agent: primary, Fallback: []Agent{fallback}}})
+	_, err := ag.Run(context.Background(), RunOpts{Purpose: "review", Round: 1})
+	if err == nil || len(fallback.calls) != 0 {
+		t.Fatalf("err=%v fallback calls=%d", err, len(fallback.calls))
 	}
 }
 

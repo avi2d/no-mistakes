@@ -342,24 +342,28 @@ Repository `.no-mistakes.yaml` cannot set these profiles. Omitted roles keep the
 normal `agent` selection and fallback chain; other pipeline steps are unchanged.
 
 ```yaml
+reviewer_chain:
+  - agent: pi
+    model: openai-codex/gpt-6.1-sol
+  - agent: pi
+    model: claude-bridge/claude-opus-5-5
 review_agents:
-  reviewer:
-    agent: pi
-    model: anthropic-vertex/claude-opus-4-8
-    effort: max
   fixer:
     agent: pi
     model: google-vertex/gemini-3.8-flash
     effort: max
 ```
 
-The role keys are `reviewer`, `fixer`, and their optional later-round overlays
-`reviewer_after_round` and `fixer_after_round`. Each configured role requires one
-explicit `agent` (the same harness names as `agent_config`; no `auto` or lists).
-Model and effort are optional and inherit `agent_config` for that harness when
-empty. Nonempty role values override that profile, but native
-`agent_args_override` flags still win. Model availability, credentials, and
-supported effort levels remain the harness/provider's responsibility.
+`reviewer_chain` is an ordered list.
+Each entry requires an explicit `agent` with a name from `agent_config`.
+This example tries pi on GPT-6.1 Sol first and pi on Claude Opus 5.5 second.
+The review step tries the next entry only when the current reviewer fails with a usage-limit or quota error.
+Other failures still fail the round.
+Model and effort are optional and inherit `agent_config` for that harness when empty.
+Nonempty role values override that profile, but native `agent_args_override` flags still win.
+The `review_agents` keys are `fixer` and the optional later-round overlays `reviewer_after_round` and `fixer_after_round`.
+Each configured role requires one explicit `agent` with a name from `agent_config`.
+Model availability, credentials, and supported effort levels remain the harness provider's responsibility.
 
 #### Later-round role overrides
 

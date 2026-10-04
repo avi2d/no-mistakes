@@ -245,6 +245,7 @@ var migrationStatements = []string{
 	`ALTER TABLE step_rounds ADD COLUMN selected_finding_ids TEXT`,
 	`ALTER TABLE step_rounds ADD COLUMN selection_source TEXT`,
 	`ALTER TABLE step_rounds ADD COLUMN fix_summary TEXT`,
+	`ALTER TABLE step_rounds ADD COLUMN reviewer_agent TEXT`,
 	`ALTER TABLE step_rounds ADD COLUMN repair_published INTEGER NOT NULL DEFAULT 0`,
 	`ALTER TABLE step_rounds ADD COLUMN user_findings_json TEXT`,
 	// A parked round may retain the reviewed commit as a non-authoritative

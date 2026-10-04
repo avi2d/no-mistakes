@@ -30,6 +30,7 @@ func TestResolvePiProfilePrecedenceAndLegacy(t *testing.T) {
 		{Agent: types.AgentClaude},
 		{Agents: []types.AgentName{types.AgentPi, types.AgentClaude}},
 		{Agent: types.AgentPi, ReviewAgents: map[string]ReviewAgent{"reviewer": {Agent: types.AgentClaude}}},
+		{Agent: types.AgentPi, ReviewerChain: []ReviewAgent{{Agent: types.AgentClaude}}},
 	} {
 		if _, err := mixed.ResolvePiProfile(complete); err == nil {
 			t.Fatal("mixed harness accepted")
@@ -56,7 +57,7 @@ func TestApplyPiProfileConcurrentIsolationAndRecovery(t *testing.T) {
 				t.Error(err)
 				return
 			}
-			if cfg.Agent != types.AgentPi || !reflect.DeepEqual(cfg.Agents, []types.AgentName{types.AgentPi}) || cfg.ReviewAgents != nil || !cfg.DisableProjectSettings {
+			if cfg.Agent != types.AgentPi || !reflect.DeepEqual(cfg.Agents, []types.AgentName{types.AgentPi}) || cfg.ReviewAgents != nil || cfg.ReviewerChain != nil || !cfg.DisableProjectSettings {
 				t.Errorf("pin failed to isolate selection or preserved policy: %+v", cfg)
 			}
 			if got := cfg.AgentProfile(); got.Model != pin.Model || got.Effort != pin.Effort {
@@ -84,6 +85,7 @@ func TestPiProfileRefusesMixedHarnesses(t *testing.T) {
 		{Agent: types.AgentClaude},
 		{Agents: []types.AgentName{types.AgentPi, types.AgentClaude}},
 		{Agent: types.AgentPi, ReviewAgents: map[string]ReviewAgent{"reviewer": {Agent: types.AgentClaude}}},
+		{Agent: types.AgentPi, ReviewerChain: []ReviewAgent{{Agent: types.AgentClaude}}},
 	} {
 		if err := cfg.ValidatePiProfileAgents(); err == nil {
 			t.Fatal("non-Pi agent accepted")
