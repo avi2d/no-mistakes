@@ -61,9 +61,9 @@ jobs:
       matrix:
         include:
           - shard: macos-1
-            packages: ./internal/cli ./internal/daemon ./internal/scm/forgejo ./internal/eval ./internal/gate ./internal/db ./internal/scm/gitlab
+            packages: ./internal/cli ./internal/daemon ./internal/scm/forgejo ./internal/db ./internal/scm/gitlab
           - shard: macos-2
-            exclude: '/internal/(cli|daemon|scm/forgejo|eval|gate|db|scm/gitlab)$'
+            exclude: '/internal/(cli|daemon|scm/forgejo|db|scm/gitlab)$'
     runs-on: macos-latest
     timeout-minutes: 40
     steps:
@@ -174,18 +174,18 @@ jobs:
       matrix:
         include:
           - shard: windows-git-1
-            packages: ./internal/branchsync ./internal/git ./internal/evidence
+            packages: ./internal/branchsync
+            run: '^Test([A-Q]|Recover[A-K])'
             timeout: 15m
           - shard: windows-git-2
-            packages: ./internal/daemon
-            run: '^Test[A-P]'
+            packages: ./internal/branchsync
+            skip: '^Test([A-Q]|Recover[A-K])'
             timeout: 15m
           - shard: windows-git-3
             packages: ./internal/daemon
-            skip: '^Test[A-P]'
             timeout: 15m
           - shard: windows-git-4
-            packages: ./internal/eval ./internal/gate
+            packages: ./internal/eval ./internal/gate ./internal/git ./internal/evidence
             timeout: 15m
     runs-on: windows-latest
     timeout-minutes: 40
@@ -199,11 +199,11 @@ jobs:
         include:
           - shard: windows-core-1
             packages: ./internal/cli
-            run: '^Test(Axi[R-Z]|[S-Z])'
+            run: '^Test(Axi[R-Z]|H|[S-Z])'
             timeout: 15m
           - shard: windows-core-2
             packages: ./internal/cli
-            skip: '^Test(Axi[R-Z]|[S-Z])'
+            skip: '^Test(Axi[R-Z]|H|[S-Z])'
             timeout: 15m
           - shard: windows-core-3
             exclude: '/internal/(cli|git|branchsync|gate|evidence|daemon|eval|pipeline/steps(/.*)?)$'
