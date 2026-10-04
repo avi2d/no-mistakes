@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/kunchenguid/no-mistakes/internal/safeurl"
@@ -761,14 +762,34 @@ func isWorktreeConfigWriteUnavailable(err error) bool {
 
 // WorktreeAdd creates a detached worktree at wtPath checked out to the given SHA.
 func WorktreeAdd(ctx context.Context, repoDir, wtPath, sha string) error {
+	defer lockWorktrees(repoDir)()
 	_, err := Run(ctx, repoDir, "worktree", "add", "--detach", wtPath, sha)
 	return err
 }
 
 // WorktreeRemove removes a worktree at the given path.
 func WorktreeRemove(ctx context.Context, repoDir, wtPath string) error {
+	defer lockWorktrees(repoDir)()
 	_, err := Run(ctx, repoDir, "worktree", "remove", "--force", wtPath)
 	return err
+}
+
+var worktreeLocks sync.Map
+
+// lockWorktrees serializes worktree add and remove on one repository. git
+// takes no lock for them: a remove deletes an empty <git-dir>/worktrees that
+// a concurrent add has just created and is about to create its entry in.
+func lockWorktrees(repoDir string) (unlock func()) {
+	key := repoDir
+	if abs, err := filepath.Abs(repoDir); err == nil {
+		key = abs
+	}
+	if resolved, err := filepath.EvalSymlinks(key); err == nil {
+		key = resolved
+	}
+	mu, _ := worktreeLocks.LoadOrStore(key, &sync.Mutex{})
+	mu.(*sync.Mutex).Lock()
+	return mu.(*sync.Mutex).Unlock
 }
 
 // ResolveRef returns the commit SHA that ref resolves to via
