@@ -157,6 +157,9 @@ type StepOutcome struct {
 	// ReviewablePaths is the trusted changed-file set this review round can
 	// certify. It is computed from the diff, not supplied by the agent.
 	ReviewablePaths []string
+	// ReviewBaseSHA is the commit this review round diffed against to compute
+	// ReviewablePaths. Empty proves no file was reverted to the base.
+	ReviewBaseSHA string
 	// WithdrawnFindings is an answer round's explicit retraction list: the
 	// carried findings the turn says no longer hold, each with the reason it
 	// gave. It is the ONLY way a carried finding leaves the outstanding set on

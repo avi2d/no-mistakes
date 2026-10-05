@@ -224,6 +224,7 @@ Previous review findings to address:
 		return approvedReviewOutcome(reviewTargetSHA, &pipeline.StepOutcome{
 			Findings:        string(findingsJSON),
 			ReviewablePaths: reviewable,
+			ReviewBaseSHA:   baseSHA,
 			FixSummary:      fixSummary,
 		})
 	}
@@ -547,6 +548,7 @@ Risk assessment (after listing all findings):
 		ReviewedPaths:     findings.ReviewedPaths,
 		WithdrawnFindings: withdrawnFindings(findings),
 		ReviewablePaths:   reviewable,
+		ReviewBaseSHA:     baseSHA,
 		FixSummary:        fixSummary,
 	})
 }

@@ -420,6 +420,190 @@ func TestExecutor_ReviewCarryForward_NeverCreatedFileFindingStaysOutstanding(t *
 	}
 }
 
+func gitHead(t *testing.T, workDir string) string {
+	t.Helper()
+	cmd := exec.Command("git", "rev-parse", "HEAD")
+	cmd.Dir = workDir
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("resolve worktree head: %v", err)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// commitFixRound commits the fixer's edit and moves the run's head to it, as
+// the review step does after a fix turn.
+func commitFixRound(t *testing.T, sctx *StepContext, message string) {
+	t.Helper()
+	execGit(t, sctx.WorkDir, "add", "-A")
+	execGit(t, sctx.WorkDir, "commit", "-m", message)
+	sctx.Run.HeadSHA = gitHead(t, sctx.WorkDir)
+}
+
+// revertCarryRepo commits service.go and cache.go at a base, then changes both
+// on the branch, and returns the base.
+func revertCarryRepo(t *testing.T, database *db.DB, run *db.Run, workDir string) string {
+	t.Helper()
+	initGitRepo(t, workDir)
+	writeTestFile(t, workDir, "service.go", "package x // base service\n")
+	writeTestFile(t, workDir, "cache.go", "package x // base cache\n")
+	writeTestFile(t, workDir, "other.go", "package x // base other\n")
+	execGit(t, workDir, "add", "-A")
+	execGit(t, workDir, "commit", "-m", "base")
+	base := gitHead(t, workDir)
+	writeTestFile(t, workDir, "service.go", "package x // branch service\n")
+	writeTestFile(t, workDir, "cache.go", "package x // branch cache\n")
+	execGit(t, workDir, "commit", "-am", "branch")
+	useWorktreeHeadAsRunHead(t, database, run, workDir)
+	return base
+}
+
+func TestExecutor_ReviewCarryForward_RevertedFileFindingClosesWithoutCoverage(t *testing.T) {
+	database, p, run, repo := setupTest(t)
+	workDir := t.TempDir()
+	base := revertCarryRepo(t, database, run, workDir)
+
+	round := 0
+	step := &adaptiveCallStep{
+		name: types.StepReview,
+		fn: func(sctx *StepContext) (*StepOutcome, error) {
+			round++
+			if round == 1 {
+				return &StepOutcome{
+					NeedsApproval:   true,
+					Findings:        reviewCarryTwoFindings,
+					ReviewedPaths:   []string{"service.go", "cache.go"},
+					ReviewablePaths: []string{"service.go", "cache.go"},
+					ReviewBaseSHA:   base,
+				}, nil
+			}
+			writeTestFile(t, sctx.WorkDir, "service.go", "package x // base service\n")
+			commitFixRound(t, sctx, "restore service.go")
+			return &StepOutcome{
+				Findings:        `{"findings":[],"summary":"clean"}`,
+				ReviewedPaths:   []string{"cache.go"},
+				ReviewablePaths: []string{"cache.go"},
+				ReviewBaseSHA:   base,
+			}, nil
+		},
+	}
+
+	exec := NewExecutor(database, p, nil, nil, []Step{step}, nil)
+	done, _ := startExecutor(t, exec, run, repo, workDir)
+	waitForStepStatus(t, database, run.ID, types.StepReview, types.StepStatusAwaitingApproval)
+	if err := exec.Respond(types.StepReview, types.ActionFix, []string{"review-1", "review-2"}); err != nil {
+		t.Fatal(err)
+	}
+	waitExecutorDone(t, done)
+
+	steps, err := database.GetStepsByRun(run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if steps[0].Status != types.StepStatusCompleted {
+		t.Fatalf("step status = %s, want %s", steps[0].Status, types.StepStatusCompleted)
+	}
+	if ids := outstandingIDs(t, derefString(steps[0].FindingsJSON)); len(ids) != 0 {
+		t.Fatalf("findings outlived a fix that reverted service.go and a rereview that covered cache.go: %v", ids)
+	}
+}
+
+// A finding can name a file outside the change. A no-op fix leaves that file
+// without a diff against the base too, which is not a revert.
+func TestExecutor_ReviewCarryForward_FileOutsideTheChangeIsNotReverted(t *testing.T) {
+	database, p, run, repo := setupTest(t)
+	workDir := t.TempDir()
+	base := revertCarryRepo(t, database, run, workDir)
+
+	const siblingFinding = `{"findings":[{"id":"review-1","severity":"error","file":"other.go","description":"the sibling site still lacks the guard","action":"ask-user"}],"summary":"1 finding"}`
+	round := 0
+	step := &adaptiveCallStep{
+		name: types.StepReview,
+		fn: func(sctx *StepContext) (*StepOutcome, error) {
+			round++
+			if round == 1 {
+				return &StepOutcome{NeedsApproval: true, Findings: siblingFinding, ReviewedPaths: []string{"service.go", "cache.go"}, ReviewablePaths: []string{"service.go", "cache.go"}, ReviewBaseSHA: base}, nil
+			}
+			return &StepOutcome{Findings: `{"findings":[],"summary":"clean"}`, ReviewedPaths: []string{"service.go", "cache.go"}, ReviewablePaths: []string{"service.go", "cache.go"}, ReviewBaseSHA: base}, nil
+		},
+	}
+
+	exec := NewExecutor(database, p, nil, nil, []Step{step}, nil)
+	startExecutor(t, exec, run, repo, workDir)
+	waitForStepStatus(t, database, run.ID, types.StepReview, types.StepStatusAwaitingApproval)
+	if err := exec.Respond(types.StepReview, types.ActionFix, []string{"review-1"}); err != nil {
+		t.Fatal(err)
+	}
+	waitForStepStatus(t, database, run.ID, types.StepReview, types.StepStatusFixReview)
+
+	steps, err := database.GetStepsByRun(run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !outstandingIDs(t, derefString(steps[0].FindingsJSON))["review-1"] {
+		t.Fatalf("a no-op fix closed a finding about a file outside the change: %v", steps[0].FindingsJSON)
+	}
+}
+
+// Reverting a file restores the base code, so it can only close the findings
+// whose fix round did it: an earlier fix may have been the change the finding
+// asked for.
+func TestExecutor_ReviewCarryForward_ALaterRoundsRevertKeepsAnEarlierFix(t *testing.T) {
+	database, p, run, repo := setupTest(t)
+	workDir := t.TempDir()
+	base := revertCarryRepo(t, database, run, workDir)
+
+	const sameFileFinding = `{"findings":[{"id":"review-3","severity":"warning","file":"service.go","line":3,"description":"the new guard logs the secret","action":"ask-user"}],"summary":"1 finding"}`
+	round := 0
+	step := &adaptiveCallStep{
+		name: types.StepReview,
+		fn: func(sctx *StepContext) (*StepOutcome, error) {
+			round++
+			both := []string{"service.go", "cache.go"}
+			switch round {
+			case 1:
+				return &StepOutcome{NeedsApproval: true, Findings: reviewCarryTwoFindings, ReviewedPaths: both, ReviewablePaths: both, ReviewBaseSHA: base}, nil
+			case 2:
+				writeTestFile(t, sctx.WorkDir, "service.go", "package x // branch service with guard\n")
+				commitFixRound(t, sctx, "guard service.go")
+				return &StepOutcome{NeedsApproval: true, Findings: sameFileFinding, ReviewedPaths: both, ReviewablePaths: both, ReviewBaseSHA: base}, nil
+			default:
+				writeTestFile(t, sctx.WorkDir, "service.go", "package x // base service\n")
+				commitFixRound(t, sctx, "restore service.go")
+				return &StepOutcome{Findings: `{"findings":[],"summary":"clean"}`, ReviewedPaths: []string{"cache.go"}, ReviewablePaths: []string{"cache.go"}, ReviewBaseSHA: base}, nil
+			}
+		},
+	}
+
+	exec := NewExecutor(database, p, nil, nil, []Step{step}, nil)
+	startExecutor(t, exec, run, repo, workDir)
+	waitForStepStatus(t, database, run.ID, types.StepReview, types.StepStatusAwaitingApproval)
+	if err := exec.Respond(types.StepReview, types.ActionFix, []string{"review-1"}); err != nil {
+		t.Fatal(err)
+	}
+	waitForStepStatus(t, database, run.ID, types.StepReview, types.StepStatusFixReview)
+	if err := exec.Respond(types.StepReview, types.ActionFix, []string{"review-3"}); err != nil {
+		t.Fatal(err)
+	}
+	rounds := waitForParkedRounds(t, database, mustReviewStepID(t, database, run.ID), types.StepStatusFixReview, 3)
+	got := outstandingIDs(t, derefString(rounds[len(rounds)-1].FindingsJSON))
+	if !got["review-1"] {
+		t.Fatalf("round 3 reverted service.go and closed review-1, which round 2 fixed: %v", got)
+	}
+	if got["review-3"] {
+		t.Fatalf("round 3 fixed review-3 by reverting service.go, yet it stayed outstanding: %v", got)
+	}
+}
+
+func mustReviewStepID(t *testing.T, database *db.DB, runID string) string {
+	t.Helper()
+	steps, err := database.GetStepsByRun(runID)
+	if err != nil || len(steps) == 0 {
+		t.Fatalf("review step not recorded: %v", err)
+	}
+	return steps[0].ID
+}
+
 func useWorktreeHeadAsRunHead(t *testing.T, database *db.DB, run *db.Run, workDir string) {
 	t.Helper()
 	cmd := exec.Command("git", "rev-parse", "HEAD")
@@ -1066,10 +1250,10 @@ func TestResolveVerifiedFindingsJSON_FilelessPendingFinding(t *testing.T) {
 // carry contract at the pure-function level: only a pending (selected)
 // finding whose file was deleted closes; an unselected finding and a
 // file-less finding are both left alone.
-func TestDropDeletedFileFindingsForIDsJSON(t *testing.T) {
+func TestDropFindingsForIDsByFileJSON(t *testing.T) {
 	deleted := func(path string) bool { return path == "cache.go" }
 
-	got := dropDeletedFileFindingsForIDsJSON(reviewCarryTwoFindings, []string{"review-1", "review-2"}, deleted)
+	got := dropFindingsForIDsByFileJSON(reviewCarryTwoFindings, []string{"review-1", "review-2"}, deleted)
 	parsed, err := types.ParseFindingsJSON(got)
 	if err != nil {
 		t.Fatalf("parse result: %v", err)
@@ -1079,14 +1263,14 @@ func TestDropDeletedFileFindingsForIDsJSON(t *testing.T) {
 	}
 
 	// An unselected finding is left alone even when its file was deleted.
-	got = dropDeletedFileFindingsForIDsJSON(reviewCarryTwoFindings, []string{"review-1"}, deleted)
+	got = dropFindingsForIDsByFileJSON(reviewCarryTwoFindings, []string{"review-1"}, deleted)
 	if !strings.Contains(got, "review-2") {
 		t.Fatalf("unselected finding for a deleted file was dropped: %s", got)
 	}
 
 	// A file-less finding is left alone: there is nothing to check.
 	filelessRaw := `{"findings":[{"id":"review-1","severity":"warning","description":"no file anchor","action":"ask-user"}],"summary":"1 finding"}`
-	got = dropDeletedFileFindingsForIDsJSON(filelessRaw, []string{"review-1"}, func(string) bool { return true })
+	got = dropFindingsForIDsByFileJSON(filelessRaw, []string{"review-1"}, func(string) bool { return true })
 	if !strings.Contains(got, "review-1") {
 		t.Fatalf("file-less pending finding was dropped: %s", got)
 	}

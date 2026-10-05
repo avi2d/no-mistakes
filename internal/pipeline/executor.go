@@ -892,6 +892,24 @@ func fileDeletedSince(ctx context.Context, workDir, head, relPath string) bool {
 	return errors.Is(err, os.ErrNotExist)
 }
 
+// fileRevertedToBase reports whether relPath differed from base at head and
+// no longer differs from it in workDir, the same diff the review step reads.
+// A finding can name a file outside the change, which a no-op fix also leaves
+// without a diff, so only a diff the round removed counts. Any git error
+// reports false.
+func fileRevertedToBase(ctx context.Context, workDir, base, head, relPath string) bool {
+	if strings.TrimSpace(base) == "" || strings.TrimSpace(head) == "" {
+		return false
+	}
+	pathspec := ":(literal)" + relPath
+	before, err := git.Run(ctx, workDir, "diff", "--name-only", "--no-renames", base, head, "--", pathspec)
+	if err != nil || strings.TrimSpace(before) == "" {
+		return false
+	}
+	after, err := git.Run(ctx, workDir, "diff", "--name-only", "--no-renames", base, "--", pathspec)
+	return err == nil && strings.TrimSpace(after) == ""
+}
+
 // executeStep runs a single step with approval coordination.
 // Returns whether to skip the remainder, an optional earlier restart step,
 // and any execution error.
@@ -1246,6 +1264,10 @@ rounds:
 			// answered-and-verified finding would stay outstanding for a reason
 			// that has nothing to do with it.
 			verificationFindings := dropReviewQuestionFindingsJSON(roundFindings)
+			var fixedThisRound []string
+			if sctx.Fixing && !sctx.SkipFixExecution {
+				fixedThisRound = findingIDList(remapFindingIDsJSON(outstandingFindings, sctx.PreviousFindings))
+			}
 			outstandingFindings = dropReviewQuestionFindingsJSON(outstandingFindings)
 			// An answer round retracts by naming ids, never by silence - and
 			// ONLY an answer round. A fix round is held to the coverage rule,
@@ -1263,10 +1285,17 @@ rounds:
 				}
 			}
 			outstandingFindings = resolveVerifiedFindingsJSON(outstandingFindings, pendingVerificationIDs, outcome.ReviewedPaths, outcome.ReviewablePaths, verificationFindings)
-			// A fix round that deletes a selected finding's file leaves the
+			// A fix round that deletes a selected finding's file, or puts it
+			// back to the base version, takes it out of the diff and leaves the
 			// rereview nothing to cover, so coverage alone would keep it pending.
-			outstandingFindings = dropDeletedFileFindingsForIDsJSON(outstandingFindings, pendingVerificationIDs, func(relPath string) bool {
+			outstandingFindings = dropFindingsForIDsByFileJSON(outstandingFindings, pendingVerificationIDs, func(relPath string) bool {
 				return fileDeletedSince(ctx, sctx.WorkDir, reviewStartingHeadSHA, relPath)
+			})
+			// Only the round that fixed a finding may clear it by reverting its
+			// file: a later round reverting the file would restore the base code
+			// an earlier fix was meant to change.
+			outstandingFindings = dropFindingsForIDsByFileJSON(outstandingFindings, fixedThisRound, func(relPath string) bool {
+				return fileRevertedToBase(ctx, sctx.WorkDir, outcome.ReviewBaseSHA, reviewStartingHeadSHA, relPath)
 			})
 			pendingVerificationIDs = retainFindingIDs(outstandingFindings, pendingVerificationIDs)
 			selectedOutstandingIDs = retainFindingIDs(outstandingFindings, selectedOutstandingIDs)

@@ -226,8 +226,8 @@ func TestReviewReplay_FixThatRevertsTheFileToBaseClearsTheFinding(t *testing.T) 
 	if step.Status != types.StepStatusCompleted {
 		t.Fatalf("review status = %s, want completed", step.Status)
 	}
-	if step.FindingsJSON != nil {
-		t.Fatalf("a finding outlived the revert of its file: %s", *step.FindingsJSON)
+	if parsed, err := types.ParseFindingsJSON(derefFindings(step)); err != nil || len(parsed.Items) != 0 {
+		t.Fatalf("a finding outlived the revert of its file: %s (%v)", derefFindings(step), err)
 	}
 }
 
