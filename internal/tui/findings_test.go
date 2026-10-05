@@ -410,3 +410,16 @@ func TestModel_View_NoFindingsWhenNotAwaiting(t *testing.T) {
 		t.Error("findings should not appear when step is not awaiting approval")
 	}
 }
+
+func TestRenderFindings_MarksWhatTheRoundDidNotReport(t *testing.T) {
+	raw := `{"findings":[` +
+		`{"id":"R2","severity":"warning","file":"style.ts","line":99,"description":"prefixes","carried":"awaiting_verification"},` +
+		`{"id":"review-3","severity":"warning","file":"style.ts","line":93,"description":"redirects"}],"summary":"2 findings"}`
+	plain := stripANSI(renderFindings(raw, 100))
+	if !strings.Contains(plain, "carried: fixed earlier, not re-reported, awaiting verification") {
+		t.Errorf("carried finding is not marked:\n%s", plain)
+	}
+	if strings.Count(plain, "carried:") != 1 {
+		t.Errorf("only the carried finding should be marked:\n%s", plain)
+	}
+}

@@ -1541,7 +1541,8 @@ func fixRoundLine(r *db.StepRound) string {
 }
 
 // writeFindingItems renders each finding as a `file:line - description` bullet,
-// followed by any test command details for the test step.
+// marking a review finding its round's reviewer did not report, followed by
+// any test command details for the test step.
 func writeFindingItems(b *strings.Builder, sr *db.StepResult, findings *types.Findings, flavor prBodyFlavor) {
 	for _, f := range findings.Items {
 		emoji := severityEmoji(f.Severity)
@@ -1553,7 +1554,11 @@ func writeFindingItems(b *strings.Builder, sr *db.StepResult, findings *types.Fi
 			}
 			loc += "` - "
 		}
-		b.WriteString(fmt.Sprintf("- %s %s%s\n", emoji, loc, escapePRText(f.Description, flavor)))
+		carried := ""
+		if label := f.Carried.Label(); label != "" {
+			carried = "(carried: " + label + ") "
+		}
+		b.WriteString(fmt.Sprintf("- %s %s%s%s\n", emoji, loc, carried, escapePRText(f.Description, flavor)))
 	}
 	writeTestedDetails(b, sr, findings, flavor)
 }

@@ -1038,7 +1038,8 @@ func TestRunAgent_HelperStartedBeforeTheLastOutputDoesNotExtendTheBudget(t *test
 		runFn: func(ctx context.Context, opts agent.RunOpts) (*agent.Result, error) {
 			// A long-lived helper (an ACP agent under acpx, a stdio MCP server)
 			// starts with the agent, which then talks and hangs.
-			return runLaunchedShell(ctx, opts, "sleep 6 & read go; wait", func(_, _ func()) {
+			return runLaunchedShell(ctx, opts, "sleep 6 & echo ready; read go; wait", func(_, ready func()) {
+				ready()
 				time.Sleep(1200 * time.Millisecond)
 				opts.OnChunk("thinking\n")
 			})

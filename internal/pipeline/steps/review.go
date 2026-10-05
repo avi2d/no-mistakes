@@ -224,6 +224,7 @@ Previous review findings to address:
 		return approvedReviewOutcome(reviewTargetSHA, &pipeline.StepOutcome{
 			Findings:        string(findingsJSON),
 			ReviewablePaths: reviewable,
+			ReviewBaseSHA:   baseSHA,
 			FixSummary:      fixSummary,
 		})
 	}
@@ -469,18 +470,6 @@ Risk assessment (after listing all findings):
 		result, err := s.runReviewAgent(sctx, "agent review", sessionRole, opts)
 		if err == nil {
 			findings, err = parseReviewAnalyzerOutput(result)
-			if err == nil && sctx.Fixing {
-				err = rejectUnchangedFixFindings(sctx.PreviousFindings, findings)
-				if err != nil && attempt == reviewAnalyzerMaxAttempts {
-					var dropped int
-					findings, dropped = dropUnchangedFixFindings(sctx.PreviousFindings, findings)
-					if dropped > 0 {
-						findings.Summary = fmt.Sprintf("reviewed current head; dropped %d unchanged carried finding(s)", dropped)
-						sctx.Log(fmt.Sprintf("dropped %d unchanged carried finding(s) after rereview retries", dropped))
-						err = nil
-					}
-				}
-			}
 			if err == nil {
 				break
 			}
@@ -559,6 +548,7 @@ Risk assessment (after listing all findings):
 		ReviewedPaths:     findings.ReviewedPaths,
 		WithdrawnFindings: withdrawnFindings(findings),
 		ReviewablePaths:   reviewable,
+		ReviewBaseSHA:     baseSHA,
 		FixSummary:        fixSummary,
 	})
 }
@@ -775,42 +765,6 @@ func (s *ReviewStep) appendOpenReviewQuestionFindings(sctx *pipeline.StepContext
 	return nil
 }
 
-func rejectUnchangedFixFindings(previousRaw string, current Findings) error {
-	previousDescriptions := previousFixFindingDescriptions(previousRaw)
-	for _, finding := range current.Items {
-		if _, unchanged := previousDescriptions[finding.File+"\x00"+finding.Description]; unchanged {
-			return fmt.Errorf("finding %s repeats selected finding text unchanged; verify it against the current head, then restate it with current evidence or omit it if fixed", finding.ID)
-		}
-	}
-	return nil
-}
-
-func dropUnchangedFixFindings(previousRaw string, current Findings) (Findings, int) {
-	previousDescriptions := previousFixFindingDescriptions(previousRaw)
-	retained := current.Items[:0]
-	for _, finding := range current.Items {
-		if _, unchanged := previousDescriptions[finding.File+"\x00"+finding.Description]; unchanged {
-			continue
-		}
-		retained = append(retained, finding)
-	}
-	dropped := len(current.Items) - len(retained)
-	current.Items = retained
-	return current, dropped
-}
-
-func previousFixFindingDescriptions(raw string) map[string]struct{} {
-	previous, err := types.ParseFindingsJSON(raw)
-	if err != nil {
-		return nil
-	}
-	descriptions := make(map[string]struct{}, len(previous.Items))
-	for _, finding := range previous.Items {
-		descriptions[finding.File+"\x00"+finding.Description] = struct{}{}
-	}
-	return descriptions
-}
-
 // parseReviewAnalyzerOutput validates a review turn's structured findings. A
 // review that produced no structured output, or one whose risk assessment is
 // absent, cannot certify the head: an unrun or unreadable analyzer must not
@@ -980,6 +934,8 @@ func sanitizedPreviousFindingsForPrompt(raw string) string {
 		findings.Items[i].ReviewScope = sanitizePromptText(findings.Items[i].ReviewScope)
 		findings.Items[i].Category = sanitizePromptText(findings.Items[i].Category)
 		findings.Items[i].Check = sanitizePromptText(findings.Items[i].Check)
+		// A fixer handed a finding tagged "fixed earlier" would read it as done.
+		findings.Items[i].Carried = ""
 	}
 	findings.Summary = sanitizePromptMultilineText(findings.Summary)
 	findings.RiskLevel = sanitizePromptText(findings.RiskLevel)

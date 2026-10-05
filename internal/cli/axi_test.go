@@ -373,6 +373,9 @@ func TestWriteGateShape(t *testing.T) {
 		}, "1 blocking issue"),
 	}
 	out := axiDoc(gateFields(gate)...)
+	if strings.Contains(out, "carried") {
+		t.Errorf("a gate with no carried finding mentions carried findings:\n%s", out)
+	}
 
 	for _, want := range []string{
 		"gate:\n",
@@ -388,6 +391,30 @@ func TestWriteGateShape(t *testing.T) {
 		"Review auto-fix is disabled by default",
 		"auto_fix.review > 0",
 		"the run never advances past a gate on its own",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("gate missing %q in:\n%s", want, out)
+		}
+	}
+}
+
+func TestWriteGateShape_MarksWhatTheReviewerDidNotReport(t *testing.T) {
+	gate := stepView{
+		Name:   "review",
+		Status: "fix_review",
+		FindingsJSON: findingsJSON(t, []types.Finding{
+			{ID: "R1", Severity: "error", File: "style.ts", Action: types.ActionAskUser, Description: "hues", Carried: types.FindingCarriedUnselected},
+			{ID: "R2", Severity: "warning", File: "style.ts", Action: types.ActionAutoFix, Description: "prefixes", Carried: types.FindingCarriedAwaitingVerification},
+			{ID: "review-3", Severity: "warning", File: "style.ts", Action: types.ActionAutoFix, Description: "redirects"},
+		}, "3 findings"),
+	}
+	out := axiDoc(gateFields(gate)...)
+	for _, want := range []string{
+		"  findings[3]{id,severity,file,action,carried,description}:\n",
+		`    R1,error,style.ts,ask-user,"not selected earlier, not re-reported",hues`,
+		`    R2,warning,style.ts,auto-fix,"fixed earlier, not re-reported, awaiting verification",prefixes`,
+		`    review-3,warning,style.ts,auto-fix,"",redirects`,
+		"A finding with a `carried` note is one this round's reviewer did not report",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("gate missing %q in:\n%s", want, out)

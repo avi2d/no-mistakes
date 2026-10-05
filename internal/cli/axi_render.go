@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"time"
 
@@ -616,6 +617,9 @@ func gateFields(gate stepView) []toon.Field {
 			"Have the operator inspect and resolve the reported protected-path edit through the repository's authorized workflow, then run `no-mistakes axi respond --action fix` to retry the refused step, including its commit and publication.",
 		}
 	}
+	if parsed, err := types.ParseFindingsJSON(gate.FindingsJSON); err == nil && slices.ContainsFunc(parsed.Items, func(f types.Finding) bool { return f.Carried != "" }) {
+		help = append(help, "A finding with a `carried` note is one this round's reviewer did not report; one awaiting verification was fixed in an earlier round and stays until a later round verifies it or you approve")
+	}
 	skip := "Run `no-mistakes axi respond --action skip` to skip this step"
 	if pipeline.HasUnvalidatedWorkRefusal(gate.FindingsJSON) {
 		help = []string{
@@ -665,7 +669,32 @@ func gateFieldsWithHelp(gate stepView, help []string) []toon.Field {
 	}
 }
 
-func findingRows(items []types.Finding) []findingRow {
+// A separate row type keeps the carried column off every gate that shows no
+// carried finding.
+type carriedFindingRow struct {
+	ID          string `toon:"id"`
+	Severity    string `toon:"severity"`
+	File        string `toon:"file"`
+	Action      string `toon:"action"`
+	Carried     string `toon:"carried"`
+	Description string `toon:"description"`
+}
+
+func findingRows(items []types.Finding) any {
+	if slices.ContainsFunc(items, func(f types.Finding) bool { return f.Carried != "" }) {
+		rows := make([]carriedFindingRow, 0, len(items))
+		for _, f := range items {
+			rows = append(rows, carriedFindingRow{
+				ID:          f.ID,
+				Severity:    f.Severity,
+				File:        f.File,
+				Action:      f.Action,
+				Carried:     f.Carried.Label(),
+				Description: f.Description,
+			})
+		}
+		return rows
+	}
 	rows := make([]findingRow, 0, len(items))
 	for _, f := range items {
 		rows = append(rows, findingRow{

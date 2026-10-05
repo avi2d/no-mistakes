@@ -1063,25 +1063,6 @@ func TestReviewStep_AuthorizationPrivacyTracingContract(t *testing.T) {
 	}
 }
 
-func TestUnchangedFixFindingIsDroppedAfterReviewRetries(t *testing.T) {
-	previous := `{"findings":[{"id":"review-1","file":"service.go","description":"nil dereference when loading the cache"}]}`
-	current := Findings{Items: []types.Finding{{ID: "review-1", File: "service.go", Description: "nil dereference when loading the cache"}}}
-	if err := rejectUnchangedFixFindings(previous, current); err == nil {
-		t.Fatal("unchanged selected finding passed rereview without a retry")
-	}
-
-	current, dropped := dropUnchangedFixFindings(previous, current)
-	if dropped != 1 || len(current.Items) != 0 {
-		t.Fatalf("unchanged finding not dropped: dropped=%d items=%+v", dropped, current.Items)
-	}
-
-	current = Findings{Items: []types.Finding{{ID: "review-1", File: "service.go", Description: "cache lookup dereferences a nil entry at service.go:42"}}}
-	current, dropped = dropUnchangedFixFindings(previous, current)
-	if dropped != 0 || len(current.Items) != 1 {
-		t.Fatalf("restated finding was dropped: dropped=%d items=%+v", dropped, current.Items)
-	}
-}
-
 func TestReviewStep_RereviewTreatsFixRoundsAsPipelineAuthoredCode(t *testing.T) {
 	t.Parallel()
 	provenanceContract := []string{
@@ -1112,13 +1093,7 @@ func TestReviewStep_RereviewTreatsFixRoundsAsPipelineAuthoredCode(t *testing.T) 
 					os.WriteFile(filepath.Join(dir, "review-fix.txt"), []byte("fixed"), 0o644)
 					return &agent.Result{Output: json.RawMessage(`{"summary":"address findings"}`)}, nil
 				}
-				if callCount > 1 {
-					return &agent.Result{Output: json.RawMessage(`{"findings":[{"id":"review-1","severity":"warning","file":"main.go","description":"possible nil deref"}],"reviewed_paths":["feature.txt","review-fix.txt"],"risk_level":"low","risk_rationale":"clean","risk_scope":"source-or-external"}`)}, nil
-				}
-				findings := cleanReviewFindings()
-				findings.ReviewedPaths = []string{"feature.txt", "review-fix.txt"}
-				j, _ := json.Marshal(findings)
-				return &agent.Result{Output: j}, nil
+				return &agent.Result{Output: json.RawMessage(`{"findings":[{"id":"review-1","severity":"warning","file":"main.go","description":"possible nil deref"}],"reviewed_paths":["feature.txt","review-fix.txt"],"risk_level":"low","risk_rationale":"clean","risk_scope":"source-or-external"}`)}, nil
 			},
 		}
 
@@ -1130,18 +1105,15 @@ func TestReviewStep_RereviewTreatsFixRoundsAsPipelineAuthoredCode(t *testing.T) 
 		if err != nil {
 			t.Fatal(err)
 		}
-		if parsed, err := types.ParseFindingsJSON(outcome.Findings); err != nil || len(parsed.Items) != 0 {
-			t.Fatalf("unchanged selected finding survived exhausted rereview retries: findings=%+v err=%v", parsed.Items, err)
-		} else if !strings.Contains(parsed.Summary, "dropped 1 unchanged carried finding") {
-			t.Fatalf("summary does not describe the dropped stale finding: %q", parsed.Summary)
+		// A rereview that restates a selected finding word for word is still
+		// the reviewer saying the defect remains, so it is kept, not retried.
+		if parsed, err := types.ParseFindingsJSON(outcome.Findings); err != nil || len(parsed.Items) != 1 {
+			t.Fatalf("rereview restating a selected finding lost it: findings=%+v err=%v", parsed.Items, err)
 		}
-		if len(ag.calls) != 4 {
-			t.Fatalf("expected fix and three rereview attempts, got %d calls", len(ag.calls))
+		if len(ag.calls) != 2 {
+			t.Fatalf("expected fix + rereview calls, got %d", len(ag.calls))
 		}
 		rereviewPrompt := ag.calls[1].Prompt
-		if !strings.Contains(ag.calls[3].Prompt, "repeats selected finding text unchanged") {
-			t.Fatalf("unchanged finding did not trigger the final corrective rereview prompt: %s", ag.calls[3].Prompt)
-		}
 		for _, want := range provenanceContract {
 			if !strings.Contains(rereviewPrompt, want) {
 				t.Errorf("rereview prompt missing provenance contract %q:\n%s", want, rereviewPrompt)

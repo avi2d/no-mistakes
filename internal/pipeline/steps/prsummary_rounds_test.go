@@ -201,6 +201,36 @@ func TestBuildPipelineSummary_MultiRoundWithFollowUpFix(t *testing.T) {
 	}
 }
 
+func TestBuildPipelineSummary_MarksReviewFindingsTheRoundDidNotReport(t *testing.T) {
+	t.Parallel()
+	findings1 := `{"findings":[{"id":"R1","severity":"error","file":"style.ts","line":160,"description":"hues"},{"id":"R2","severity":"warning","file":"style.ts","line":99,"description":"prefixes"}],"summary":"2 findings"}`
+	findings2 := `{"findings":[` +
+		`{"id":"R1","severity":"error","file":"style.ts","line":160,"description":"hues","carried":"unselected"},` +
+		`{"id":"R2","severity":"warning","file":"style.ts","line":99,"description":"prefixes","carried":"awaiting_verification"},` +
+		`{"id":"review-1","severity":"warning","file":"style.ts","line":179,"description":"long options"}],"summary":"3 findings"}`
+	steps := []*db.StepResult{
+		{ID: "s1", StepName: types.StepReview, Status: types.StepStatusCompleted, FindingsJSON: &findings2},
+	}
+	rounds := map[string][]*db.StepRound{
+		"s1": {
+			{Round: 1, Trigger: "initial", FindingsJSON: &findings1, DurationMS: 1000},
+			{Round: 2, Trigger: "auto_fix", FindingsJSON: &findings2, DurationMS: 900},
+		},
+	}
+	md, _ := BuildPipelineSummary(steps, rounds, testPipelineHeadSHA)
+
+	for _, want := range []string{
+		"`style.ts:160` - (carried: not selected earlier, not re-reported) hues\n",
+		"`style.ts:99` - (carried: fixed earlier, not re-reported, awaiting verification) prefixes\n",
+		"`style.ts:179` - long options\n",
+		"`style.ts:99` - prefixes\n",
+	} {
+		if !strings.Contains(md, want) {
+			t.Errorf("summary missing %q:\n%s", want, md)
+		}
+	}
+}
+
 func TestBuildPipelineSummary_LegacyUserFixRoundsRenderAsAutoFix(t *testing.T) {
 	t.Parallel()
 	findings := `{"findings":[{"id":"review-1","severity":"warning","description":"legacy round"}],"summary":"1 warning"}`
