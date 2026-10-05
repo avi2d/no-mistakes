@@ -87,6 +87,14 @@ func (a *sessionFallbackTimeoutAgent) Run(ctx context.Context, opts agent.RunOpt
 func reviewSessionHarness(t *testing.T, mock *sessionMockAgent, steps []pipeline.Step, tweaks ...func(*config.Config)) (*pipeline.Executor, *db.DB, *db.Run, *db.Repo, string) {
 	t.Helper()
 	workDir, baseSHA, headSHA := setupGitRepo(t)
+	exec, database, run, repo := reviewSessionHarnessIn(t, mock, steps, workDir, baseSHA, headSHA, tweaks...)
+	return exec, database, run, repo, workDir
+}
+
+// reviewSessionHarnessIn is reviewSessionHarness over a repository the caller
+// built, for a test whose files matter.
+func reviewSessionHarnessIn(t *testing.T, mock *sessionMockAgent, steps []pipeline.Step, workDir, baseSHA, headSHA string, tweaks ...func(*config.Config)) (*pipeline.Executor, *db.DB, *db.Run, *db.Repo) {
+	t.Helper()
 	ensureHermeticOrigin(t, workDir)
 
 	database, err := db.Open(filepath.Join(t.TempDir(), "state.sqlite"))
@@ -113,7 +121,7 @@ func reviewSessionHarness(t *testing.T, mock *sessionMockAgent, steps []pipeline
 		tweak(cfg)
 	}
 	exec := pipeline.NewExecutor(database, paths.WithRoot(t.TempDir()), cfg, mock, steps, nil)
-	return exec, database, run, repo, workDir
+	return exec, database, run, repo
 }
 
 func reviewCalls(calls []agent.RunOpts) []agent.RunOpts {
