@@ -1300,6 +1300,7 @@ rounds:
 			pendingVerificationIDs = retainFindingIDs(outstandingFindings, pendingVerificationIDs)
 			selectedOutstandingIDs = retainFindingIDs(outstandingFindings, selectedOutstandingIDs)
 			effectiveFindings = mergeOutstandingFindingsJSON(outstandingFindings, roundFindings, outcome.ReviewedPaths)
+			effectiveFindings = tagCarriedFindingsJSON(effectiveFindings, outstandingFindings, roundFindings, pendingVerificationIDs)
 			outstandingFindings = effectiveFindings
 			effectiveFindings = recordWithdrawnFindingsJSON(effectiveFindings, withdrawn)
 		}

@@ -1819,3 +1819,11 @@ func TestCommitAgentFixes_CleanWorktreeRecordsAgentAdvancedHead(t *testing.T) {
 		t.Fatalf("uncertified range = %+v, err = %v, want %s..%s", rng, err, startingHead, headSHA)
 	}
 }
+
+func TestSanitizedPreviousFindingsForPrompt_DropsTheCarriedTag(t *testing.T) {
+	t.Parallel()
+	raw := `{"findings":[{"id":"R2","severity":"warning","file":"style.ts","description":"prefixes","action":"auto-fix","carried":"awaiting_verification"}],"summary":"1 finding"}`
+	if sanitized := sanitizedPreviousFindingsForPrompt(raw); strings.Contains(sanitized, "carried") || !strings.Contains(sanitized, "prefixes") {
+		t.Fatalf("finding handed to the fixer = %s, want it without the carried tag", sanitized)
+	}
+}

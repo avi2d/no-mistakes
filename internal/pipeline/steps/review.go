@@ -934,6 +934,8 @@ func sanitizedPreviousFindingsForPrompt(raw string) string {
 		findings.Items[i].ReviewScope = sanitizePromptText(findings.Items[i].ReviewScope)
 		findings.Items[i].Category = sanitizePromptText(findings.Items[i].Category)
 		findings.Items[i].Check = sanitizePromptText(findings.Items[i].Check)
+		// A fixer handed a finding tagged "fixed earlier" would read it as done.
+		findings.Items[i].Carried = ""
 	}
 	findings.Summary = sanitizePromptMultilineText(findings.Summary)
 	findings.RiskLevel = sanitizePromptText(findings.RiskLevel)

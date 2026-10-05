@@ -1982,3 +1982,34 @@ func TestExecutor_ReviewCarryForward_ARecoveredRoundInheritsNoRetractionRecord(t
 	}
 	waitExecutorDone(t, done)
 }
+
+func TestTagCarriedFindingsJSON(t *testing.T) {
+	outstanding := `{"findings":[` +
+		`{"id":"review-1","severity":"error","file":"service.go","line":10,"description":"nil deref on the error path","action":"ask-user","carried":"awaiting_verification"},` +
+		`{"id":"review-2","severity":"warning","file":"cache.go","line":42,"description":"unbounded cache growth","action":"ask-user"},` +
+		`{"id":"review-3","severity":"warning","file":"cache.go","line":7,"description":"stale entry","action":"ask-user"}],"summary":"3 findings"}`
+	round := `{"findings":[` +
+		`{"id":"review-1","severity":"error","file":"service.go","line":12,"description":"nil deref on the error path","action":"ask-user"},` +
+		`{"id":"review-4","severity":"warning","file":"cache.go","line":9,"description":"new defect","action":"ask-user","carried":"unselected"}],"summary":"2 findings"}`
+	merged := mergeOutstandingFindingsJSON(outstanding, round, []string{"service.go", "cache.go"})
+
+	got := tagCarriedFindingsJSON(merged, outstanding, round, []string{"review-1", "review-2"})
+	parsed, err := types.ParseFindingsJSON(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]types.FindingCarry{
+		"review-1": "",
+		"review-2": types.FindingCarriedAwaitingVerification,
+		"review-3": types.FindingCarriedUnselected,
+		"review-4": "",
+	}
+	if len(parsed.Items) != len(want) {
+		t.Fatalf("items = %+v, want %v", parsed.Items, want)
+	}
+	for _, item := range parsed.Items {
+		if item.Carried != want[item.ID] {
+			t.Errorf("%s carried = %q, want %q", item.ID, item.Carried, want[item.ID])
+		}
+	}
+}

@@ -207,6 +207,43 @@ type Finding struct {
 	// every non-CI finding.
 	Check   string `json:"check,omitempty"`
 	CheckID string `json:"check_id,omitempty"`
+	// Carried is set only on a review gate's finding that this round's
+	// reviewer did not report.
+	Carried FindingCarry `json:"carried,omitempty"`
+}
+
+// FindingCarry says why a review gate shows a finding its round's reviewer
+// did not report.
+type FindingCarry string
+
+const (
+	// FindingCarriedAwaitingVerification is a finding handed to a fix round
+	// that no round has verified yet.
+	FindingCarriedAwaitingVerification FindingCarry = "awaiting_verification"
+	// FindingCarriedUnselected is a finding never selected for a fix.
+	FindingCarriedUnselected FindingCarry = "unselected"
+)
+
+func knownFindingCarry(value string) FindingCarry {
+	switch carry := FindingCarry(value); carry {
+	case FindingCarriedAwaitingVerification, FindingCarriedUnselected:
+		return carry
+	default:
+		return ""
+	}
+}
+
+// Label says why a carried finding is still shown, empty for one the round
+// reported.
+func (c FindingCarry) Label() string {
+	switch c {
+	case FindingCarriedAwaitingVerification:
+		return "fixed earlier, not re-reported, awaiting verification"
+	case FindingCarriedUnselected:
+		return "not selected earlier, not re-reported"
+	default:
+		return ""
+	}
 }
 
 // TestScenario is one named end-to-end scenario the test step derived from the
@@ -277,6 +314,7 @@ type findingWire struct {
 	Category            string `json:"category,omitempty"`
 	Check               string `json:"check,omitempty"`
 	CheckID             string `json:"check_id,omitempty"`
+	Carried             string `json:"carried,omitempty"`
 	RequiresHumanReview *bool  `json:"requires_human_review,omitempty"`
 }
 
@@ -622,6 +660,7 @@ func (f *Finding) UnmarshalJSON(data []byte) error {
 	f.Category = wire.Category
 	f.Check = wire.Check
 	f.CheckID = wire.CheckID
+	f.Carried = knownFindingCarry(wire.Carried)
 	if f.Action == "" && wire.RequiresHumanReview != nil {
 		if *wire.RequiresHumanReview {
 			f.Action = ActionAskUser

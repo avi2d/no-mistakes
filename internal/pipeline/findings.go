@@ -69,6 +69,7 @@ func findingKey(item types.Finding) types.Finding {
 	item.Action = ""
 	item.Source = ""
 	item.UserInstructions = ""
+	item.Carried = ""
 	return item
 }
 
@@ -707,6 +708,53 @@ func mergeOutstandingFindingsJSON(existingRaw, additionalRaw string, reviewedPat
 		}
 		merged.Items[i].ID = nextFreeReviewFindingID(seen)
 		seen[merged.Items[i].ID] = true
+	}
+	encoded, err := types.MarshalFindingsJSON(merged)
+	if err != nil {
+		return mergedRaw
+	}
+	return encoded
+}
+
+// tagCarriedFindingsJSON marks each finding in mergedRaw that came from
+// outstandingRaw and that roundRaw, the round's own output, did not report,
+// using the same match mergeFindingsJSON dedupes with. Every other finding's
+// tag is cleared, so a re-reported finding stops reading as carried.
+func tagCarriedFindingsJSON(mergedRaw, outstandingRaw, roundRaw string, pendingIDs []string) string {
+	if mergedRaw == "" {
+		return ""
+	}
+	merged, err := types.ParseFindingsJSON(mergedRaw)
+	if err != nil {
+		return mergedRaw
+	}
+	outstanding, _ := types.ParseFindingsJSON(outstandingRaw)
+	round, _ := types.ParseFindingsJSON(roundRaw)
+	reported := make(map[types.Finding]bool, len(round.Items))
+	for _, item := range round.Items {
+		reported[findingKey(item)] = true
+	}
+	outstandingCounts := countFindingFingerprints(outstanding.Items)
+	roundCounts := countFindingFingerprints(round.Items)
+	carried := make(map[string]bool, len(outstanding.Items))
+	for _, item := range outstanding.Items {
+		if item.ID != "" && !hasFindingMatch(item, reported, outstandingCounts, roundCounts) {
+			carried[item.ID] = true
+		}
+	}
+	pending := make(map[string]bool, len(pendingIDs))
+	for _, id := range pendingIDs {
+		pending[id] = true
+	}
+	for i := range merged.Items {
+		switch id := merged.Items[i].ID; {
+		case !carried[id]:
+			merged.Items[i].Carried = ""
+		case pending[id]:
+			merged.Items[i].Carried = types.FindingCarriedAwaitingVerification
+		default:
+			merged.Items[i].Carried = types.FindingCarriedUnselected
+		}
 	}
 	encoded, err := types.MarshalFindingsJSON(merged)
 	if err != nil {

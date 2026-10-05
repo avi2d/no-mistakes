@@ -329,6 +329,10 @@ func renderFindingsRange(f *findings, width int, cursor int, selected map[string
 		}
 		b.WriteString(desc + "\n")
 
+		if label := item.Carried.Label(); label != "" {
+			b.WriteString(dimStyle.Render(wrapIndentedText("carried: "+label, width, 8)) + "\n")
+		}
+
 		if item.UserInstructions != "" {
 			instr := wrapIndentedText("> "+item.UserInstructions, width, 8)
 			b.WriteString(blueStyle.Render(instr) + "\n")
