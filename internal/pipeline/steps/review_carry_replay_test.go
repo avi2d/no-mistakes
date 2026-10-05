@@ -237,3 +237,140 @@ func derefFindings(step *db.StepResult) string {
 	}
 	return *step.FindingsJSON
 }
+
+// carriedTags reads each finding's carried tag from a persisted findings
+// payload, keyed by finding id.
+func carriedTags(t *testing.T, raw string) map[string]string {
+	t.Helper()
+	var payload struct {
+		Findings []map[string]any `json:"findings"`
+	}
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		t.Fatalf("parse findings %q: %v", raw, err)
+	}
+	tags := make(map[string]string, len(payload.Findings))
+	for _, finding := range payload.Findings {
+		id, _ := finding["id"].(string)
+		tag, _ := finding["carried"].(string)
+		tags[id] = tag
+	}
+	return tags
+}
+
+func assertCarriedTags(t *testing.T, round int, raw string, want map[string]string) {
+	t.Helper()
+	got := carriedTags(t, raw)
+	if len(got) != len(want) {
+		t.Errorf("round %d gate shows %v, want the findings %v", round, got, want)
+	}
+	for id, tag := range want {
+		if got[id] != tag {
+			t.Errorf("round %d: finding %s carried = %q, want %q", round, id, got[id], tag)
+		}
+	}
+}
+
+// Run 01M4488AQM5TV9S21FPTCV8G72: each rereview reported new findings in the
+// file the earlier findings were fixed in, which keeps those fixed findings
+// outstanding, and the gate showed them exactly like the new ones.
+func TestReviewReplay_GateTagsWhatTheReviewerDidNotReport(t *testing.T) {
+	const (
+		style     = "harness/pi/extensions/transcript-style.ts"
+		styleTest = "tests/unit/transcript-style.test.ts"
+	)
+	base := map[string]string{
+		"README.md":            "# skills\nPi 1.0.0\n",
+		"bun.lock":             "lock v1\n",
+		"docs/contracts.md":    "# contracts\n",
+		"docs/links.md":        "# links\n",
+		"package.json":         "{\"name\":\"skills\"}\n",
+		"src/generate/link.ts": "export const link = 1\n",
+	}
+	branch := map[string]string{
+		"README.md":            "# skills\nPi 1.0.0\nreply highlight\n",
+		"bun.lock":             "lock v2\n",
+		"docs/contracts.md":    "# contracts\nreply highlight\n",
+		"docs/links.md":        "# links\ntranscript-style\n",
+		style:                  "export const style = 1\n",
+		"package.json":         "{\"name\":\"skills\",\"pi\":\"1.0.2\"}\n",
+		"src/generate/link.ts": "export const link = 2\n",
+		styleTest:              "test('styles', () => {})\n",
+	}
+	allPaths := []string{"README.md", "bun.lock", "docs/contracts.md", "docs/links.md", style, "package.json", "src/generate/link.ts", styleTest}
+
+	reviews := []*agent.Result{
+		replayReviewTurn(t, []types.Finding{
+			{ID: "R1", Severity: "error", Action: types.ActionAskUser, File: style, Line: 160, Description: "The selected hues are not guaranteed by these mappings."},
+			{ID: "R2", Severity: "warning", Action: types.ActionAutoFix, File: style, Line: 99, Description: "Command-position state advances before complete shell prefixes are consumed."},
+			{ID: "R3", Severity: "warning", Action: types.ActionAutoFix, File: style, Line: 85, Description: "The lexer treats escaped shell syntax and heredoc data as executable syntax."},
+			{ID: "R4", Severity: "warning", Action: types.ActionAutoFix, File: style, Line: 211, Description: "Removing this extension and invoking /reload does not remove reply styling."},
+			{ID: "R5", Severity: "warning", Action: types.ActionAutoFix, File: "package.json", Line: 26, Description: "This change requires Pi 1.0.2, but README.md still declares Pi 1.0.0 sufficient."},
+		}, allPaths),
+		replayReviewTurn(t, []types.Finding{
+			{ID: "R1", Severity: "warning", Action: types.ActionAutoFix, File: style, Line: 179, Description: "The Round 1 fix leaves command-position failures reachable through long options."},
+			{ID: "R2", Severity: "warning", Action: types.ActionAutoFix, File: style, Line: 93, Description: "The Round 1 lexer fix leaves a sibling word-boundary error after a variable."},
+		}, allPaths),
+		replayReviewTurn(t, []types.Finding{
+			{ID: "review-3", Severity: "warning", Action: types.ActionAutoFix, File: style, Line: 93, Description: "Round 2's redirect fix leaves numbered input redirects misclassified."},
+			{ID: "review-4", Severity: "warning", Action: types.ActionAutoFix, File: style, Line: 126, Description: "Round 2 introduces false word continuation after every backtick."},
+		}, allPaths),
+	}
+	fixes := []func(string){
+		func(workDir string) {
+			writeReplayFile(t, workDir, style, "export const style = 2\n")
+			writeReplayFile(t, workDir, styleTest, "test('styles', () => {})\ntest('prefixes', () => {})\n")
+			writeReplayFile(t, workDir, "README.md", "# skills\nPi 1.0.2\nreply highlight\n")
+		},
+		func(workDir string) { writeReplayFile(t, workDir, style, "export const style = 3\n") },
+	}
+
+	workDir, baseSHA, headSHA := replayRepo(t, base, branch)
+	mock := replayAgent(t, reviews, fixes)
+	exec, database, run, repo := reviewSessionHarnessIn(t, mock, []pipeline.Step{&ReviewStep{}}, workDir, baseSHA, headSHA, manualReviewDecisions)
+	done := make(chan error, 1)
+	go func() { done <- exec.Execute(context.Background(), run, repo, workDir) }()
+
+	if !waitForReviewRound(t, database, run.ID, 1, done) {
+		t.Fatal("round 1 did not park")
+	}
+	assertCarriedTags(t, 1, derefFindings(reviewStepResult(t, database, run.ID)), map[string]string{
+		"R1": "", "R2": "", "R3": "", "R4": "", "R5": "",
+	})
+	respondToReview(t, exec, types.ActionFix, "R2", "R3", "R4", "R5")
+
+	if !waitForReviewRound(t, database, run.ID, 2, done) {
+		t.Fatal("round 2 did not park")
+	}
+	assertCarriedTags(t, 2, derefFindings(reviewStepResult(t, database, run.ID)), map[string]string{
+		"R1": "unselected", "R2": "awaiting_verification", "R3": "awaiting_verification", "R4": "awaiting_verification",
+		"review-1": "", "review-2": "",
+	})
+	respondToReview(t, exec, types.ActionFix, "review-1", "review-2")
+
+	if !waitForReviewRound(t, database, run.ID, 3, done) {
+		t.Fatal("round 3 did not park")
+	}
+	step := reviewStepResult(t, database, run.ID)
+	assertCarriedTags(t, 3, derefFindings(step), map[string]string{
+		"R1": "unselected", "R2": "awaiting_verification", "R3": "awaiting_verification", "R4": "awaiting_verification",
+		"review-1": "awaiting_verification", "review-2": "awaiting_verification",
+		"review-3": "", "review-4": "",
+	})
+	rounds, err := database.GetRoundsByStep(step.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := carriedTags(t, *rounds[1].FindingsJSON); got["R2"] != "awaiting_verification" || got["review-1"] != "" {
+		t.Errorf("round 2's own record lost what that round's reviewer reported: %v", got)
+	}
+
+	respondToReview(t, exec, types.ActionApprove)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("execute: %v", err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("executor did not finish after approval")
+	}
+}
