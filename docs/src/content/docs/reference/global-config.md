@@ -374,7 +374,8 @@ This example checks the Codex account first, then the Claude Pro account, then t
 The floor command must print JSON, and `field` names the numeric percentage to read with a dotted path.
 Before using an entry with a floor, the review step skips it when the command fails, the field is unusable, or the remaining percentage is below `minimum`.
 The last entry is always tried, even when it has a floor.
-The review step also tries the next entry after a usage-limit or quota error.
+The review step also tries the next entry after a usage-limit or quota error, or when the entry's account cannot serve because access was refused or it is unauthenticated.
+When no entry can serve, the review round fails naming every entry's reason.
 Other agent errors fail the review round.
 `env` overrides environment variables only for that entry's agent process.
 Model and effort are optional and inherit `agent_config` for that harness when empty.

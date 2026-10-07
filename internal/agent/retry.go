@@ -211,6 +211,23 @@ func classifyTransient(err error) (string, bool) {
 	return "", false
 }
 
+// IsReviewerUnusableError reports whether an agent error means the account
+// behind this chain link cannot serve: refused or unauthenticated. Adapters
+// surface subprocess stderr as plain errors, so no typed auth signal crosses
+// the agent boundary and the chain matches text.
+func IsReviewerUnusableError(err error) bool {
+	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	for _, needle := range []string{"organization has disabled", "authentication_error", "authentication required", "unauthenticated", "not authenticated", "not logged in", "invalid x-api-key", "invalid api key"} {
+		if strings.Contains(msg, needle) {
+			return true
+		}
+	}
+	return false
+}
+
 // IsUsageLimitError excludes canceled turns from reviewer fallback.
 func IsUsageLimitError(err error) bool {
 	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
