@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -234,9 +235,18 @@ func runReviewerCandidates(ctx context.Context, opts RunOpts, candidates []Revie
 			}
 		}
 		result, err := candidate.Agent.Run(ctx, opts)
-		if err != nil && IsUsageLimitError(err) && i < len(candidates)-1 {
-			skipped = append(skipped, reviewerTraceEntry{Entry: i, Reason: err.Error()})
-			continue
+		if err != nil && (IsUsageLimitError(err) || IsReviewerUnusableError(err)) {
+			if i < len(candidates)-1 {
+				skipped = append(skipped, reviewerTraceEntry{Entry: i, Reason: err.Error()})
+				continue
+			}
+		}
+		if err != nil && len(skipped) > 0 {
+			reasons := make([]string, 0, len(skipped))
+			for _, entry := range skipped {
+				reasons = append(reasons, entry.Reason)
+			}
+			err = fmt.Errorf("reviewer chain has no usable candidate: %s: %w", strings.Join(reasons, "; "), err)
 		}
 		if result != nil {
 			trace, _ := json.Marshal(reviewerTrace{Selected: i, Skipped: skipped})

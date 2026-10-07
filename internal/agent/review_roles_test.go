@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -134,6 +135,60 @@ func TestReviewerCandidatesSkipBelowFloorAndRecordTrace(t *testing.T) {
 	}
 	if trace.Selected != 2 || len(trace.Skipped) != 2 || trace.Skipped[0].Entry != 0 || trace.Skipped[1].Entry != 1 {
 		t.Fatalf("trace = %+v", trace)
+	}
+}
+
+func TestReviewerCandidatesSkipRefusedAccountAndRecordTrace(t *testing.T) {
+	quota := &roleRecorder{name: "codex", err: errors.New("quota exceeded")}
+	refused := &roleRecorder{name: "claude-pro", err: errors.New("pi exited: exit status 1: Your organization has disabled Claude subscription access for Claude Code \u00b7 Use an Anthropic API key instead, or ask your admin to enable access")}
+	last := &roleRecorder{name: "claude-max"}
+	role := RoundedRole{Candidates: []ReviewerCandidate{
+		{Agent: quota, Label: "Codex"},
+		{Agent: refused, Label: "Claude Pro"},
+		{Agent: last, Label: "Claude Max"},
+	}}
+	ag := WithReviewRoles(&roleRecorder{name: "default"}, ReviewRoles{Reviewer: role})
+	result, err := ag.Run(context.Background(), RunOpts{Purpose: "review"})
+	if err != nil || result.AgentIdentity != "Claude Max" || len(quota.calls) != 1 || len(refused.calls) != 1 || len(last.calls) != 1 {
+		t.Fatalf("result=%+v err=%v calls=%d/%d/%d", result, err, len(quota.calls), len(refused.calls), len(last.calls))
+	}
+	var trace reviewerTrace
+	if err := json.Unmarshal([]byte(result.ReviewerChainTrace), &trace); err != nil {
+		t.Fatalf("trace %q: %v", result.ReviewerChainTrace, err)
+	}
+	if trace.Selected != 2 || len(trace.Skipped) != 2 || trace.Skipped[0].Entry != 0 || trace.Skipped[1].Entry != 1 || !strings.Contains(trace.Skipped[1].Reason, "disabled Claude subscription access") {
+		t.Fatalf("trace = %+v", trace)
+	}
+}
+
+func TestReviewerCandidatesAllUnusableFailsWithEveryReason(t *testing.T) {
+	first := &roleRecorder{name: "codex", err: errors.New("quota exceeded")}
+	second := &roleRecorder{name: "claude-pro", err: errors.New("claude exited: exit status 1: provider authentication required")}
+	role := RoundedRole{Candidates: []ReviewerCandidate{
+		{Agent: first, Label: "Codex"},
+		{Agent: second, Label: "Claude Pro"},
+	}}
+	ag := WithReviewRoles(&roleRecorder{name: "default"}, ReviewRoles{Reviewer: role})
+	_, err := ag.Run(context.Background(), RunOpts{Purpose: "review"})
+	if err == nil || !strings.Contains(err.Error(), "quota exceeded") || !strings.Contains(err.Error(), "provider authentication required") {
+		t.Fatalf("err=%v, want every link's reason", err)
+	}
+	if len(first.calls) != 1 || len(second.calls) != 1 {
+		t.Fatalf("calls=%d/%d, want 1/1", len(first.calls), len(second.calls))
+	}
+}
+
+func TestReviewerCandidatesDoNotSkipOrdinaryErrors(t *testing.T) {
+	broken := &roleRecorder{name: "codex", err: errors.New("invalid response")}
+	next := &roleRecorder{name: "claude"}
+	role := RoundedRole{Candidates: []ReviewerCandidate{
+		{Agent: broken, Label: "Codex"},
+		{Agent: next, Label: "Claude"},
+	}}
+	ag := WithReviewRoles(&roleRecorder{name: "default"}, ReviewRoles{Reviewer: role})
+	_, err := ag.Run(context.Background(), RunOpts{Purpose: "review"})
+	if err == nil || len(next.calls) != 0 {
+		t.Fatalf("err=%v next calls=%d", err, len(next.calls))
 	}
 }
 

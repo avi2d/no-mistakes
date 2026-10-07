@@ -72,6 +72,53 @@ reviewer_chain:
 	}
 }
 
+func TestReviewerChainSkipsRefusedAccount(t *testing.T) {
+	dir := t.TempDir()
+	capture := filepath.Join(dir, "account")
+	bin := filepath.Join(dir, "pi")
+	const response = `{"type":"agent_end","messages":[{"role":"assistant","content":[{"type":"text","text":"ok"}]}]}`
+	const refusal = "Your organization has disabled Claude subscription access for Claude Code"
+	script := "#!/bin/sh\nif [ \"$REVIEWER_ACCOUNT\" = first ]; then\n  printf '%s\\n' '" + refusal + "' >&2\n  exit 1\nfi\nprintf '%s' \"$REVIEWER_ACCOUNT\" > " + shellQuoteForTest(capture) + "\ncat >/dev/null\nprintf '%s\\n' '" + response + "'\n"
+	if runtime.GOOS == "windows" {
+		bin += ".cmd"
+		script = "@echo off\r\nif \"%REVIEWER_ACCOUNT%\"==\"first\" echo " + refusal + " 1>&2\r\nif \"%REVIEWER_ACCOUNT%\"==\"first\" exit /b 1\r\n>\"" + capture + "\" echo %REVIEWER_ACCOUNT%\r\nmore > nul\r\necho " + response + "\r\n"
+	}
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	globalYAML := `agent: pi
+reviewer_chain:
+  - agent: pi
+    model: first
+    env: {REVIEWER_ACCOUNT: first}
+  - agent: pi
+    model: second
+    env: {REVIEWER_ACCOUNT: second}
+`
+	global, err := config.LoadGlobalFromBytes([]byte(globalYAML))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Merge(global, &config.RepoConfig{})
+	cfg.AgentPathOverride = map[string]string{"pi": bin}
+	ag, err := newPipelineAgent(context.Background(), cfg, t.TempDir(), fakeLookPath, runenv.Overlay{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ag.Close()
+	result, err := ag.Run(context.Background(), agent.RunOpts{Purpose: "review", Prompt: "review", CWD: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	account, err := os.ReadFile(capture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimRight(string(account), "\r\n") != "second" || !strings.Contains(result.ReviewerChainTrace, `"selected":1`) || !strings.Contains(result.ReviewerChainTrace, refusal) {
+		t.Fatalf("account=%q trace=%q", account, result.ReviewerChainTrace)
+	}
+}
+
 func TestPipelineReviewRolesUseIndependentPiProfiles(t *testing.T) {
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "pi")

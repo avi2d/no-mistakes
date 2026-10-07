@@ -32,6 +32,31 @@ func TestIsUsageLimitError(t *testing.T) {
 	}
 }
 
+func TestIsReviewerUnusableError(t *testing.T) {
+	for _, tt := range []struct {
+		message string
+		want    bool
+	}{
+		{"pi exited: exit status 1: Your organization has disabled Claude subscription access for Claude Code \u00b7 Use an Anthropic API key instead, or ask your admin to enable access", true},
+		{"pi exited: signal: killed: pi: provider authentication required", true},
+		{`claude exited: exit status 1: API Error: {"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}`, true},
+		{"claude: not authenticated, run claude login", true},
+		{"account is unauthenticated", true},
+		{"quota exceeded", false},
+		{"invalid response", false},
+		{"agent timed out after 30m", false},
+	} {
+		t.Run(tt.message, func(t *testing.T) {
+			if got := IsReviewerUnusableError(errors.New(tt.message)); got != tt.want {
+				t.Fatalf("IsReviewerUnusableError(%q) = %v, want %v", tt.message, got, tt.want)
+			}
+		})
+	}
+	if IsReviewerUnusableError(fmt.Errorf("organization has disabled access: %w", context.DeadlineExceeded)) {
+		t.Fatal("canceled unusable result qualified for chain skip")
+	}
+}
+
 func TestClassifyTransient_Positive(t *testing.T) {
 	cases := []struct {
 		name    string
