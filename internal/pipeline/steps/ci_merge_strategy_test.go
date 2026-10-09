@@ -268,7 +268,7 @@ func TestCIStep_RepairThatAmendsThePublishedHeadFollowsTheStrategy(t *testing.T)
 			gitCmd(t, f.dir, "commit", "--amend", "-m", "feature, amended with the fix")
 			amended := f.localHead(t)
 
-			repair, err := (&CIStep{}).commitRepair(f.sctx, "repair the failing check")
+			repair, err := (&CIStep{}).commitRepair(f.sctx, "repair the failing check", nil)
 			if tc.wantRefused {
 				if err == nil || !strings.Contains(err.Error(), "published head") {
 					t.Fatalf("err = %v, want the rewrite of the published head refused\nlog:\n%s", err, f.log())

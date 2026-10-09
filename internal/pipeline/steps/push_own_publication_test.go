@@ -72,7 +72,7 @@ func publishThenRebaseOverMovedMain(t *testing.T, afterPublish func(f *ciRebaseR
 	if _, err := stepGitRun(sctx, "-c", "core.editor=true", "rebase", "--continue"); err != nil {
 		t.Fatalf("resolve the conflict: %v", err)
 	}
-	repair, err := (&CIStep{}).commitRepair(sctx, "resolve merge conflict")
+	repair, err := (&CIStep{}).commitRepair(sctx, "resolve merge conflict", nil)
 	if err != nil {
 		t.Fatalf("CI repair failed: %v", err)
 	}

@@ -336,7 +336,9 @@ func TestReviewReplay_GateTagsWhatTheReviewerDidNotReport(t *testing.T) {
 	assertCarriedTags(t, 1, derefFindings(reviewStepResult(t, database, run.ID)), map[string]string{
 		"R1": "", "R2": "", "R3": "", "R4": "", "R5": "",
 	})
-	respondToReview(t, exec, types.ActionFix, "R2", "R3", "R4", "R5")
+	if _, err := exec.RespondWithOverrides(types.StepReview, types.ActionFix, []string{"R2", "R3", "R4", "R5"}, []string{"R1"}, nil, nil, ""); err != nil {
+		t.Fatalf("respond fix R2-R5 ignoring R1: %v", err)
+	}
 
 	if !waitForReviewRound(t, database, run.ID, 2, done) {
 		t.Fatal("round 2 did not park")
