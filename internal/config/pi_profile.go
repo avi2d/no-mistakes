@@ -11,9 +11,9 @@ import (
 
 // ResolvePiProfile resolves only opt-in requests. Native selection overrides
 // are ambiguous with a run pin and are refused, not silently given precedence.
-// Global agent, review_agents, and reviewer_chain must be Pi-only before a
-// mixed harness can be refused without superseding an active run. Trusted
-// default-branch agent selection is a separate pre-cancel check in the daemon.
+// Agent eligibility is intentionally deferred to the daemon's pre-cancel check:
+// only there is the freshly fetched trusted repository override available to
+// replace the global agent selection before the effective config is validated.
 func (c *GlobalConfig) ResolvePiProfile(request *agentcfg.PiProfile) (*agentcfg.PiProfile, error) {
 	if request == nil {
 		return nil, nil
@@ -21,9 +21,7 @@ func (c *GlobalConfig) ResolvePiProfile(request *agentcfg.PiProfile) (*agentcfg.
 	if err := request.ValidateRequest(); err != nil {
 		return nil, err
 	}
-	if err := validatePiProfileAgents(c.Agent, c.Agents, c.ReviewAgents, c.ReviewerChain); err != nil {
-		return nil, err
-	}
+
 	if slices.Contains(c.AgentArgsOverride["pi"], "--") {
 		return nil, fmt.Errorf("Pi run profile conflicts with '--' in agent_args_override.pi")
 	}

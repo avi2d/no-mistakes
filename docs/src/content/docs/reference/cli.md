@@ -136,7 +136,7 @@ no-mistakes axi run --intent "the user's goal" --closes 95 --closes owner/repo#1
 | `--skip`        | `string` | (none)  | Comma-separated pipeline steps to skip                                                               |
 | `--base-branch` | `string` | (none)  | Integration branch for this run only; overrides [`pr.base_branch`](/no-mistakes/reference/repo-config/#prbase_branch) |
 | `--no-publish-intent` | `bool` | `false` | Keep the generated `## Intent` section out of the PR body for this run; tighten-only, see below |
-| `--closes` | `string`, repeatable | (none) | GitHub issue the PR fully resolves (`95` or `owner/repo#95`); see [Closing issues](#closing-issues) |
+| `--closes` | `string`, repeatable | (none) | Issue the PR fully resolves (`95`, `owner/repo#95`, or a nested GitLab project path); see [Closing issues](#closing-issues) |
 | `--model` | `string` | (none) | Pi provider/model ID for an immutable [per-run profile](/no-mistakes/reference/global-config/#per-run-pi-profiles) |
 | `--effort` | `string` | (none) | Pi reasoning effort for that profile; omitted fields inherit `agent_config.pi` |
 | `--wait`        | `duration` | `8m`    | Maximum time for active-run lookup and run driving before the caller must reattach |
@@ -197,13 +197,13 @@ The same omit-to-reattach rule applies to `--model`/`--effort` against an active
 
 ### Closing issues
 
-`--closes` declares an issue the PR fully resolves, so merging the PR closes it through GitHub's native closing keywords. Repeat it for each issue. A value is a same-repository issue number (`--closes 95`) or a cross-repository reference (`--closes owner/repo#95`); anything else, including `#95`, is rejected before a run starts. References are deduplicated case-insensitively and rendered in a deterministic order, one `Closes` line each, in the PR body's `## Issues` section (see the [PR step](/no-mistakes/reference/pipeline-steps/#pr)).
+`--closes` declares an issue the PR fully resolves, so merging the PR closes it through the forge's native closing keywords. Repeat it for each issue. A value is a same-repository issue number (`--closes 95`) or a project-qualified reference (`--closes owner/repo#95`, or `--closes group/subgroup/repo#95` for a GitLab project nested under subgroups); anything else, including `#95`, is rejected before a run starts. References are deduplicated case-insensitively and rendered in a deterministic order, one `Closes` line each, in the PR body's `## Issues` section (see the [PR step](/no-mistakes/reference/pipeline-steps/#pr)).
 
-`--closes` is the only way to request closure. Without it, no-mistakes never adds or infers a closing reference from the intent, commit messages, branch name, or linked issues: a PR may be partial work, so use ordinary references in your own text for that. Text the pipeline writes into the PR body never carries a live closing keyword: a reference such as `Fixes #12` in the intent or a drafted narrative is published as ``Fixes `#12` `` in an inline code span, which GitHub ignores. PR titles and commit messages are not rewritten, so a squash merge can still close an issue named after a closing keyword there.
+`--closes` is the only way to request closure. Without it, no-mistakes never adds or infers a closing reference from the intent, commit messages, branch name, or linked issues: a PR may be partial work, so use ordinary references in your own text for that. The [PR step](/no-mistakes/reference/pipeline-steps/#pr) documents generated-text closure protection, author-preserved text, and the limits for custom GitLab patterns, PR titles, and commit messages.
 
 The references are persisted on the run and survive daemon restarts, fix rounds, rebases, and that run's PR-body refreshes; `no-mistakes rerun` inherits them, and its own `--closes` adds to them. They can also be passed on a plain gate push as repeated `-o no-mistakes.closes=<ref>` push options; a gate push without them starts a run with none, and its PR-body refresh drops the `## Issues` section. Reattaching with `--closes` adds references to the active run until its PR body has been composed; after that the request is refused with an explicit error rather than reported as applied. Before starting a run with `--closes`, `axi run` refuses a running daemon too old to honor it, and rejects `--closes` combined with `--skip pr` as a usage error; a run whose PR step is skipped any other way fails at that step instead (see the [PR step](/no-mistakes/reference/pipeline-steps/#pr)).
 
-`--closes` is supported on GitHub only; on another forge the PR step fails rather than publish a PR that silently closes nothing. GitHub closes the issue only when the PR merges into the repository's default branch and the issue is eligible for keyword closure; a PR merged into another branch does not close it.
+`--closes` is supported on providers that close issues from the pull request body: GitHub and GitLab. On another forge the PR step fails rather than publish a PR that silently closes nothing; a GitLab subgroup reference on a non-GitLab provider is refused the same way, since that forge would read it as a different repository's reference. The forge closes the issue only when the PR merges into the repository's default branch (and, on GitLab, unless automatic issue closing is disabled for the project); a PR merged into another branch does not close it.
 Ordinary reattachment accepts either the run's immutable submitted head or its current pipeline head, so pipeline-created fix commits do not detach an unchanged submitting worktree.
 When neither identity matches, `axi run` keeps the fresh-run path but refuses a gate push while `branch_sync` says the pipeline still owns the branch.
 That refusal returns the complete structured state and its `continue_active_run` or `recover_custody` next action instead of a raw Git non-fast-forward.
@@ -213,6 +213,7 @@ If the configured native agent or ACP runner is unavailable, the run fails befor
 With `--yes`, `axi run` treats both `action: auto-fix` and `action: ask-user` findings as standing consent for the pipeline to fix them by selecting every finding, then accepts the resulting fix review.
 Gates with no findings or only `action: no-op` findings are approved as-is, and each step is fixed at most once so unresolved findings do not loop forever.
 The [`protected_paths` refusal rules](/no-mistakes/reference/repo-config/#protected_paths) are an exception to this automatic handling.
+So is an open [review question](/no-mistakes/concepts/review-conversation/), which is settled by an answer rather than by a verdict, and a review question history that cannot be read end to end: `--yes` stands aside at both instead of selecting findings.
 So is a Test budget-cut gate that reports `test-agent-unvalidated-work`: approval is refused there, so `--yes` stops at it and leaves the choice between `--action fix` and `no-mistakes axi abort` to the operator (see [`test_agent_timeout`](/no-mistakes/reference/global-config/#test_agent_timeout)).
 Without `--yes`, an agent driving `axi run` should stop when a gate contains `action: ask-user` findings and relay each finding's ID, file, and full description to the user before responding.
 Review gates include a `note` field reminding agents that `auto_fix.review` defaults to `0`, so blocking and ask-user review findings park for a decision unless configuration explicitly opts back into review auto-fix.
@@ -275,20 +276,30 @@ Answer the current approval gate and continue until the next gate, CI-ready deci
 ```sh
 no-mistakes axi respond --action approve
 no-mistakes axi respond --action fix --findings F1,F2 --instructions "optional guidance"
+no-mistakes axi respond --action fix --findings F1,F2 --ignore F3
 no-mistakes axi respond --action fix --add-finding '{"description":"...","action":"auto-fix"}'
 no-mistakes axi respond --action skip
+no-mistakes axi respond --run <id> --action approve
 ```
 
 | Flag             | Type     | Default       | Description                                                          |
 | ---------------- | -------- | ------------- | -------------------------------------------------------------------- |
 | `--action`       | `string` | (none)        | `approve`, `fix`, or `skip`; required. A reviewer's open question is answered with [`axi answer`](#no-mistakes-axi-answer), not here |
+| `--run`          | `string` | current-branch active run | Answer the gate of this run ID from any directory, without resolving the current branch or worktree |
 | `--step`         | `string` | awaiting step | Step to respond to                                                   |
-| `--findings`     | `string` | (none)        | Comma-separated finding IDs for `--action fix`                       |
+| `--findings`     | `string` | (none)        | Comma-separated finding IDs to fix with `--action fix`               |
+| `--ignore`       | `string` | (none)        | Comma-separated finding IDs to decline with `--action fix`; see the accounting rules below |
 | `--instructions` | `string` | (none)        | Guidance applied to selected findings with `--action fix`            |
 | `--reason`       | `string` | (none)        | Operator's exception explanation for Test approval only              |
 | `--add-finding`  | `string` | (none)        | JSON finding object to add and fix                                   |
 | `-y`, `--yes`    | `bool`   | `false`       | Auto-resolve subsequent eligible gates until a decision point or outcome |
 | `--wait`         | `duration` | `8m`        | Maximum time for pre-drive reads and post-response driving before the caller must reattach |
+
+Declines are explicit. With `--action fix`, every finding the gate shows must appear in `--findings` or `--ignore`; a response that leaves one out is refused with the unaccounted IDs named and the gate stays parked, so a partial selection can never silently decline the findings it omitted. An ID in both lists, or an ID the gate does not show, is refused the same way. A finding a previous response for the same step already decided may be omitted to keep that decision, including when recovery parks the same round again. Naming a finding previously chosen to fix in `--ignore` is refused too, because reverting an applied fix is out of scope for a gate response. The validation fails closed on the state it reads: if the gate's findings or this step's earlier decisions cannot be read, the response is refused, the gate stays parked, and the refusal names what could not be read. See [Finding decision history](/no-mistakes/reference/pipeline-steps/#finding-decision-history) for how these decisions are stored and carried into later rounds.
+
+Finding IDs are trimmed before validation. An added finding with no ID, or an ID that collides with any gate finding, receives a fresh ID. Ignored findings and selections already recorded for a recovered round also reserve their IDs. See [Finding decision history](/no-mistakes/reference/pipeline-steps/#finding-decision-history) for how a fix response restores acknowledged work after recovery.
+
+Every successful fix response echoes what it recorded in a `recorded:` object: `fixed` (the findings selected, including `--add-finding` items under their normalized IDs), `ignored` (the findings explicitly declined), and `kept` (the gate findings omitted that a previous response for this step had already decided). A finding the restored decision dispatched is reported under `fixed`, not also under `kept`. Approve, skip, and abort emit no disposition echo. They are not decision-free: a nonempty gate they resolve is recorded as a decline round, which is what later rounds read as `user_chose_to_ignore`. `--yes` resolution is unchanged: it selects every current finding.
 
 For an explicitly authorized Test exception, use `no-mistakes axi respond --step test --action approve --reason "the operator's explanation"`.
 The reason is optional: approval without one remains effective, and a qualifying exception is reported with no operator reason supplied.
@@ -296,6 +307,8 @@ The step retains its findings and exit code, and the reason is durable local evi
 Revalidation, a new fix round, or skipping the step clears that current-step approval so a later result cannot inherit it.
 This is separate from the configured-command waiver and trusted repository opt-in used by [PR enforcement](/no-mistakes/reference/pipeline-steps/#pipeline-step-attestation); neither that policy nor approval authority changes.
 `--instructions` remains fix guidance, not an approval-reason input.
+
+Without `--run`, the response goes to the active run on the current branch, and `no active run to respond to` is the error when it has none. With `--run <id>`, the response goes to exactly that run, from any directory and without resolving a repository, branch, or worktree; every other flag behaves as it does in context. The call is refused with a nonzero exit when the ID names no run (`no run with id <id>`) or the run is not parked at a gate (`run <id> is not parked at a gate`), and it never answers a different run. [`axi status --run`](#no-mistakes-axi-status) stays inspection-only for bare commands and names `axi respond --run <id>` as the response command. An empty or whitespace-only `--run` value is refused with a nonzero exit and never selects the current branch's run. Every follow-up command a `--run` call prints carries `--run <id>`; a command with no `--run` form (`axi answer`, `axi run`, `axi sync`, `rerun`) is named as one that must run in the clone of that run.
 
 After the explicit response, `--yes` uses the same [auto-resolution behavior and exceptions as `axi run --yes`](#no-mistakes-axi-run).
 Each `axi respond` blocks until the next gate, CI-ready decision point, or final outcome, subject to the same default `--wait 8m` boundary as `axi run`. That boundary also covers its initial active-run and run-state reads plus event-subscription acknowledgement, so a caller can interrupt establishment as well as the later event wait.
@@ -353,7 +366,7 @@ no-mistakes axi status --run <id>
 When the resolved run is parked at an `awaiting_approval` or `fix_review` gate, its top-level `run:` or `other_branch_run:` object includes `awaiting_agent: parked <duration>` immediately after `status`.
 The field disappears after that run's gate is answered, on cancel, and on terminal outcomes; use it to distinguish a run waiting for the driving agent from one actively running, fixing, or watching CI.
 A pinned run also includes `pi_profile` with `model` and `effort`; see [per-run Pi profiles](/no-mistakes/reference/global-config/#per-run-pi-profiles).
-Status offers branch-scoped `axi respond` commands only for the current branch's implicitly resolved run. An explicitly selected gate stays inspection-only even when its branch matches, because a newer active run on that branch could receive the bare response command instead; the gate remains visible and its log commands retain `--run <id>`.
+Status offers branch-scoped `axi respond` commands only for the current branch's implicitly resolved run. An explicitly selected gate stays inspection-only even when its branch matches, because a newer active run on that branch could receive the bare response command instead; the gate remains visible, its log commands retain `--run <id>`, and it names `axi respond --run <id>` as the response command.
 When a repository has no configured lint command and Document performs the combined Document/Lint housekeeping invocation, the run object includes `shared_work` evidence naming its `document+lint housekeeping` scope and the duration attributed to Document; Lint's own duration remains the cached-result handoff time.
 When the resolved run has a `running` or `fixing` step, the run object includes `active_steps`.
 Each row reports the whole step's elapsed time as `active_for`, the displayed execution or fix round's elapsed time as `round_active_for`, the latest meaningful log or native-agent lifecycle activity, the native agent PID if one is currently running, and the current round such as `round 1`, `auto-fix 1/3`, or `fix 2`.
@@ -575,7 +588,7 @@ use rerun to bypass a gate.
 | ---- | ---- | ------- | ----------- |
 | `--intent` | `string` | (none) | Explicit intent overriding inherited intent or fresh inference |
 | `--no-publish-intent` | `bool` | `false` | Keep the generated `## Intent` section out of the PR body for this rerun (adds to the inherited decision; tighten-only) |
-| `--closes` | `string`, repeatable | (none) | GitHub issue the PR fully resolves; adds to the [closing references](#closing-issues) inherited from the selected prior run |
+| `--closes` | `string`, repeatable | (none) | Issue the PR fully resolves; adds to the [closing references](#closing-issues) inherited from the selected prior run |
 | `--model` | `string` | (none) | Pi provider/model ID for an immutable [per-run profile](/no-mistakes/reference/global-config/#per-run-pi-profiles) |
 | `--effort` | `string` | (none) | Pi reasoning effort for that profile; omitted fields inherit `agent_config.pi` |
 
@@ -652,10 +665,10 @@ no-mistakes stats
 Displays total changes, rescued changes, rescue rate, reported and fixed mistakes, fixes by pipeline step, and the top repos by rescue activity.
 
 Use `--agents` for local, per-purpose agent performance aggregates: duration and the subprocess-vs-model time split, session mode, errors, the token totals (input, output, cache-read, cache-creation, fresh input, reasoning), and the model round-trip and tool-category activity histogram, with a `METRICS` coverage count that tells a real zero apart from missing instrumentation.
-Use `--run <id>` to inspect the individual agent invocations for one run - including each invocation's per-round token deltas next to the raw counters (cumulative across a resumed session for codex; per-invocation for pi), tool-category breakdown, workload size, finding count, and fallback reason - plus the total time parked at approval gates; it implies `--agents`.
+Use `--run <id>` to inspect the individual agent invocations for one run - including each invocation's per-round token deltas next to the adapter counters, tool-category breakdown, workload size, finding count, and fallback reason - plus the total time parked at approval gates; it implies `--agents`.
 Pinned runs also print the requested [Pi profile](/no-mistakes/reference/global-config/#per-run-pi-profiles) above that table; `MODEL` there is served evidence, not the pin.
 The combined Document/Lint invocation is labeled `housekeeping (document+lint)` and attributed to `document+lint`, making its shared duration and tokens explicit without adding a second agent call.
-Nullable fields an adapter did not report, including raw input, output, and cache-read token counts, render as `-` (unknown), which is distinct from a recorded `0`.
+See [local telemetry](/no-mistakes/reference/environment/#what-stays-local-and-what-leaves-the-machine) for token definitions and missing-value semantics.
 A `--agents` token total is all-or-nothing: it reads `-` for the whole purpose unless every invocation in it reported that field, so one failed round that reported no usage leaves the group's total unknown instead of silently under-counted.
 
 ```sh
@@ -687,6 +700,7 @@ Checks:
 - ACP alias default binaries: `cursor-agent` plus `acpx` for `cursor`, and `devin` plus `acpx` for `devin`
 - Effective global agent configuration, reported as `gate validation`; an unavailable configured runner is a failed check because the gate cannot validate without it
 - Every configured [`forge_profiles`](/no-mistakes/reference/global-config/#forge_profiles) entry, reported as `forge <host>`: the profile resolves and validates, its provider CLI is installed, and that CLI is authenticated for the profile's host
+- Every configured [`provider_plugins`](/no-mistakes/reference/global-config/#provider_plugins) entry, reported as `plugin <name>`: that its command executable resolves
 
 Uses indicators: `✓` (available), `–` (not found, optional), `✗` (problem detected).
 
@@ -694,7 +708,7 @@ The standalone runner rows inspect default binary names; each ACP alias row (`cu
 The [Global Config Reference](/no-mistakes/reference/global-config/) owns ACP gate-validation availability and probing semantics.
 Each validation run performs the authoritative agent resolution again after applying any trusted repository-level override.
 
-`doctor` checks `gh` and `az` availability. [Provider Integration](/no-mistakes/guides/provider-integration/) owns the separate setup checks for GitLab, Forgejo, Bitbucket Cloud, Gitea, and the Azure DevOps extension and PAT.
+`doctor` checks `gh` and `az` availability, and that each configured [provider plugin](/no-mistakes/reference/global-config/#provider_plugins) command resolves (it does not run the plugin's handshake). [Provider Integration](/no-mistakes/guides/provider-integration/) owns the separate setup checks for GitLab, Forgejo, Bitbucket Cloud, Gitea, and the Azure DevOps extension and PAT.
 
 `tea` stays docs-only like `glab`, `forgejo-axi`, and Bitbucket's env vars, rather than an active `doctor` check like `gh`/`az`: Gitea is almost always self-hosted, so a bare "`tea` not found" row would be a near-universal, low-value warning for the vast majority of users who have no Gitea instance at all.
 
@@ -716,6 +730,7 @@ Version discovery reads a `channels.json` manifest from the GitHub release-asset
 If the daemon is running from a different executable path, update still prompts before replacing it; pass `-y`/`--yes` to answer that prompt non-interactively.
 If the daemon executable path cannot be determined, the update aborts before replacement.
 If the daemon does not come back cleanly after a successful replacement, the command reports that failure.
+When the running binary resolves into `/nix/store`, update prints that self-update is unavailable for Nix installs and exits without a version check; upgrade through Nix instead (see [Installation](/no-mistakes/start-here/installation/#nix)).
 On macOS, removes the quarantine extended attribute.
 [Daemon & Worktrees](/no-mistakes/concepts/daemon/#starting-and-stopping)
 owns the active-run guard, the scope of `--force` and `--yes`, and recursive
@@ -723,7 +738,7 @@ validation-step containment.
 
 Because `update` installs the latest official release binary, the replacement binary includes the default self-hosted telemetry host and website ID. Disable telemetry with `NO_MISTAKES_TELEMETRY=0`, or override the host and website ID with `NO_MISTAKES_UMAMI_HOST` and `NO_MISTAKES_UMAMI_WEBSITE_ID`.
 
-Background update checks run automatically on each CLI invocation (except `update` itself and version queries `--version` / `-v`, which stay side-effect-free). If a newer version is available, a notification is printed to stderr. Suppressed for dev builds or when `NO_MISTAKES_NO_UPDATE_CHECK=1` is set.
+Background update checks run automatically on each CLI invocation (except `update` itself and version queries `--version` / `-v`, which stay side-effect-free). If a newer version is available, a notification is printed to stderr. Suppressed for dev builds, for Nix-store installs, or when `NO_MISTAKES_NO_UPDATE_CHECK=1` is set.
 
 ## no-mistakes daemon start
 
@@ -749,6 +764,20 @@ owns the active-run guard, the scope of `--force`, and recursive
 validation-step containment.
 
 This does not remove the managed service. A later `no-mistakes`, `no-mistakes daemon start`, `init`, `attach`, `rerun`, or `update` can start the daemon again through the same service manager when available, or as a detached daemon otherwise.
+On macOS, the retained LaunchAgent starts the daemon again at the next login; the stop output names its plist and points to `daemon uninstall`.
+
+## no-mistakes daemon uninstall
+
+Stop and remove the macOS LaunchAgent for the current `NM_HOME` instance.
+
+```sh
+no-mistakes daemon uninstall
+no-mistakes daemon uninstall --force
+```
+
+Removes the LaunchAgent plist and names it in the output. If no LaunchAgent is installed, it succeeds with a message saying so. On other platforms it changes nothing, prints that no service removal is available there, and exits 0. It preserves application data and does not stop a detached daemon when no managed service exists. A later `daemon start` or a command that ensures the daemon is running can install the service again.
+
+[Daemon & Worktrees](/no-mistakes/concepts/daemon/#starting-and-stopping) owns the active-run guard, the scope of `--force`, and recursive validation-step containment.
 
 ## no-mistakes daemon restart
 

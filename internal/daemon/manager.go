@@ -177,6 +177,9 @@ func (m *RunManager) prepareRecoveredRun(ctx context.Context, run *db.Run) (*rec
 		return nil, err
 	}
 	forgeCtx, err := forgecontext.Resolve(ctx, cfg.ForgeProfiles, repo.UpstreamURL, repo.ForkURL)
+	if err == nil {
+		err = forgecontext.RefuseProviderPluginOverlap(ctx, forgeCtx, cfg.ProviderPlugins, repo.UpstreamURL)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("resolve forge profile: %w", err)
 	}
@@ -251,6 +254,9 @@ func (m *RunManager) loadRecoveredConfig(ctx context.Context, run *db.Run, repo 
 	allowRepoCommands := trustedRepoCfg != nil && trustedRepoCfg.AllowRepoCommands
 	effectiveRepoCfg := config.EffectiveRepoConfig(repoCfg, trustedRepoCfg, allowRepoCommands)
 	cfg := config.MergeForRemote(globalCfg, effectiveRepoCfg, repo.UpstreamURL)
+	if err := cfg.Review.ValidatePathInstructionsBudget(); err != nil {
+		return nil, err
+	}
 	// Gates are read back from the run, never re-resolved. Everything else here
 	// is deliberately re-read from the live default branch, but a gate decides
 	// which steps the run HAS: the default branch may have gained or lost one
@@ -887,28 +893,35 @@ func loadTrustedRepoConfig(ctx context.Context, wtDir, trustedSHA, runID string)
 //   - the pinned commit or tree is not readable (missing object / partial fetch),
 //   - the trusted .no-mistakes.yaml is present but unreadable or unparseable.
 func assertGateTrustedConfigReadable(ctx context.Context, wtDir, defaultBranch, trustedSHA string) error {
+	return assertTrustedConfigReadable(ctx, wtDir, defaultBranch, trustedSHA, "disable_project_settings")
+}
+
+// assertTrustedConfigReadable owns the fail-closed read of the freshly fetched
+// default-branch config. Callers name the policy they are evaluating so the
+// same trust proof retains an actionable diagnostic at each consumer seam.
+func assertTrustedConfigReadable(ctx context.Context, wtDir, defaultBranch, trustedSHA, policy string) error {
 	if defaultBranch == "" {
-		return fmt.Errorf("cannot evaluate disable_project_settings: repository has no known default branch to read trusted config from")
+		return fmt.Errorf("cannot evaluate %s: repository has no known default branch to read trusted config from", policy)
 	}
 	if trustedSHA == "" {
-		return fmt.Errorf("cannot evaluate disable_project_settings: failed to fetch or resolve trusted default branch %q (refusing to run without reading the trusted config)", defaultBranch)
+		return fmt.Errorf("cannot evaluate %s: failed to fetch or resolve trusted default branch %q (refusing to run without reading the trusted config)", policy, defaultBranch)
 	}
 	if _, err := git.Run(ctx, wtDir, "rev-parse", "-q", "--verify", trustedSHA+"^{commit}"); err != nil {
-		return fmt.Errorf("cannot evaluate disable_project_settings: trusted default-branch commit %s is not readable: %w", trustedSHA, err)
+		return fmt.Errorf("cannot evaluate %s: trusted default-branch commit %s is not readable: %w", policy, trustedSHA, err)
 	}
 	entry, err := git.Run(ctx, wtDir, "ls-tree", trustedSHA, "--", ".no-mistakes.yaml")
 	if err != nil {
-		return fmt.Errorf("cannot evaluate disable_project_settings: trusted default-branch tree at %s is not readable: %w", trustedSHA, err)
+		return fmt.Errorf("cannot evaluate %s: trusted default-branch tree at %s is not readable: %w", policy, trustedSHA, err)
 	}
 	if entry == "" {
 		return nil
 	}
 	content, err := git.ShowFile(ctx, wtDir, trustedSHA, ".no-mistakes.yaml")
 	if err != nil {
-		return fmt.Errorf("cannot evaluate disable_project_settings: trusted .no-mistakes.yaml at %s is present but not readable: %w", trustedSHA, err)
+		return fmt.Errorf("cannot evaluate %s: trusted .no-mistakes.yaml at %s is present but not readable: %w", policy, trustedSHA, err)
 	}
 	if _, err := config.LoadRepoFromBytes([]byte(content)); err != nil {
-		return fmt.Errorf("cannot evaluate disable_project_settings: trusted .no-mistakes.yaml at %s is present but unparseable: %w", trustedSHA, err)
+		return fmt.Errorf("cannot evaluate %s: trusted .no-mistakes.yaml at %s is present but unparseable: %w", policy, trustedSHA, err)
 	}
 	return nil
 }
@@ -1381,32 +1394,51 @@ func fetchTrustedDefaultBranchSHA(ctx context.Context, gateDir string, repo *db.
 // selection (and, when allow_repo_commands is set, the pushed copy) from the
 // gate and runs the same check ValidatePiProfileAgents will run after merge.
 // A trusted default-branch Claude or mixed fallback list must fail here, not
-// after cancelActiveRuns has already stopped a healthy validation.
+// after cancelActiveRuns has already stopped a healthy validation. This is also
+// the first point where a trusted repository Pi override can replace a global
+// auto or non-Pi selection, so profile resolution must not reject it earlier.
 func (m *RunManager) validatePiProfileAgentsBeforeCancel(ctx context.Context, repo *db.Repo, headSHA string, globalCfg *config.GlobalConfig) error {
 	gateDir := m.paths.RepoDir(repo.ID)
 	trustedSHA, err := fetchTrustedDefaultBranchSHA(ctx, gateDir, repo)
 	if err != nil {
 		return err
 	}
+	if err := assertTrustedConfigReadable(ctx, gateDir, repo.DefaultBranch, trustedSHA, "Pi run profile"); err != nil {
+		return err
+	}
 	trustedRepoCfg := loadTrustedRepoConfig(ctx, gateDir, trustedSHA, "")
+	pushedRepoCfg, err := loadRepoConfigAtSHA(ctx, gateDir, headSHA)
+	if err != nil {
+		return err
+	}
 	allowRepoCommands := trustedRepoCfg != nil && trustedRepoCfg.AllowRepoCommands
-	effective := config.EffectiveRepoConfig(loadRepoConfigAtSHA(ctx, gateDir, headSHA), trustedRepoCfg, allowRepoCommands)
+	effective := config.EffectiveRepoConfig(pushedRepoCfg, trustedRepoCfg, allowRepoCommands)
 	return config.MergeForRemote(globalCfg, effective, repo.UpstreamURL).ValidatePiProfileAgents()
 }
 
-func loadRepoConfigAtSHA(ctx context.Context, dir, sha string) *config.RepoConfig {
+func loadRepoConfigAtSHA(ctx context.Context, dir, sha string) (*config.RepoConfig, error) {
 	if sha == "" {
-		return &config.RepoConfig{}
+		return nil, fmt.Errorf("cannot evaluate Pi run profile: submitted commit is missing")
+	}
+	if _, err := git.Run(ctx, dir, "rev-parse", "-q", "--verify", sha+"^{commit}"); err != nil {
+		return nil, fmt.Errorf("cannot evaluate Pi run profile: submitted commit %s is not readable: %w", sha, err)
+	}
+	entry, err := git.Run(ctx, dir, "ls-tree", sha, "--", ".no-mistakes.yaml")
+	if err != nil {
+		return nil, fmt.Errorf("cannot evaluate Pi run profile: submitted tree at %s is not readable: %w", sha, err)
+	}
+	if entry == "" {
+		return &config.RepoConfig{}, nil
 	}
 	content, err := git.ShowFile(ctx, dir, sha, ".no-mistakes.yaml")
 	if err != nil {
-		return &config.RepoConfig{}
+		return nil, fmt.Errorf("cannot evaluate Pi run profile: submitted .no-mistakes.yaml at %s is present but not readable: %w", sha, err)
 	}
 	cfg, err := config.LoadRepoFromBytes([]byte(content))
 	if err != nil {
-		return &config.RepoConfig{}
+		return nil, fmt.Errorf("cannot evaluate Pi run profile: submitted .no-mistakes.yaml at %s is present but unparseable: %w", sha, err)
 	}
-	return cfg
+	return cfg, nil
 }
 
 // startRun creates a run, sets up a worktree, and launches pipeline execution.
@@ -1464,9 +1496,9 @@ func (m *RunManager) startRunWithIntentSourceLocked(ctx context.Context, repo *d
 
 	// Resolve before cancellation, row creation or any pipeline work. A bad
 	// dispatch request must not supersede a healthy active validation.
-	// ResolvePiProfile checks the global agent list; trusted default-branch
-	// agent selection is checked next because it can still replace that list
-	// with Claude or mixed fallbacks after merge.
+	// ResolvePiProfile pins model/effort from global-only defaults. Agent
+	// eligibility is checked next against the effective freshly fetched trusted
+	// repository selection, which may replace the global agent or fallback list.
 	//
 	// The global config also decides the caller-side omit-intent default,
 	// which is stamped on the row at creation so recovery and reruns read the
@@ -1682,6 +1714,11 @@ func (m *RunManager) startRunWithIntentSourceLocked(ctx context.Context, repo *d
 		slog.Info("repo commands/agent loaded from default branch, not pushed branch", "run_id", run.ID, "branch", branch, "default_branch", repo.DefaultBranch)
 	}
 	cfg := config.MergeForRemote(globalCfg, effectiveRepoCfg, repo.UpstreamURL)
+	if err := cfg.Review.ValidatePathInstructionsBudget(); err != nil {
+		m.db.UpdateRunError(run.ID, err.Error())
+		trackStartFailure("review_path_instructions_budget")
+		return "", err
+	}
 	if run.PiProfile != nil {
 		if err := cfg.ValidatePiProfileAgents(); err != nil {
 			m.db.UpdateRunError(run.ID, err.Error())
@@ -1706,6 +1743,9 @@ func (m *RunManager) startRunWithIntentSourceLocked(ctx context.Context, repo *d
 		}
 	}
 	forgeCtx, err := forgecontext.Resolve(ctx, cfg.ForgeProfiles, repo.UpstreamURL, repo.ForkURL)
+	if err == nil {
+		err = forgecontext.RefuseProviderPluginOverlap(ctx, forgeCtx, cfg.ProviderPlugins, repo.UpstreamURL)
+	}
 	if err != nil {
 		m.db.UpdateRunError(run.ID, fmt.Sprintf("resolve forge profile: %s", err))
 		trackStartFailure("resolve_forge_profile")
@@ -2041,21 +2081,23 @@ func telemetryFailedStepName(database *db.DB, runID string) string {
 
 // HandleRespond routes a user approval action to the executor for the given run.
 func (m *RunManager) HandleRespond(runID string, step types.StepName, action types.ApprovalAction, findingIDs []string) error {
-	return m.HandleRespondWithOverrides(runID, step, action, findingIDs, nil, nil, "")
+	_, err := m.HandleRespondWithOverrides(runID, step, action, findingIDs, nil, nil, nil, "")
+	return err
 }
 
-// HandleRespondWithOverrides is like HandleRespond but also forwards user
-// instructions and user-authored findings to the executor.
-func (m *RunManager) HandleRespondWithOverrides(runID string, step types.StepName, action types.ApprovalAction, findingIDs []string, instructions map[string]string, addedFindings []types.Finding, approvalReason string) error {
+// HandleRespondWithOverrides is like HandleRespond but also forwards explicit
+// declines, user instructions, and user-authored findings to the executor, and
+// returns the dispositions the response recorded.
+func (m *RunManager) HandleRespondWithOverrides(runID string, step types.StepName, action types.ApprovalAction, findingIDs, ignoreFindingIDs []string, instructions map[string]string, addedFindings []types.Finding, approvalReason string) (pipeline.RespondDispositions, error) {
 	m.mu.Lock()
 	exec, ok := m.executors[runID]
 	m.mu.Unlock()
 
 	if !ok {
-		return fmt.Errorf("no active executor for run %s", runID)
+		return pipeline.RespondDispositions{}, fmt.Errorf("no active executor for run %s", runID)
 	}
 
-	return exec.RespondWithOverrides(step, action, findingIDs, instructions, addedFindings, approvalReason)
+	return exec.RespondWithOverrides(step, action, findingIDs, ignoreFindingIDs, instructions, addedFindings, approvalReason)
 }
 
 // HandleAnswerReviewQuestion records one operator answer to a question the
