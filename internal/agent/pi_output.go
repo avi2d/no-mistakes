@@ -91,6 +91,9 @@ func (a *piAgent) structuredOutputPath(ctx context.Context, opts RunOpts) (bool,
 			a.output.version = fields[0]
 		}
 	}
+	if piBridgedProvider(a.extraArgs) {
+		return false, "claude-bridge serves the model out of process and waits on the terminating tool response"
+	}
 	if flag := piToolRestrictionArg(a.extraArgs); flag != "" {
 		return false, "configured " + flag + " keeps the output tool from the model"
 	}
@@ -101,6 +104,46 @@ func (a *piAgent) structuredOutputPath(ctx context.Context, opts RunOpts) (bool,
 		return false, "provider/model cannot take strict JSON-schema tools"
 	}
 	return true, ""
+}
+
+const piBridgeProvider = "claude-bridge"
+
+// piBridgedProvider reports whether the invocation addresses a model the
+// bridge serves out of process. The output tool answers with terminate:true,
+// which ends Pi's turn without sending the result back to the provider; a
+// bridged model parks an MCP handler on that response, so the tool records
+// its output and neither side ever exits.
+func piBridgedProvider(args []string) bool {
+	if provider, ok := piFlagValue(args, "--provider"); ok {
+		return provider == piBridgeProvider
+	}
+	if model, ok := piFlagValue(args, "--model"); ok {
+		provider, _, _ := strings.Cut(model, "/")
+		return provider == piBridgeProvider
+	}
+	return false
+}
+
+// piFlagValue returns the value of the first --flag in args, in either
+// --flag value or --flag=value form, skipping the values other flags take.
+func piFlagValue(args []string, flag string) (string, bool) {
+	for i := 0; i < len(args); i++ {
+		name, value, inline := strings.Cut(args[i], "=")
+		if name != flag {
+			if piArgTakesValue(args[i]) {
+				i++
+			}
+			continue
+		}
+		if inline {
+			return value, true
+		}
+		if i+1 >= len(args) {
+			return "", true
+		}
+		return args[i+1], true
+	}
+	return "", false
 }
 
 // piToolRestrictionArg returns the configured flag that replaces Pi's tool
