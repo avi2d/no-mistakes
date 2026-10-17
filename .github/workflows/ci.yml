@@ -61,9 +61,11 @@ jobs:
       matrix:
         include:
           - shard: macos-1
-            packages: ./internal/pipeline/steps/... ./internal/cli ./internal/scm/forgejo ./internal/scm/gitlab ./internal/db
+            packages: ./internal/pipeline/steps/... ./internal/scm/gitlab ./internal/db
           - shard: macos-2
             exclude: '/internal/(pipeline/steps(/.*)?|cli|scm/forgejo|scm/gitlab|db)$'
+          - shard: macos-3
+            packages: ./internal/cli ./internal/scm/forgejo
     runs-on: macos-latest
     timeout-minutes: 40
     steps:
@@ -257,5 +259,8 @@ jobs:
       # no separate build step is needed. Linux-only for now: opencode's
       # ephemeral HTTP server picks up unused ports via :0, which is
       # fine on Linux runners but flakes on Windows agent harnesses.
+      # Four journeys overlap on the hosted runner; local runs keep the default 2.
       - name: End-to-end suite
+        env:
+          NM_E2E_DAEMON_MAX: 4
         run: make e2e
