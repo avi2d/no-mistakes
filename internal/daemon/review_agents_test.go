@@ -54,7 +54,7 @@ reviewer_chain:
 	}
 	cfg := config.Merge(global, &config.RepoConfig{})
 	cfg.AgentPathOverride = map[string]string{"pi": bin}
-	ag, err := newPipelineAgent(context.Background(), cfg, t.TempDir(), fakeLookPath, runenv.Overlay{})
+	ag, _, err := newPipelineAgent(context.Background(), cfg, t.TempDir(), fakeLookPath, runenv.Overlay{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +101,7 @@ reviewer_chain:
 	}
 	cfg := config.Merge(global, &config.RepoConfig{})
 	cfg.AgentPathOverride = map[string]string{"pi": bin}
-	ag, err := newPipelineAgent(context.Background(), cfg, t.TempDir(), fakeLookPath, runenv.Overlay{})
+	ag, _, err := newPipelineAgent(context.Background(), cfg, t.TempDir(), fakeLookPath, runenv.Overlay{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +144,7 @@ review_agents:
 	cfg := config.Merge(global, &config.RepoConfig{})
 	cfg.AgentPathOverride = map[string]string{"pi": bin}
 	cfg.DisableProjectSettings = true
-	ag, err := newPipelineAgent(context.Background(), cfg, t.TempDir(), fakeLookPath, runenv.Overlay{})
+	ag, _, err := newPipelineAgent(context.Background(), cfg, t.TempDir(), fakeLookPath, runenv.Overlay{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +174,7 @@ review_agents:
 func TestPipelineReviewRoleFailsClosed(t *testing.T) {
 	cfg := &config.Config{Agent: types.AgentPi, DisableProjectSettings: true,
 		ReviewAgents: map[string]config.ReviewAgent{"reviewer": {Agent: types.AgentAntigravity}}}
-	_, err := newPipelineAgent(context.Background(), cfg, t.TempDir(), fakeLookPath, runenv.Overlay{})
+	_, _, err := newPipelineAgent(context.Background(), cfg, t.TempDir(), fakeLookPath, runenv.Overlay{}, nil)
 	if err == nil || !strings.Contains(err.Error(), "review_agents.reviewer") || !strings.Contains(err.Error(), "does not neutralize") {
 		t.Fatalf("unsafe reviewer error = %v", err)
 	}
@@ -302,7 +302,7 @@ review_agents:
 	cfg := config.Merge(global, &config.RepoConfig{})
 	cfg.AgentPathOverride = map[string]string{"pi": bin}
 	cfg.DisableProjectSettings = true
-	ag, err := newPipelineAgent(context.Background(), cfg, t.TempDir(), fakeLookPath, runenv.Overlay{})
+	ag, _, err := newPipelineAgent(context.Background(), cfg, t.TempDir(), fakeLookPath, runenv.Overlay{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
