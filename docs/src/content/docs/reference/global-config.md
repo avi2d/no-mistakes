@@ -86,6 +86,8 @@ ci:
   rerun_transient: 0
   revalidate_repairs: false
   review_bot_comments: on_failure # or: always
+  rebase_behind: false
+  carry_review_on_replay: false
 
 rebase:
   strategy: rebase # or: merge
@@ -115,6 +117,7 @@ test:
     attach_media: true
     dir: .no-mistakes/evidence
     branch: no-mistakes/evidence
+    commit_message: "no-mistakes: evidence for {{.Branch}} (run {{.RunID}})"
     retention: 336h
     max_runs: 200
 
@@ -126,6 +129,8 @@ providers:
   bitbucket:
     draft_pull_requests: false
   azuredevops:
+    draft_pull_requests: false
+  origin:
     draft_pull_requests: false
 ```
 
@@ -271,12 +276,15 @@ How each field maps:
 | `grok`            | `--model`                                     | `--reasoning-effort`              | whatever the selected reasoning model accepts       |
 | `copilot`         | `--model`                                     | `--effort`                        | `minimal`, `low`, `medium`, `high`, `xhigh`, `max`  |
 | `pi`              | `--model`                                     | `--thinking`                      | `minimal`, `low`, `medium`, `high`, `xhigh`, `max`  |
-| `opencode`        | session-message `model` (needs `provider/model`) | session-message `variant`      | provider-specific                                   |
+| `opencode`        | session `model` (needs `provider/model`)         | session model `variant`        | provider-specific                                   |
 | `cursor`, `devin`, `acp:*` | `acpx --model`                       | not expressible                   | -                                                   |
 | `rovodev`         | not expressible                               | not expressible                   | -                                                   |
 | `antigravity`     | not expressible                               | not expressible                   | -                                                   |
 
-`opencode` needs the `provider/model` form (for example `openai/gpt-5`) because its session API takes the provider and the model as separate fields; a bare model name is refused at config load rather than dropped. Both of its knobs travel in the session message, not in the launch command, because `opencode serve` exits with usage on an unknown flag.
+`opencode` needs the `provider/model` form (for example `openai/gpt-5`) because its session API takes the provider and the model as separate fields; a bare model name is refused at config load rather than dropped.
+OpenCode 2 receives both knobs in the model reference when the session is created; an effort-only profile resolves the location's default model first.
+OpenCode 1 receives them in the session message.
+Neither version receives model flags in the launch command, because `opencode serve` rejects them.
 
 `rovodev` and `antigravity` have no mechanism no-mistakes can set - `acli rovodev serve` plus its REST session API take no model parameter, and the `agy` CLI parses flags strictly - so `agent_config` for them is a config error rather than a request that quietly does nothing. Reach for [`agent_args_override`](#agent_args_override) there if your build of the CLI accepts a flag. Reasoning effort is likewise unavailable for ACP targets: no-mistakes drives them through `acpx`, which exposes `--model` but no effort surface. acpx also accepts only the model ids a target advertises over ACP; for `devin` that is a subset of `devin models list`, and [`acp_registry_overrides`](#acp_registry_overrides) is the escape hatch for the rest.
 
@@ -584,7 +592,7 @@ Plugins run through the same environment as built-in provider CLIs (the daemon's
 
 ### ci_timeout
 
-How long the CI step monitors an open PR, including provider CI status and PR mergeability (on GitHub, GitLab, Forgejo, Azure DevOps, or a provider plugin declaring `mergeable_state`), before giving up.
+How long the CI step monitors an open PR, including provider CI status and PR mergeability (on GitHub, GitLab, Forgejo, Azure DevOps, Cursor Origin, or a provider plugin declaring `mergeable_state`), before giving up.
 
 |         |                                                 |
 | ------- | ----------------------------------------------- |
@@ -595,7 +603,8 @@ Accepts any Go `time.ParseDuration` string: `30m`, `2h`, `4h30m`, etc.
 
 This is an idle timeout, not an absolute deadline: every time the base branch advances, the monitor re-arms it.
 So an actively-updated green PR keeps its monitor no matter how long it stays open.
-If it later develops an actual merge conflict (on GitHub, GitLab, Forgejo, Azure DevOps, or a provider plugin declaring `mergeable_state`), the CI auto-fix path rebases it, revalidates from Review because rebasing cannot prove continuity with the reviewed head, and publishes it through Push, while a clean behind PR needs no command.
+If it later develops an actual merge conflict (on GitHub, GitLab, Forgejo, Azure DevOps, Cursor Origin, or a provider plugin declaring `mergeable_state`), the CI auto-fix path rebases it, revalidates from Review because rebasing cannot prove continuity with the reviewed head, and publishes it through Push.
+A clean behind PR needs no command, except on GitHub when the base requires up-to-date branches (`mergeStateStatus: BEHIND`): that PR waits for a human to bring it up to date, unless [`ci.rebase_behind`](#cirebase_behind) is on.
 A genuinely idle/abandoned PR still parks at an approval gate after the timeout elapses.
 While that CI gate is parked, the daemon continues bounded read-only PR-state checks.
 If the PR is merged or closed externally, the stale gate completes automatically; an open, unknown, or temporarily unreachable PR remains parked for a user decision.
@@ -622,6 +631,26 @@ AXI renders the quiet signal in the `active_steps` table as part of `last_activi
 When the silent party is an agent invocation, the daemon also records a stall on the step: the step log gets one notice such as `pi has produced no output for 10m0s`, the run object lists the agent under `stalled_agents` with how long it has been silent, and a driving `axi run` or `axi respond` prints the notice to stderr.
 The stall clears as soon as the agent produces output again or its invocation ends.
 For older active runs that do not yet have activity rows, AXI falls back to the step log file's modification time.
+
+### agent_crash_retries
+
+Opt-in automatic retries of an agent-crashed Review, Test, Document or Lint step in the **same live run**. Completed steps stay completed. Set `agent_crash_retries: 1` to allow one additional attempt; the default `0` preserves the existing failure behavior.
+
+|         |                  |
+| ------- | ---------------- |
+| Type    | integer          |
+| Range   | `0`–`3`          |
+| Default | `0` (disabled)   |
+
+Agent process exits and agent invocation timeout cuts qualify, never a real finding, test verdict, configured-command failure, Git error, or cancellation. Typed terminal provider signals, including authentication/access-denial errors and quota exhaustion, stay terminal. Adapters that give no typed terminal signal (Pi, Grok) can have an auth or quota failure retried up to `agent_crash_retries` times before failing with the original diagnostic. Existing adapter and analyzer formatting retries run first; exhausted adapter-transient failures and Claude's native structured-output retry exhaustion stay terminal. Each additional attempt must still produce a valid result; a crash is never a pass.
+
+Eligible validation steps also pin their freshly resolved diff base across the live run: a later fetch that changes that base fails before invoking another agent, even if the run's recorded previous-push SHA did not change. A full restart at Review establishes a new base pin.
+
+Before retrying, the executor proves that the run and worktree head SHA, recorded base SHA, effective configuration, completed-step records/rounds and evidence-file hashes still match their pre-attempt snapshot. The worktree must be clean before and after the attempt, including untracked and ignored files. Missing or changed proof refuses the retry and fails normally: no in-run restart is attempted; start a fresh run for full validation from step 1. Partial edits, commits or evidence from a crashed attempt are never silently discarded or certified. The log records the `agent_invocation` retry or proof refusal; an exhausted retry still fails with its agent diagnostic.
+
+A hang cut by the default invocation budget can qualify. A non-default agent timeout, or any still-working cap, disables timeout-based crash retries; the shipped timeout values count as unconfigured even when the generated config writes them explicitly. Process exits can still qualify. Test budget cuts that already park for an operator decision remain parked, not automatically retried.
+
+Fix rounds, review-answer/coverage continuations, conflict resolution, custom gates, Intent and Push/PR/CI delivery are not replayed or retried. This budget is separate from `auto_fix`, is not replenished by approval rounds, and is disabled for the remainder of a run resumed after daemon recovery; a later agent crash fails that step normally. It does not continue a terminal run: [`axi retry`](/reference/cli/#axi-retry) is the separate manual continuation, using the shared `agent_invocation` cause and its own checkpoint proofs. Timeout cuts do not acquire that cause, and parser rejections remain terminal. It is global-only: repository config and environment variables cannot enable it.
 
 ### agent_timeout
 
@@ -907,7 +936,7 @@ For empty `commands.lint`, the document step's combined housekeeping pass also a
 | `auto_fix.test`     | `int` | `3`     | Test failure auto-fix attempts                                                              |
 | `auto_fix.document` | `int` | `3`     | Not used by the automatic document pass                                                     |
 | `auto_fix.lint`     | `int` | `3`     | Lint issue auto-fix attempts                                                                |
-| `auto_fix.ci`       | `int` | `3`     | CI auto-fix attempts for CI failures, plus merge conflicts on GitHub, GitLab, Forgejo, Azure DevOps, and provider plugins declaring `mergeable_state` |
+| `auto_fix.ci`       | `int` | `3`     | CI auto-fix attempts for CI failures, plus merge conflicts on GitHub, GitLab, Forgejo, Azure DevOps, Cursor Origin, and provider plugins declaring `mergeable_state` |
 
 Legacy alias: `auto_fix.babysit`.
 
@@ -966,6 +995,38 @@ ci:
 
 A value in the trusted repository config overrides this global value. An unrecognized value fails the config rather than falling back to the default.
 
+### ci.rebase_behind
+
+The operator-level fallback for [`ci.rebase_behind`](/no-mistakes/reference/repo-config/#cirebase_behind), whose per-repository reference owns the semantics, the cost, and the trust boundary.
+
+| | |
+|---|---|
+| Type | `bool` |
+| Default | `false` |
+
+```yaml
+ci:
+  rebase_behind: true
+```
+
+A value in the trusted repository config overrides this global value in both directions. When the trusted repository config omits the key, this global value applies.
+
+### ci.carry_review_on_replay
+
+The operator-level fallback for [`ci.carry_review_on_replay`](/no-mistakes/reference/repo-config/#cicarry_review_on_replay), whose per-repository reference owns the pure-replay proof, its limits, and the trust boundary.
+
+| | |
+|---|---|
+| Type | `bool` |
+| Default | `false` |
+
+```yaml
+ci:
+  carry_review_on_replay: true
+```
+
+A value in the trusted repository config overrides this global value in both directions. When the trusted repository config omits the key, this global value applies.
+
 ### rebase.strategy
 
 The operator-level default for [`rebase.strategy`](/no-mistakes/reference/repo-config/#rebasestrategy), whose per-repository reference owns the semantics, the trade-off, and the trust boundary.
@@ -1018,6 +1079,7 @@ Changes apply to the next run, and to a run recovered after a daemon restart, wh
 ### commit.fix_message
 
 Template for the subject of commits created by the Review, Test, Document, Lint, and CI repair paths, plus operator-authorized repository gate repairs.
+When set to anything other than the default, it also renders the Push step's catch-all commit for remaining uncommitted changes, with `{{.Step}}` as `push` and `{{.Summary}}` as `apply agent fixes`; at the default, that commit keeps its `no-mistakes: apply agent fixes` subject.
 
 | | |
 | --- | --- |
@@ -1028,7 +1090,7 @@ The template supports literal text and three Go-style placeholders:
 
 | Variable | Value |
 | --- | --- |
-| `{{.Step}}` | Pipeline step name, such as `review`, `test`, `document`, `lint`, `ci`, or `gate.test.mutation-budget` |
+| `{{.Step}}` | Pipeline step name, such as `review`, `test`, `document`, `lint`, `ci`, `push`, or `gate.test.mutation-budget` |
 | `{{.Summary}}` | Sanitized one-line summary returned by the fix agent, or the step's deterministic fallback summary |
 | `{{.Branch}}` | Normalized branch name, or the identifier captured and optionally transformed by [`commit.branch_pattern`](#commitbranch_pattern) and [`commit.branch_replacement`](#commitbranch_replacement) |
 
@@ -1040,7 +1102,7 @@ Template functions, control actions, named templates, unknown placeholders, malf
 The blocked format set includes every Unicode `Bidi_Control` code point plus `U+00AD`, `U+180E`, `U+200B`, `U+2060` through `U+2064`, the deprecated bidi controls `U+206A` through `U+206F`, `U+FEFF`, `U+FFF9` through `U+FFFB`, and Unicode tag characters in `U+E0000` through `U+E007F`.
 Legitimate `U+200C` zero-width non-joiner and `U+200D` zero-width joiner text shaping remains allowed.
 The final rendered subject is validated again, so unsafe characters in an agent-provided summary are also rejected.
-The setting does not change commit subjects created by the Rebase or Push steps.
+The setting does not change commit subjects created by the Rebase step or the evidence-branch commit; see [`test.evidence`](#testevidence) for the latter.
 A per-repo [`commit.fix_message`](/no-mistakes/reference/repo-config/#commitfix_message) value overrides this global setting.
 
 ### commit.branch_pattern
@@ -1146,6 +1208,23 @@ A `commit.branch_replacement` must be paired with `commit.branch_pattern` in the
 Precedence for these formatting fields is explicit: `.no-mistakes.yaml` wins for every field it sets, then a matching machine-local override, then the plain global value, then the built-in default.
 As with the global replacement, a repository `commit.branch_pattern` replaces the matching machine-local pattern and clears its replacement.
 Repositories matching no block keep existing global and built-in behavior.
+
+#### Machine-local PR publication defaults
+
+A matching entry can select a repository's existing PR template without committing `.no-mistakes.yaml`:
+
+```yaml
+repository_overrides:
+  https://github.com/acme/widget.git:
+    pr:
+      template: .github/pull_request_template.md
+      appendix: collapsed
+```
+
+`pr.template` selects a repository-relative file, never local template contents. It uses the same [path and file validation](/no-mistakes/reference/repo-config/#prtemplate) as the repository setting, and its bytes are read only from the pinned trusted default-branch tree, never from the pushed branch or worktree.
+`pr.appendix` accepts `full`, `collapsed`, or `minimal` and can be set with or without `pr.template`; it uses the same [appendix and attestation behavior](/no-mistakes/reference/repo-config/#prappendix) as the repository setting. When template mode is active, author-edited narrative is preserved on later updates.
+For each field, a non-empty trusted repository value wins over the matching machine-local value. Leaving either unset retains existing behavior; an unset appendix defaults to `full`.
+These fields are available only under `repository_overrides`, not as machine-wide PR settings. `pr.publish_intent` remains trusted-repository-only.
 
 #### Machine-local review and documentation guidance
 
@@ -1280,6 +1359,7 @@ By default, evidence artifacts are written to `<NM_HOME>/evidence/<run-id>`. On 
 | `test.evidence.attach_media`  | `bool`   | `true`                   | Upload image and video evidence to GitHub user-attachments when the PR is rendered |
 | `test.evidence.dir`           | `string` | `.no-mistakes/evidence`  | Directory prefix inside the evidence branch                                |
 | `test.evidence.branch`        | `string` | `no-mistakes/evidence`   | Name of the orphan evidence branch                                         |
+| `test.evidence.commit_message` | `string` | `no-mistakes: evidence for {{.Branch}} (run {{.RunID}})` | Subject template for evidence-branch commits |
 | `test.evidence.local_root`    | `string` | `<NM_HOME>/evidence`     | Absolute directory where run evidence is written on local disk             |
 | `test.evidence.retention`     | `string` | `336h` (14 days)         | How long a run's evidence survives; `unlimited`/`none`/`off`/`never` or a non-positive duration disables the bound |
 | `test.evidence.max_runs`      | `int`    | `200`                    | How many run directories survive regardless of age; `0` disables the bound |
@@ -1288,10 +1368,12 @@ The test step always collects evidence outside the worktree, so artifacts never 
 On GitHub.com and GitHub Enterprise Cloud, image and video artifacts that pass GitHub's attach rules (png, jpg, jpeg, gif, webp, svg, mp4, mov, webm; images at most 10 MiB and videos at most 100 MiB) are uploaded to GitHub user-attachments when the PR body is rendered, unless `attach_media` is false and `store_in_repo` is also false.
 The testing section embeds the returned image markdown or bare video URL so remote reviewers can open the media. Upload is fail-closed: any error, unsupported type, oversize file, GitHub Enterprise Server, non-GitHub forge, or GitHub App/Actions token keeps today's rendering (a commit-pinned evidence-branch link if `store_in_repo` published, otherwise a local path) rather than a dead attachment URL. Text artifacts stay inlined as they are today.
 When `store_in_repo` is true for a GitHub repository, the PR step copies that directory onto `branch` under `<dir>/<branch-slug>` in the code branch's push-target repository (the fork when fork routing is configured), pushes it, and links the artifacts from the pull request body.
+Published text files get the same home-directory redaction as the PR title and body, so a path under the operator's home is committed with that part rewritten to `~`. Binary and visual artifacts are published as written, and the local evidence files are never changed.
 When both `attach_media` and `store_in_repo` apply, the testing section carries the user-attachments embed in addition to the commit-pinned git link.
 The branch is an orphan: it shares no history with your code branches, so evidence never reaches the default branch. Links use the evidence commit rather than the branch, so they keep resolving after later runs.
 Branch slashes become nested directories, unsafe branch characters are replaced, and an empty branch slug falls back to the run ID.
 `branch` must be a valid Git branch name; an invalid value fails the config with the offending key and value.
+`commit_message` supports literal text and two placeholders: `{{.Branch}}` (the code branch name) and `{{.RunID}}` (the run ID). It follows the same template restrictions, size limits, and unsafe-character rules as [`commit.fix_message`](#commitfix_message); an invalid template fails configuration loading, and a subject that fails validation at publish time leaves the evidence unpublished.
 The publisher never force-pushes. It appends to the fetched evidence-branch tip with a fast-forward push, retries one lost race, and refuses to use the run branch, default branch, or an existing branch whose tip lacks the `.no-mistakes-evidence` marker.
 Publication is also refused when the remote cannot be read or pushed, an artifact exceeds 64 MiB, a run exceeds 500 files or 256 MiB, or another writer wins the retry. The PR body then keeps its local rendering instead of adding links that would not resolve.
 Evidence-branch publication currently supports GitHub links only. On other providers, no evidence branch is pushed and the PR body keeps its local rendering.
@@ -1312,7 +1394,7 @@ Reaping runs after each finished run and again at daemon startup. An upgraded da
 
 `local_root` must be an absolute path outside `<NM_HOME>/worktrees`; a relative or managed-worktree path fails daemon startup and prevents new or recovered runs from starting. Because `retention` bounds how long a PR body's local artifact links keep resolving, raise it rather than lowering it if your reviews run long.
 
-The publication fields are global defaults. Repo config can override `store_in_repo`, `attach_media`, and `dir`; it can override `branch` only through the trusted default-branch copy. `local_root`, `retention`, and `max_runs` are global-only: a repository does not get to name a filesystem path this machine's daemon writes to, or set the retention budget for a directory every repository on the machine shares.
+The publication fields are global defaults. Repo config can override `store_in_repo`, `attach_media`, `dir`, and `commit_message`; it can override `branch` only through the trusted default-branch copy. `local_root`, `retention`, and `max_runs` are global-only: a repository does not get to name a filesystem path this machine's daemon writes to, or set the retention budget for a directory every repository on the machine shares.
 
 `test.evidence.retention` and `test.evidence.max_runs` also bound `<NM_HOME>/logs/<run-id>` (per-run step logs), reaped on the same cadence rather than through a second config surface for the same kind of per-run diagnostic artifact. A failed or cancelled run's step logs are the record of why it stopped, so they survive 14 days regardless of either bound and do not count toward `max_runs`; after that they are reaped like any other run's.
 
@@ -1388,6 +1470,19 @@ Open pull requests created on Azure DevOps as drafts (`az repos pr create --draf
 
 Only affects PR creation; existing PRs are not toggled between draft and ready. Azure DevOps only — ignored for other providers.
 This is a global default. Per-repo config can override it via `providers.azuredevops.draft_pull_requests`.
+
+### providers.origin.draft_pull_requests
+
+Open pull requests created on Cursor Origin as drafts (`origin pr create --status draft`).
+When false (the default), no-mistakes passes `--status open` because the Origin CLI otherwise defaults to draft.
+
+| | |
+|---|---|
+| Type | `bool` |
+| Default | `false` |
+
+Only affects PR creation; existing PRs are not toggled between draft and ready. Cursor Origin only — ignored for other providers.
+This is a global default. Per-repo config can override it via `providers.origin.draft_pull_requests`.
 
 ## Environment variables
 
