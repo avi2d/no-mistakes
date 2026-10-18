@@ -20,7 +20,6 @@ func newUnverifiedRewriteFixture(t *testing.T) (*recoverFixture, string) {
 	mustRun(t, root, "init", "--bare", remote)
 	local := filepath.Join(root, "operator")
 	mustRun(t, root, "init", "-b", "main", local)
-	configureIdentity(t, local)
 	mustWrite(t, filepath.Join(local, "file.txt"), "base\n")
 	mustRun(t, local, "add", "file.txt")
 	mustRun(t, local, "commit", "-m", "base")
@@ -37,7 +36,6 @@ func newUnverifiedRewriteFixture(t *testing.T) (*recoverFixture, string) {
 
 	pipeline := filepath.Join(root, "pipeline")
 	mustRun(t, root, "-c", "core.autocrlf=false", "clone", gate, pipeline)
-	configureIdentity(t, pipeline)
 	mustRun(t, pipeline, "checkout", "main")
 	mustWrite(t, filepath.Join(pipeline, "CHANGELOG.md"), "newly merged PR\n")
 	mustRun(t, pipeline, "add", "CHANGELOG.md")

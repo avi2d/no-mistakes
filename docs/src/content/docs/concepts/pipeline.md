@@ -65,6 +65,7 @@ The pipeline is opinionated so that "passed the gate" has a stable meaning:
   Under `rebase.strategy: merge`, a merge-conflict repair is a merge commit on top of the published head, so it publishes like any other provable repair.
   [`ci.revalidate_repairs`](/no-mistakes/reference/repo-config/#cirevalidate_repairs) sets that intent.
   The default `false` publishes when it is provable, and `true` revalidates every repair.
+  Opt-in [`ci.carry_review_on_replay`](/no-mistakes/reference/repo-config/#cicarry_review_on_replay) lets a rebase repair that provably replayed the reviewed commits unchanged revalidate from Test instead.
   CI owns remote validation after publication. A repository gate command still runs before Push, although the command itself may contact an external service.
 
 ## What core steps can do

@@ -204,6 +204,8 @@ type GlobalConfig struct {
 	CITimeout                 time.Duration `yaml:"-"`
 	StepQuietWarning          time.Duration `yaml:"-"`
 	AgentTimeout              time.Duration `yaml:"-"`
+	AgentCrashRetries         int           `yaml:"-"`
+	AgentTimeoutsConfigured   bool          `yaml:"-"`
 	ReviewAgentTimeout        time.Duration `yaml:"-"`
 	TestAgentTimeout          time.Duration `yaml:"-"`
 	AgentWorkingTimeout       time.Duration `yaml:"-"`
@@ -280,6 +282,7 @@ type globalConfigRaw struct {
 	BabysitTimeout            string                     `yaml:"babysit_timeout"`
 	StepQuietWarning          string                     `yaml:"step_quiet_warning"`
 	AgentTimeout              string                     `yaml:"agent_timeout"`
+	AgentCrashRetries         int                        `yaml:"agent_crash_retries"`
 	ReviewAgentTimeout        string                     `yaml:"review_agent_timeout"`
 	TestAgentTimeout          string                     `yaml:"test_agent_timeout"`
 	AgentWorkingTimeout       string                     `yaml:"agent_working_timeout"`
@@ -342,9 +345,11 @@ type OperatorReviewRaw struct {
 	PathInstructions []PathInstruction `yaml:"path_instructions"`
 }
 
-// RepositoryPRRaw contains machine-local per-repository PR title settings.
+// RepositoryPRRaw contains machine-local per-repository PR defaults.
 type RepositoryPRRaw struct {
 	TitleFormat *string `yaml:"title_format"`
+	Template    string  `yaml:"template"`
+	Appendix    string  `yaml:"appendix"`
 }
 
 // RepositoryOverrides maps remote URLs to machine-local per-repository settings.
@@ -691,6 +696,10 @@ type CIRaw struct {
 	RevalidateRepairs *bool `yaml:"revalidate_repairs"`
 	// ReviewBotComments is "" when unset; see CI.ReviewBotComments.
 	ReviewBotComments string `yaml:"review_bot_comments"`
+	// RebaseBehind is a pointer for the same reason as RevalidateRepairs.
+	RebaseBehind *bool `yaml:"rebase_behind"`
+	// CarryReviewOnReplay is a pointer for the same reason as RevalidateRepairs.
+	CarryReviewOnReplay *bool `yaml:"carry_review_on_replay"`
 }
 
 // CI holds the resolved CI-step settings.
@@ -742,6 +751,27 @@ type CI struct {
 	// while leaving an unresolved comment, most often on the pipeline's own
 	// CI repair commit, which no human has reviewed yet.
 	ReviewBotComments string
+	// RebaseBehind opts the CI monitor into rebasing a green GitHub PR that
+	// reports mergeStateStatus BEHIND (its base requires branches to be up to
+	// date) through the merge-conflict repair, which revalidates from Review.
+	// Off by default: each base advance would then cost another full pass, so
+	// a green BEHIND PR reports checks-passed and waits for a human to bring
+	// it up to date (see VISION.md's cost rule).
+	RebaseBehind bool
+	// CarryReviewOnReplay opts a CI rebase repair that is a provable pure
+	// replay into keeping the run's review approval: when the repaired head
+	// is the reviewed commits replayed onto the resolved base tip - a linear
+	// chain of the same length, each commit replaying onto its new parent with
+	// no conflict to exactly its recorded tree, and each one patch-identical
+	// (`git patch-id --verbatim`) to the reviewed commit it replaced - the
+	// approval moves to the replayed head and validation restarts at Test
+	// instead of Review. Anything that fails any part of that proof, or any
+	// error while checking it, takes today's path and revalidates from Review.
+	//
+	// Off by default. It has no effect when RevalidateRepairs is true, which
+	// keeps meaning "every repair re-passes Review", or when the run has a
+	// review-anchored gate, which would otherwise be skipped for the new head.
+	CarryReviewOnReplay bool
 }
 
 // RebaseRaw is the YAML representation of rebase-step settings.
@@ -807,6 +837,8 @@ type Config struct {
 	CITimeout                 time.Duration
 	StepQuietWarning          time.Duration
 	AgentTimeout              time.Duration
+	AgentCrashRetries         int
+	AgentTimeoutsConfigured   bool
 	ReviewAgentTimeout        time.Duration
 	TestAgentTimeout          time.Duration
 	AgentWorkingTimeout       time.Duration
@@ -860,6 +892,7 @@ type ProvidersRaw struct {
 	GitLab      GitLabProviderRaw      `yaml:"gitlab"`
 	Bitbucket   BitbucketProviderRaw   `yaml:"bitbucket"`
 	AzureDevOps AzureDevOpsProviderRaw `yaml:"azuredevops"`
+	Origin      OriginProviderRaw      `yaml:"origin"`
 }
 
 // GitHubProviderRaw is the YAML representation of GitHub provider settings.
@@ -886,12 +919,19 @@ type AzureDevOpsProviderRaw struct {
 	DraftPullRequests *bool `yaml:"draft_pull_requests"`
 }
 
+// OriginProviderRaw is the YAML representation of Cursor Origin provider
+// settings. Pointer fields distinguish "not set" (nil) from an explicit false.
+type OriginProviderRaw struct {
+	DraftPullRequests *bool `yaml:"draft_pull_requests"`
+}
+
 // Providers holds resolved provider-specific settings.
 type Providers struct {
 	GitHub      GitHubProvider
 	GitLab      GitLabProvider
 	Bitbucket   BitbucketProvider
 	AzureDevOps AzureDevOpsProvider
+	Origin      OriginProvider
 }
 
 // GitHubProvider holds resolved GitHub provider settings.
@@ -919,6 +959,14 @@ type BitbucketProvider struct {
 type AzureDevOpsProvider struct {
 	// DraftPullRequests opens created Azure DevOps PRs as drafts
 	// (az repos pr create --draft true). Default false.
+	DraftPullRequests bool
+}
+
+// OriginProvider holds resolved Cursor Origin provider settings.
+type OriginProvider struct {
+	// DraftPullRequests opens created Origin PRs as drafts
+	// (`origin pr create --status draft`). Default false, which passes
+	// `--status open` because Origin's CLI otherwise defaults to draft.
 	DraftPullRequests bool
 }
 
@@ -1100,6 +1148,9 @@ type EvidenceRaw struct {
 	// EffectiveRepoConfig): a contributor's pushed branch must not be able to
 	// aim evidence commits at another branch of the repository.
 	Branch *string `yaml:"branch"`
+	// CommitMessage templates the evidence-branch commit subject. Like
+	// commit.fix_message it only shapes a message, so it is pushed-readable.
+	CommitMessage *string `yaml:"commit_message"`
 	// LocalRoot, Retention, and MaxRuns describe this MACHINE's evidence
 	// storage: where the daemon writes artifacts on local disk and how long it
 	// keeps them. They are global-only - Merge resolves them straight from
@@ -1139,6 +1190,9 @@ type Evidence struct {
 	AttachMedia bool
 	Dir         string
 	Branch      string
+	// CommitMessage is the configured subject template; empty keeps the
+	// built-in subject (see RenderCommitMessage).
+	CommitMessage string
 	// LocalRoot overrides the app-root default for on-disk evidence; empty
 	// means paths.EvidenceDir(). Retention and MaxRuns bound how much of it
 	// survives: no-mistakes reaps its own evidence rather than leaving that to
@@ -1369,9 +1423,10 @@ forgejo_axi_path: forgejo-axi
 #   devin: devin acp
 
 # Maximum time the CI monitor babysits an open PR with no base-branch movement
-# before giving up. The monitor watches CI and auto-rebases when the base branch
-# advances; each base advance re-arms this timer, so an actively-updated green PR
-# keeps its monitor. Set to "unlimited", "none", "off", "never", or any
+# before giving up. The monitor watches CI and rebases the PR onto its base when
+# it has a merge conflict (or, with ci.rebase_behind, when GitHub reports it
+# green but BEHIND); each base advance re-arms this timer, so an
+# actively-updated green PR keeps its monitor. Set to "unlimited", "none", "off", "never", or any
 # non-positive duration to monitor until the PR is merged, closed, or the run is
 # aborted with: no-mistakes axi abort --run <id>
 ci_timeout: "168h"
@@ -1387,6 +1442,10 @@ step_quiet_warning: "10m"
 # A turn with no output and no live child stops here. A still-working turn
 # continues past it only when agent_working_timeout is set.
 agent_timeout: "30m"
+
+# Additional attempts for an agent-crashed validation step (0-3, opt-in).
+# Requires unchanged head, base, config, clean worktree and evidence.
+agent_crash_retries: 0
 
 # Optional cap for a turn that is still producing output or waiting on a live
 # child. Unset means no extension past agent_timeout. Must be at least
@@ -1540,8 +1599,27 @@ ci:
   # instead of reporting checks-passed. A repository that sets
   # ci.review_bot_comments on its own default branch overrides this value.
   review_bot_comments: on_failure
+  # Whether the CI monitor rebases a green GitHub PR that GitHub reports BEHIND
+  # because its base requires branches to be up to date. Defaults to false: the
+  # PR reports checks-passed and waits for a human to bring it up to date. Set
+  # true to have the monitor rebase it once the base holds still for one poll;
+  # each such rebase revalidates from Review, so it costs another full pipeline
+  # pass. A repository that sets ci.rebase_behind on its own default branch
+  # overrides this value.
+  rebase_behind: false
+  # Whether a CI rebase repair that only replayed the reviewed commits keeps
+  # its review approval. Defaults to false: every rebase repair revalidates
+  # from Review. Set true to restart at Test instead when the rebase is a
+  # provable pure replay - every reviewed commit replayed without a conflict
+  # and patch-identical to the one it replaced. Anything else still
+  # revalidates from Review. No effect when revalidate_repairs is true. A
+  # repository that sets ci.carry_review_on_replay on its own default branch
+  # overrides this value.
+  carry_review_on_replay: false
 
 # Auto-fix commit subject template. Available variables: {{.Step}}, {{.Summary}}, and {{.Branch}}.
+# When set to anything but the default, it also renders the Push step's
+# catch-all commit (step "push", summary "apply agent fixes").
 # {{.Branch}} is the normalized branch name, or the only capture group from
 # branch_pattern when configured. A branch pattern with no match fails safely.
 # Global-only branch_replacement can add literal text around that group with ${1}.
@@ -1588,12 +1666,15 @@ intent:
 # directory to another disk and must be an absolute path. These three are
 # global-only - a repository's .no-mistakes.yaml cannot change where this
 # machine writes evidence or how long it keeps it.
+# commit_message templates the evidence-branch commit subject with
+# {{.Branch}} and {{.RunID}}; it follows commit.fix_message's template rules.
 # test:
 #   evidence:
 #     store_in_repo: true
 #     attach_media: true
 #     dir: .no-mistakes/evidence
 #     branch: no-mistakes/evidence
+#     commit_message: "no-mistakes: evidence for {{.Branch}} (run {{.RunID}})"
 #     local_root: /var/lib/no-mistakes/evidence
 #     retention: 720h
 #     max_runs: 50
@@ -2559,12 +2640,18 @@ func LoadGlobalFromBytes(data []byte) (*GlobalConfig, error) {
 			cfg.StepQuietWarning = d
 		}
 	}
+	if raw.AgentCrashRetries < 0 || raw.AgentCrashRetries > 3 {
+		return nil, fmt.Errorf("agent_crash_retries must be between 0 and 3")
+	}
+	cfg.AgentCrashRetries = raw.AgentCrashRetries
+	configuredTimeout := false
 	if raw.AgentTimeout != "" {
 		d, err := parsePositiveDuration("agent_timeout", raw.AgentTimeout)
 		if err != nil {
 			return nil, err
 		}
 		cfg.AgentTimeout = d
+		configuredTimeout = d != DefaultAgentTimeout
 	}
 	if raw.ReviewAgentTimeout != "" {
 		d, err := parsePositiveDuration("review_agent_timeout", raw.ReviewAgentTimeout)
@@ -2572,6 +2659,7 @@ func LoadGlobalFromBytes(data []byte) (*GlobalConfig, error) {
 			return nil, err
 		}
 		cfg.ReviewAgentTimeout = d
+		configuredTimeout = configuredTimeout || d != DefaultReviewAgentTimeout
 	}
 	if raw.TestAgentTimeout != "" {
 		d, err := parsePositiveDuration("test_agent_timeout", raw.TestAgentTimeout)
@@ -2579,6 +2667,7 @@ func LoadGlobalFromBytes(data []byte) (*GlobalConfig, error) {
 			return nil, err
 		}
 		cfg.TestAgentTimeout = d
+		configuredTimeout = configuredTimeout || d != DefaultTestAgentTimeout
 	}
 	if raw.AgentWorkingTimeout != "" {
 		d, err := parsePositiveDuration("agent_working_timeout", raw.AgentWorkingTimeout)
@@ -2586,6 +2675,7 @@ func LoadGlobalFromBytes(data []byte) (*GlobalConfig, error) {
 			return nil, err
 		}
 		cfg.AgentWorkingTimeout = d
+		configuredTimeout = true
 	}
 	if raw.ReviewAgentWorkingTimeout != "" {
 		d, err := parsePositiveDuration("review_agent_working_timeout", raw.ReviewAgentWorkingTimeout)
@@ -2593,6 +2683,7 @@ func LoadGlobalFromBytes(data []byte) (*GlobalConfig, error) {
 			return nil, err
 		}
 		cfg.ReviewAgentWorkingTimeout = d
+		configuredTimeout = true
 	}
 	if raw.TestAgentWorkingTimeout != "" {
 		d, err := parsePositiveDuration("test_agent_working_timeout", raw.TestAgentWorkingTimeout)
@@ -2600,7 +2691,9 @@ func LoadGlobalFromBytes(data []byte) (*GlobalConfig, error) {
 			return nil, err
 		}
 		cfg.TestAgentWorkingTimeout = d
+		configuredTimeout = true
 	}
+	cfg.AgentTimeoutsConfigured = configuredTimeout
 	if err := validateWorkingCap("agent_working_timeout", "agent_timeout", cfg.AgentWorkingTimeout, cfg.AgentTimeout); err != nil {
 		return nil, err
 	}
@@ -3062,6 +3155,9 @@ func EffectiveRepoConfig(pushed, trusted *RepoConfig, allowRepoCommands bool) *R
 		// ci.review_bot_comments decides whether a green review-bot check
 		// can still block checks-passed, so a pushed branch must not be able
 		// to silence the bot's unresolved comments on itself.
+		// ci.carry_review_on_replay decides whether a rebased head may skip
+		// Review, so a pushed branch must not be able to opt its own rebases
+		// out of the maintainer's review.
 		effective.CI = trusted.CI
 		// rebase.strategy is gate-control in the same sense no_ci is. It decides
 		// whether integrating a moved base leaves an auditable merge commit
@@ -3074,7 +3170,7 @@ func EffectiveRepoConfig(pushed, trusted *RepoConfig, allowRepoCommands bool) *R
 		// test.evidence.branch names the git ref evidence commits are pushed
 		// to with the maintainer's credentials. It is trusted-only so a pushed
 		// branch cannot aim them at another branch of the repository; the rest
-		// of test.evidence (store_in_repo, attach_media, dir) stays
+		// of test.evidence (store_in_repo, attach_media, dir, commit_message) stays
 		// pushed-readable because it only picks how artifacts are published.
 		// The publisher independently refuses any branch without its marker
 		// file, and the upload client refuses Actions/App installation tokens,
@@ -3238,6 +3334,9 @@ func applyTestOverrides(dst *Test, src *TestRaw) {
 			dst.Evidence.Branch = branch
 		}
 	}
+	if src.Evidence.CommitMessage != nil {
+		dst.Evidence.CommitMessage = *src.Evidence.CommitMessage
+	}
 }
 
 // applyEvidenceStorageOverrides applies the global-only local-storage half of
@@ -3390,6 +3489,11 @@ func validateTestRaw(test TestRaw) error {
 			return fmt.Errorf("test.evidence.branch: %w", err)
 		}
 	}
+	if test.Evidence.CommitMessage != nil {
+		if _, err := renderEvidenceMessage(*test.Evidence.CommitMessage, "branch", "run"); err != nil {
+			return err
+		}
+	}
 	// local_root must be absolute. The daemon's working directory is a bare
 	// gate repository, so a relative path would resolve somewhere the operator
 	// never named - and evidence would silently scatter instead of landing
@@ -3427,6 +3531,9 @@ func applyProvidersOverrides(dst *Providers, src *ProvidersRaw) {
 	}
 	if src.AzureDevOps.DraftPullRequests != nil {
 		dst.AzureDevOps.DraftPullRequests = *src.AzureDevOps.DraftPullRequests
+	}
+	if src.Origin.DraftPullRequests != nil {
+		dst.Origin.DraftPullRequests = *src.Origin.DraftPullRequests
 	}
 }
 
@@ -3501,6 +3608,12 @@ func applyCIOverrides(dst *CI, src *CIRaw) {
 	}
 	if v := strings.TrimSpace(src.ReviewBotComments); v != "" {
 		dst.ReviewBotComments = v
+	}
+	if src.RebaseBehind != nil {
+		dst.RebaseBehind = *src.RebaseBehind
+	}
+	if src.CarryReviewOnReplay != nil {
+		dst.CarryReviewOnReplay = *src.CarryReviewOnReplay
 	}
 }
 
@@ -3677,8 +3790,16 @@ func merge(global *GlobalConfig, repo *RepoConfig, override *RepositoryOverride)
 		PublishIntent: repo.PR.PublishIntent,
 		Appendix:      repo.PR.Appendix,
 	}
-	if override != nil && override.PR.TitleFormat != nil {
-		pr.TitleFormat = *override.PR.TitleFormat
+	if override != nil {
+		if override.PR.TitleFormat != nil {
+			pr.TitleFormat = *override.PR.TitleFormat
+		}
+		if pr.Template == "" {
+			pr.Template = override.PR.Template
+		}
+		if pr.Appendix == "" {
+			pr.Appendix = override.PR.Appendix
+		}
 	}
 	if repo.PR.TitleFormat != nil {
 		pr.TitleFormat = *repo.PR.TitleFormat
@@ -3705,6 +3826,8 @@ func merge(global *GlobalConfig, repo *RepoConfig, override *RepositoryOverride)
 		CITimeout:                 global.CITimeout,
 		StepQuietWarning:          global.StepQuietWarning,
 		AgentTimeout:              global.AgentTimeout,
+		AgentCrashRetries:         global.AgentCrashRetries,
+		AgentTimeoutsConfigured:   global.AgentTimeoutsConfigured,
 		ReviewAgentTimeout:        global.ReviewAgentTimeout,
 		TestAgentTimeout:          global.TestAgentTimeout,
 		AgentWorkingTimeout:       global.AgentWorkingTimeout,
