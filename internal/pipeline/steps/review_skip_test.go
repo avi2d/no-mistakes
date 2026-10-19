@@ -2,10 +2,15 @@ package steps
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/kunchenguid/no-mistakes/internal/agent"
+	"github.com/kunchenguid/no-mistakes/internal/config"
+	"github.com/kunchenguid/no-mistakes/internal/types"
 )
 
 const nightlyWorkflow = `name: nightly
@@ -51,6 +56,7 @@ func docsAndSchedulesRepo(t *testing.T, base map[string]string, change func(dir 
 	gitCmd(t, dir, "add", "-A")
 	gitCmd(t, dir, "commit", "-q", "-m", "base")
 	baseSHA := gitCmd(t, dir, "rev-parse", "HEAD")
+	gitCmd(t, dir, "checkout", "-q", "-b", "feature")
 	change(dir)
 	gitCmd(t, dir, "add", "-A")
 	gitCmd(t, dir, "commit", "-q", "--allow-empty", "-m", "head")
@@ -164,5 +170,60 @@ func TestDocsAndSchedulesOnly(t *testing.T) {
 				t.Fatalf("docsAndSchedulesOnly = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestReviewStep_DocsAndSchedulesOnlyCompletesWithoutTheAgent(t *testing.T) {
+	dir, base, head := docsAndSchedulesRepo(t, nil, func(dir string) {
+		writeRepoFile(t, dir, "README.md", "# Example\n\nMore words.\n")
+		replaceInRepoFile(t, dir, ".github/workflows/nightly.yml", "- cron: '0 3 * * *'", "- cron: '30 5 * * *'")
+	})
+	ag := &mockAgent{name: "test"}
+	sctx := newTestContextWithDBRecords(t, ag, dir, base, head, config.Commands{})
+
+	outcome, err := (&ReviewStep{}).Execute(sctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ag.calls) != 0 {
+		t.Fatalf("review agent ran %d times, want none", len(ag.calls))
+	}
+	if outcome.NeedsApproval || outcome.Skipped {
+		t.Fatalf("outcome = %#v, want a completed review", outcome)
+	}
+	if outcome.ReviewApprovedHeadSHA != head {
+		t.Fatalf("review-approved head = %q, want %q", outcome.ReviewApprovedHeadSHA, head)
+	}
+	if outcome.SkipReason != docsAndSchedulesOnlyReason {
+		t.Fatalf("skip reason = %q, want %q", outcome.SkipReason, docsAndSchedulesOnlyReason)
+	}
+	findings, err := types.ParseFindingsJSON(outcome.Findings)
+	if err != nil || len(findings.Items) != 0 {
+		t.Fatalf("findings = %q (%v), want none", outcome.Findings, err)
+	}
+}
+
+func TestReviewStep_WorkflowChangeBesideACronLineRunsTheAgent(t *testing.T) {
+	dir, base, head := docsAndSchedulesRepo(t, nil, func(dir string) {
+		replaceInRepoFile(t, dir, ".github/workflows/nightly.yml", "- cron: '0 3 * * *'", "- cron: '30 5 * * *'")
+		replaceInRepoFile(t, dir, ".github/workflows/nightly.yml", "runs-on: ubuntu-latest", "runs-on: windows-latest")
+	})
+	ag := &mockAgent{name: "test", runFn: func(context.Context, agent.RunOpts) (*agent.Result, error) {
+		findings := cleanReviewFindings()
+		findings.ReviewedPaths = []string{".github/workflows/nightly.yml"}
+		j, _ := json.Marshal(findings)
+		return &agent.Result{Output: j}, nil
+	}}
+	sctx := newTestContextWithDBRecords(t, ag, dir, base, head, config.Commands{})
+
+	outcome, err := (&ReviewStep{}).Execute(sctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ag.calls) != 1 {
+		t.Fatalf("review agent ran %d times, want once", len(ag.calls))
+	}
+	if outcome.SkipReason != "" {
+		t.Fatalf("skip reason = %q on a reviewed change", outcome.SkipReason)
 	}
 }

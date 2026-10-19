@@ -28,6 +28,37 @@ func TestExecutor_RecordsCompletedReviewApprovedHead(t *testing.T) {
 	}
 }
 
+// A review that completes without its agent still certifies the head for push
+// and keeps the reason it gave beside the completed status.
+func TestExecutor_CompletedReviewRecordsWhyItsAgentDidNotRun(t *testing.T) {
+	database, p, run, repo := setupTest(t)
+	const reviewedHead = "1111111111111111111111111111111111111111"
+	const reason = "only docs changed"
+	step := &mockStep{name: types.StepReview, outcome: &StepOutcome{ReviewApprovedHeadSHA: reviewedHead, SkipReason: reason}}
+	exec := NewExecutor(database, p, &config.Config{}, nil, []Step{step}, nil)
+
+	if err := exec.Execute(context.Background(), run, repo, t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	got, err := database.GetRun(run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ReviewApprovedHeadSHA == nil || *got.ReviewApprovedHeadSHA != reviewedHead {
+		t.Fatalf("review-approved head = %#v, want %s", got.ReviewApprovedHeadSHA, reviewedHead)
+	}
+	steps, err := database.GetStepsByRun(run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(steps) != 1 || steps[0].Status != types.StepStatusCompleted {
+		t.Fatalf("review step = %#v, want one completed step", steps)
+	}
+	if steps[0].SkipReason == nil || *steps[0].SkipReason != reason {
+		t.Fatalf("skip reason = %#v, want %q", steps[0].SkipReason, reason)
+	}
+}
+
 func TestExecutor_FullRereviewReplacesApprovalWithoutAuthorizingParkedRound(t *testing.T) {
 	database, p, run, repo := setupTest(t)
 	const firstReviewedHead = "1111111111111111111111111111111111111111"

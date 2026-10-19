@@ -107,6 +107,12 @@ AI code review of your diff. This is probabilistic evidence, not a security or c
 
 - Diffs the base commit against head
 - Filters out files matching `ignore_patterns` from the repo config
+- Completes without running the agent when every changed file is a doc file or a schedule value change, decided by a fixed rule from the diff before any agent runs.
+  A doc file is a regular `.md`, `.markdown`, `.rst`, or `.adoc` file that is not `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, or `SKILL.md` and is not under a hidden directory, `testdata`, or `skills`.
+  A schedule value change edits a workflow directly under `.github/workflows` so that each changed line swaps one quoted `cron:` value under the top-level `on.schedule` for another and keeps the text before the value.
+  Any other change keeps the review, including another changed line in the same workflow, an added or removed schedule entry, or a new workflow.
+  The rule reads the complete changed-file set, so `ignore_patterns` cannot widen it.
+  The step records `only docs and CI schedule lines changed` as its skip reason, certifies the head for push, and the PR body shows Review as skipped with that reason.
 - Sends the filtered diff to the agent with structured review instructions and a structured output schema
 - Requires the `reviewed_paths` coverage record before a clean review can certify the head: the exact changed files the reviewer actually read and judged. On a clean review it must exactly cover the trusted reviewable set computed from the current diff (the paths that survive `ignore_patterns`); omitted, empty, partial, fabricated, out-of-scope, or mixed coverage parks the round for approval instead of certifying the whole head, and the step log names the files left unverified. The field is optional in the output schema only so an older payload still parses; an absent record is treated as no coverage, never as a pass. During carry-forward verification, omitted or invalid coverage likewise cannot clear an outstanding selected finding.
 - Before parking a clean round on an incomplete coverage record, runs one focused coverage completion turn over exactly the uncovered files and merges its findings and coverage record into the round's. The completion prompt is the full review prompt plus the uncovered-file list, so the merge preserves the strict coverage rule: whatever is still uncovered (and any fabricated or invalid entry from either turn) parks with the remainder named. The turn is skipped for rounds that already carry blocking findings or an already-invalid coverage entry, is auditable under the `review-coverage` purpose, and any failure of the turn parks on the incomplete record rather than failing the run. It can still raise a review question (see the [review conversation](/no-mistakes/concepts/review-conversation/), below) or, when it reports a finding of its own, a risk assessment at least as high as the round it completes; either overrides the round's own record instead of being lost, while a completion turn with no remaining finding never raises the round's risk. Branch-controlled filenames in both coverage prompts are escaped so they cannot be read as extra review instructions. `eval replay` skips the turn: it scores findings against captured gold and never consumes the coverage certification, so the replay runs exactly the captured review pass.
@@ -346,16 +352,19 @@ Immediately after the existing `Updates from [git push no-mistakes](https://gith
 The `v1` payload is compact JSON with these required fields:
 
 - `head_sha`: the exact git commit SHA recorded for the run when no-mistakes writes the PR body
-- `steps`: the ordered pipeline step snapshot; every item has the required fields below and may carry the optional Test override field described afterward
+- `steps`: the ordered pipeline step snapshot.
+  Every item has the required fields below and may carry the optional fields described afterward.
 
 - `step`: the raw pipeline step name, such as `intent`, `rebase`, `review`, `test`, `document`, `lint`, `push`, `pr`, or `ci`; a repository-declared [gate](/no-mistakes/reference/repo-config/#gates) appears as `gate.<anchor>.<name>`
 - `status`: the raw [step status](#step-statuses) recorded for that step, such as `completed`, `skipped`, or `failed`
 
 When the Test step validated the same `head_sha`, the payload also includes `live_validation` with `verdict`, `live` (the number of scenarios driven live), and `total`. The field is omitted for pre-contract findings and whenever a later Document, Lint, Push, or repair commit changes the head without validating that new commit. Consumers therefore never receive a previous head's live-validation verdict as a claim about the current head.
 
-Two additional fields are additive and omitted when empty, so older attestations remain valid:
+Three additional fields are additive and omitted when empty, so older attestations remain valid:
 
 - `steps[].override_reason`: present on a Test step that was approved over a failing configured `commands.test`. Absent on an ordinary green completion and on pre-field attestations, which must be read as not approved over failure.
+- `steps[].skip_reason`: why the step did not do its usual work.
+  A Review that completed under the docs and schedule rule carries it beside `status` `completed`, and an automatic PR or CI skip carries its cause.
 - `allow_test_command_override`: the trusted [`test.allow_approve_over_failure`](/no-mistakes/reference/repo-config/#testallow_approve_over_failure) reason copied at PR-write time, including a CI-repair restamp, from the current trusted config rather than a previous attestation, and only when the Test step carries `override_reason`. The required check refuses a Test `override_reason` unless this field is a non-empty recorded reason.
 
 A CI step approved over still-failing checks also stores `override_reason` on the step result (and surfaces as `passed-with-override` in AXI), but that CI mark is not copied onto the attestation.

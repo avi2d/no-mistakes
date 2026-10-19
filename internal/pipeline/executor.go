@@ -707,7 +707,7 @@ func (e *Executor) Resume(ctx context.Context, run *db.Run, repo *db.Repo, workD
 			if gate.reviewedHeadSHA == "" {
 				return fmt.Errorf("recovered review has no durable reviewed head candidate")
 			}
-			if err := e.db.CompleteReviewStep(gate.stepResult.ID, run.ID, gate.reviewedHeadSHA, recoveredExitCode(gate.stepResult), duration, recoveredLogPath(gate.stepResult)); err != nil {
+			if err := e.db.CompleteReviewStep(gate.stepResult.ID, run.ID, gate.reviewedHeadSHA, recoveredExitCode(gate.stepResult), duration, recoveredLogPath(gate.stepResult), ""); err != nil {
 				return err
 			}
 			reviewedHead := gate.reviewedHeadSHA
@@ -1943,7 +1943,7 @@ done:
 	// return earlier, and skipped reviews deliberately leave the binding empty.
 	// Completion and authority replacement are one DB transaction.
 	if stepName == types.StepReview && status == types.StepStatusCompleted && reviewApprovedHeadSHA != "" {
-		if err := e.db.CompleteReviewStep(sr.ID, run.ID, reviewApprovedHeadSHA, finalExitCode, durationMS, logPath); err != nil {
+		if err := e.db.CompleteReviewStep(sr.ID, run.ID, reviewApprovedHeadSHA, finalExitCode, durationMS, logPath, skipReason); err != nil {
 			return false, "", fmt.Errorf("complete step %s: %w", stepName, err)
 		}
 		reviewedHead := reviewApprovedHeadSHA

@@ -298,6 +298,40 @@ func TestBuildPipelineSummary_SkippedStep(t *testing.T) {
 	}
 }
 
+// A Review that completed without its agent must read as skipped with its
+// reason in the body, and say so in the attestation beside the completed status.
+func TestBuildPipelineSummary_ReviewWithoutItsAgentReadsAsSkipped(t *testing.T) {
+	t.Parallel()
+	reason := docsAndSchedulesOnlyReason
+	findings := `{"findings":null,"summary":"","risk_level":"low","risk_rationale":"` + reason + `"}`
+	steps := []*db.StepResult{
+		{ID: "s1", StepName: types.StepReview, Status: types.StepStatusCompleted, SkipReason: &reason, FindingsJSON: &findings},
+	}
+	rounds := map[string][]*db.StepRound{
+		"s1": {{Round: 1, Trigger: "initial", FindingsJSON: &findings}},
+	}
+	md, _ := BuildPipelineSummary(steps, rounds, testPipelineHeadSHA)
+
+	for _, want := range []string{
+		"<summary>⏭️ **Review** - skipped: " + reason + "</summary>",
+		"Step was skipped: " + reason,
+		`{"step":"review","status":"completed","skip_reason":"` + reason + `"}`,
+	} {
+		if !strings.Contains(md, want) {
+			t.Errorf("expected %q in pipeline summary, got:\n%s", want, md)
+		}
+	}
+	if strings.Contains(md, "**Review** - passed") || strings.Contains(md, "No issues found") {
+		t.Errorf("a review whose agent never ran reads as a pass:\n%s", md)
+	}
+
+	steps[0].Status = types.StepStatusRunning
+	md, _ = BuildPipelineSummary(steps, rounds, testPipelineHeadSHA)
+	if strings.Contains(md, "skip_reason") || strings.Contains(md, "skipped: ") {
+		t.Errorf("a rerunning review still reports the earlier skip:\n%s", md)
+	}
+}
+
 func TestBuildPipelineSummary_ExcludesPushPRCI(t *testing.T) {
 	t.Parallel()
 	steps := []*db.StepResult{

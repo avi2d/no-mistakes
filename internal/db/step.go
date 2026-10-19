@@ -38,7 +38,8 @@ type StepResult struct {
 	// recorded approval; an empty string means approved without a reason.
 	ApprovalReason *string
 	// SkipReason records an automatic PR/CI skip, distinct from an explicit
-	// per-run skip. Legacy rows have no recorded reason.
+	// per-run skip, or why a completed Review never ran its agent. Legacy rows
+	// have no recorded reason.
 	SkipReason *string
 	// Stall is non-nil while the step's agent has been silent for at least
 	// step_quiet_warning.
@@ -482,8 +483,9 @@ func (d *DB) CompleteCIStep(id, runID string, declaredNoCI bool, exitCode int, d
 // CompleteReviewStep atomically completes a successful review and replaces
 // the run's exact review-approved head. Neither write survives if the other
 // fails, so a failed completion cannot create approval authority and a
-// completed review cannot lack it.
-func (d *DB) CompleteReviewStep(id, runID, approvedHeadSHA string, exitCode int, durationMS int64, logPath string) error {
+// completed review cannot lack it. An empty skipReason means the review agent
+// ran.
+func (d *DB) CompleteReviewStep(id, runID, approvedHeadSHA string, exitCode int, durationMS int64, logPath, skipReason string) error {
 	tx, err := d.sql.Begin()
 	if err != nil {
 		return fmt.Errorf("begin complete review step: %w", err)
@@ -492,8 +494,8 @@ func (d *DB) CompleteReviewStep(id, runID, approvedHeadSHA string, exitCode int,
 
 	ts := now()
 	result, err := tx.Exec(
-		`UPDATE step_results SET status = ?, exit_code = ?, duration_ms = ?, log_path = ?, completed_at = ?, last_activity_at = ?, last_activity = ?, agent_pid = NULL WHERE id = ?`,
-		types.StepStatusCompleted, exitCode, durationMS, logPath, ts, ts, fmt.Sprintf("status: %s", types.StepStatusCompleted), id,
+		`UPDATE step_results SET status = ?, exit_code = ?, duration_ms = ?, log_path = ?, completed_at = ?, last_activity_at = ?, last_activity = ?, agent_pid = NULL, skip_reason = NULLIF(?, '') WHERE id = ?`,
+		types.StepStatusCompleted, exitCode, durationMS, logPath, ts, ts, fmt.Sprintf("status: %s", types.StepStatusCompleted), skipReason, id,
 	)
 	if err != nil {
 		return fmt.Errorf("complete review step: %w", err)

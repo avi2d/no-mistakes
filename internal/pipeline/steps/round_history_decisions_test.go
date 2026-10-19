@@ -269,7 +269,7 @@ func TestCompletedReviewDoesNotClearBranchDecisions(t *testing.T) {
 	f := newDecisionFixture(t)
 	f.declineReviewRound(t, declinedDedupFindings)
 
-	if err := f.db.CompleteReviewStep(f.reviewSR.ID, f.run.ID, "head1", 0, 5, ""); err != nil {
+	if err := f.db.CompleteReviewStep(f.reviewSR.ID, f.run.ID, "head1", 0, 5, "", ""); err != nil {
 		t.Fatal(err)
 	}
 
