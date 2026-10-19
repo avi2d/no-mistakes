@@ -3,6 +3,7 @@
 package e2e
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -27,8 +28,13 @@ func TestDocsOnlyPushSkipsTheReviewAgentAndStillPublishes(t *testing.T) {
 	if !ok || review.Status != types.StepStatusCompleted {
 		t.Fatalf("review step = %+v, want completed", review)
 	}
-	if review.SkipReason != "only docs and CI schedule lines changed" {
+	const reason = "only docs and CI schedule lines changed"
+	if review.SkipReason != reason {
 		t.Fatalf("review skip reason = %q", review.SkipReason)
+	}
+	logs, err := h.Run("axi", "logs", "--run", run.ID, "--step", "review")
+	if err != nil || !strings.Contains(logs, "review agent not run: "+reason) {
+		t.Fatalf("review log does not show the skip reason: %v\n%s", err, logs)
 	}
 	push, ok := findStep(run.Steps, types.StepPush)
 	if !ok || push.Status != types.StepStatusCompleted {

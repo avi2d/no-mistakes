@@ -70,7 +70,7 @@ func TestFixRoundHistoryRewriteJourney(t *testing.T) {
 	initFromOwnWorktree(t, h, "init-fix-round-rewrite")
 
 	const branch = "feature/fix-round-rewrite"
-	submitted := h.CommitChange(branch, "CHANGELOG.md", "- add the feature\n", "add the feature")
+	submitted := h.CommitChange(branch, "feature.go", "package feature\n", "add the feature")
 	movedMain := advanceMain(t, h, "merged-pr.txt", "newly merged PR\n", "merge an unrelated PR")
 	operator := h.AddWorktree(branch)
 	gateDir := filepath.Join(h.NMHome, "repos", h.repoID()+".git")
@@ -134,7 +134,7 @@ func TestFixAgentFailureAfterHistoryRewriteJourney(t *testing.T) {
 	initFromOwnWorktree(t, h, "init-fix-agent-failure")
 
 	const branch = "feature/fix-agent-failure"
-	submitted := h.CommitChange(branch, "CHANGELOG.md", "- add the feature\n", "add the feature")
+	submitted := h.CommitChange(branch, "feature.go", "package feature\n", "add the feature")
 	advanceMain(t, h, "merged-pr.txt", "newly merged PR\n", "merge an unrelated PR")
 	operator := h.AddWorktree(branch)
 	gateDir := filepath.Join(h.NMHome, "repos", h.repoID()+".git")
