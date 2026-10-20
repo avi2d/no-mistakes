@@ -17,6 +17,7 @@ import (
 	"github.com/kunchenguid/no-mistakes/internal/git"
 	"github.com/kunchenguid/no-mistakes/internal/paths"
 	"github.com/kunchenguid/no-mistakes/internal/telemetry"
+	"github.com/kunchenguid/no-mistakes/internal/testgit"
 	"github.com/kunchenguid/no-mistakes/internal/types"
 )
 
@@ -1750,7 +1751,7 @@ func TestHumanSyncRecoverRequiresConfirmationOutsideTTY(t *testing.T) {
 
 func cliGit(t *testing.T, dir string, args ...string) string {
 	t.Helper()
-	out, err := git.Run(context.Background(), dir, args...)
+	out, err := git.RunWithEnv(context.Background(), dir, testgit.IsolatedEnv(nil), args...)
 	if err != nil {
 		t.Fatalf("git %s: %v", strings.Join(args, " "), err)
 	}

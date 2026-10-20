@@ -33,6 +33,21 @@ func RealGit() (string, error) {
 	return "", fmt.Errorf("testgit: real git not found in standard locations (%s)", strings.Join(locations, ", "))
 }
 
+// IsolatedEnv appends the entries that keep a fixture git command off the
+// machine's system config and hooks. The global config path stays inherited:
+// tests that write it, such as url rewrites, target the harness temp file,
+// and pointing it at /dev/null would refuse those writes.
+func IsolatedEnv(base []string) []string {
+	if base == nil {
+		base = os.Environ()
+	}
+	return append(append([]string(nil), base...),
+		"GIT_CONFIG_NOSYSTEM=1",
+		"GIT_CONFIG_COUNT=0",
+		"GIT_CONFIG_PARAMETERS=",
+	)
+}
+
 func gitLocations() []string {
 	if runtime.GOOS != "windows" {
 		return []string{"/usr/bin/git", "/opt/homebrew/bin/git", "/usr/local/bin/git"}
