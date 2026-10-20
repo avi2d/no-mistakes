@@ -23,6 +23,7 @@ import (
 	"github.com/kunchenguid/no-mistakes/internal/e2edaemon"
 	"github.com/kunchenguid/no-mistakes/internal/ipc"
 	"github.com/kunchenguid/no-mistakes/internal/paths"
+	"github.com/kunchenguid/no-mistakes/internal/testgit"
 	"github.com/kunchenguid/no-mistakes/internal/types"
 )
 
@@ -778,7 +779,7 @@ type Invocation struct {
 func (h *Harness) runGit(ctx context.Context, dir string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(),
+	cmd.Env = append(testgit.IsolatedEnv(nil),
 		"GIT_AUTHOR_NAME=E2E Test",
 		"GIT_AUTHOR_EMAIL=e2e@example.com",
 		"GIT_COMMITTER_NAME=E2E Test",
