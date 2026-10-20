@@ -191,7 +191,7 @@ func TestRerunSendsOnlyCleanCallerHead(t *testing.T) {
 			srv.Handle(ipc.MethodGetRunsForHead, func(ctx context.Context, _ json.RawMessage) (interface{}, error) {
 				select {
 				case <-commitBeforePush:
-					if _, err := git.Run(ctx, dir, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "--allow-empty", "-m", "concurrent capture commit"); err != nil {
+					if _, err := git.RunWithEnv(ctx, dir, testgit.IsolatedEnv(nil), "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "--allow-empty", "-m", "concurrent capture commit"); err != nil {
 						return nil, err
 					}
 				default:
@@ -204,7 +204,7 @@ func TestRerunSendsOnlyCleanCallerHead(t *testing.T) {
 			srv.Handle(ipc.MethodGetActiveRun, func(ctx context.Context, _ json.RawMessage) (interface{}, error) {
 				select {
 				case <-commitDuringWait:
-					if _, err := git.Run(ctx, dir, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "--allow-empty", "-m", "concurrent local commit"); err != nil {
+					if _, err := git.RunWithEnv(ctx, dir, testgit.IsolatedEnv(nil), "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "--allow-empty", "-m", "concurrent local commit"); err != nil {
 						return nil, err
 					}
 				default:

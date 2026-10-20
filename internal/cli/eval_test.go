@@ -18,6 +18,7 @@ import (
 	"github.com/kunchenguid/no-mistakes/internal/git"
 	"github.com/kunchenguid/no-mistakes/internal/paths"
 	"github.com/kunchenguid/no-mistakes/internal/telemetry"
+	"github.com/kunchenguid/no-mistakes/internal/testgit"
 	"github.com/kunchenguid/no-mistakes/internal/types"
 )
 
@@ -340,7 +341,7 @@ func installFakeCLIReviewAgent(t *testing.T, root, findingsJSON string) {
 
 func mustCLIGit(t *testing.T, ctx context.Context, dir string, args ...string) string {
 	t.Helper()
-	out, err := git.Run(ctx, dir, args...)
+	out, err := git.RunWithEnv(ctx, dir, testgit.IsolatedEnv(nil), args...)
 	if err != nil {
 		t.Fatalf("git %v: %v", args, err)
 	}

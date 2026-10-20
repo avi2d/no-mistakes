@@ -17,6 +17,8 @@ import (
 // the wrapper shell, and the next suite's pre-reap covers SIGKILL of the
 // wrapper itself via the on-disk inventory.
 func TestMain(m *testing.M) {
+	os.Unsetenv("GIT_CONFIG_COUNT")
+	_ = os.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 	if inv, err := e2edaemon.Open(); err == nil {
 		_ = inv.ReapAll()
 	}

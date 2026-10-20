@@ -18,6 +18,7 @@ import (
 	"github.com/kunchenguid/no-mistakes/internal/db"
 	"github.com/kunchenguid/no-mistakes/internal/git"
 	"github.com/kunchenguid/no-mistakes/internal/paths"
+	"github.com/kunchenguid/no-mistakes/internal/testgit"
 )
 
 func init() {
@@ -92,6 +93,8 @@ func TestMain(m *testing.M) {
 	_ = os.Setenv("NM_HOME", root)
 	_ = os.Setenv("HOME", home)
 	_ = os.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(home, "gitconfig"))
+	os.Unsetenv("GIT_CONFIG_COUNT")
+	_ = os.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 	_ = os.Setenv("NO_MISTAKES_TELEMETRY", "off")
 	_ = os.Setenv("NO_MISTAKES_NO_UPDATE_CHECK", "1")
 
@@ -215,6 +218,7 @@ printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"structured
 func run(t *testing.T, dir string, name string, args ...string) {
 	t.Helper()
 	cmd := exec.Command(name, args...)
+	cmd.Env = testgit.IsolatedEnv(nil)
 	if dir != "" {
 		cmd.Dir = dir
 	}
