@@ -470,7 +470,7 @@ func TestCompleteReviewStepIsAtomic(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := d.CompleteReviewStep(step.ID, "missing-run", "approved", 0, 10, "review.log"); err == nil {
+	if err := d.CompleteReviewStep(step.ID, "missing-run", "approved", 0, 10, "review.log", ""); err == nil {
 		t.Fatal("expected missing run to roll back review completion")
 	}
 	gotStep, _ := d.GetStepResult(step.ID)
@@ -482,13 +482,36 @@ func TestCompleteReviewStepIsAtomic(t *testing.T) {
 		t.Fatalf("failed transaction created review authority: %#v", gotRun.ReviewApprovedHeadSHA)
 	}
 
-	if err := d.CompleteReviewStep(step.ID, run.ID, "approved", 0, 10, "review.log"); err != nil {
+	if err := d.CompleteReviewStep(step.ID, run.ID, "approved", 0, 10, "review.log", ""); err != nil {
 		t.Fatal(err)
 	}
 	gotStep, _ = d.GetStepResult(step.ID)
 	gotRun, _ = d.GetRun(run.ID)
 	if gotStep.Status != types.StepStatusCompleted || gotRun.ReviewApprovedHeadSHA == nil || *gotRun.ReviewApprovedHeadSHA != "approved" {
 		t.Fatalf("atomic review completion = step %#v run %#v", gotStep, gotRun)
+	}
+}
+
+func TestCompleteReviewStepReplacesTheSkipReason(t *testing.T) {
+	d := openTestDB(t)
+	repo, _ := d.InsertRepo("/tmp/review-skip-reason", "https://example.com/repo.git", "main")
+	run, _ := d.InsertRun(repo.ID, "feature", "head", "base")
+	step, _ := d.InsertStepResult(run.ID, types.StepReview)
+
+	if err := d.CompleteReviewStep(step.ID, run.ID, "approved", 0, 10, "review.log", "only docs changed"); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := d.GetStepResult(step.ID)
+	if got.SkipReason == nil || *got.SkipReason != "only docs changed" {
+		t.Fatalf("skip reason = %#v, want the recorded reason", got.SkipReason)
+	}
+
+	if err := d.CompleteReviewStep(step.ID, run.ID, "approved-again", 0, 10, "review.log", ""); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = d.GetStepResult(step.ID)
+	if got.SkipReason != nil {
+		t.Fatalf("skip reason = %q after a review whose agent ran, want none", *got.SkipReason)
 	}
 }
 

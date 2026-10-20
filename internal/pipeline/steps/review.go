@@ -236,6 +236,19 @@ Previous review findings to address:
 			FixSummary:      fixSummary,
 		})
 	}
+	if !sctx.Fixing && !sctx.FinalizingAnswers && sctx.CoverageContinuation == nil && docsAndSchedulesOnly(ctx, sctx.WorkDir, baseSHA, reviewTargetSHA) {
+		sctx.Log("review agent not run: " + docsAndSchedulesOnlyReason)
+		skippedFindings, _ := json.Marshal(Findings{
+			RiskLevel:     "low",
+			RiskRationale: docsAndSchedulesOnlyReason,
+		})
+		return approvedReviewOutcome(reviewTargetSHA, &pipeline.StepOutcome{
+			Findings:        string(skippedFindings),
+			ReviewablePaths: reviewable,
+			ReviewBaseSHA:   baseSHA,
+			SkipReason:      docsAndSchedulesOnlyReason,
+		})
+	}
 
 	// Ask agent to review. This fresh deadline is invocation-owned: a
 	// successful fixer above cannot consume any of this independent,

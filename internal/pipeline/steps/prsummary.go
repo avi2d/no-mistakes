@@ -70,6 +70,9 @@ type pipelineAttestationStep struct {
 	// a failing configured commands.test. Omitted for every other step, ordinary
 	// Test completions, and attestations that predate the field.
 	OverrideReason string `json:"override_reason,omitempty"`
+	// SkipReason says why the step did not do its usual work, so a completed
+	// Review whose agent never ran is not read as a review that happened.
+	SkipReason string `json:"skip_reason,omitempty"`
 }
 
 // pipelineAttestationLiveValidation reports the run's verdict and how much of
@@ -210,6 +213,7 @@ func newPipelineAttestation(steps []*db.StepResult, rounds map[string][]*db.Step
 				attestation.AllowTestCommandOverride = neutralizePRControls(strings.TrimSpace(policy.AllowTestCommandOverride))
 			}
 		}
+		item.SkipReason = neutralizePRControls(recordedSkipReason(sr))
 		attestation.Steps = append(attestation.Steps, item)
 	}
 	// A custom gate shares its anchor's order, so the tie-break decides where
@@ -1185,6 +1189,9 @@ func buildStepEntry(sr *db.StepResult, rounds []*db.StepRound, flavor prBodyFlav
 		return buildDetail(fmt.Sprintf("❌ **%s** - failed", name))
 	}
 
+	if reason := recordedSkipReason(sr); reason != "" {
+		return buildDetail(fmt.Sprintf("⏭️ **%s** - skipped: %s", name, escapePRText(reason, flavor)))
+	}
 	if sr.Status == types.StepStatusSkipped {
 		return buildDetail(fmt.Sprintf("⏭️ **%s** - skipped", name))
 	}
@@ -1425,7 +1432,7 @@ func buildStepDetails(summaryLine string, sr *db.StepResult, rounds []*db.StepRo
 	// A skipped step whose rounds recorded no findings never checked
 	// anything, so "No issues found" under a "skipped" summary would
 	// claim a pass.
-	if len(rounds) == 0 || (sr.Status == types.StepStatusSkipped && !roundsHaveFindings(rounds)) {
+	if len(rounds) == 0 || ((sr.Status == types.StepStatusSkipped || recordedSkipReason(sr) != "") && !roundsHaveFindings(rounds)) {
 		writeStepStatusDetail(&inner, sr, flavor)
 		return foldPRBlock(summaryLine, inner.String(), flavor)
 	}
@@ -1668,7 +1675,24 @@ func neutralizeAttestationMarkers(provider scm.Provider, s string) string {
 	return closingGrammarFor(provider).neutralize(escaped)
 }
 
+// recordedSkipReason reads the reason only where it describes the step's
+// final outcome: a skipped step, or a Review that completed without its agent.
+// A Review rerunning after such a completion still holds the old reason.
+func recordedSkipReason(sr *db.StepResult) string {
+	if sr.SkipReason == nil {
+		return ""
+	}
+	if sr.Status != types.StepStatusSkipped && (sr.StepName != types.StepReview || sr.Status != types.StepStatusCompleted) {
+		return ""
+	}
+	return strings.TrimSpace(*sr.SkipReason)
+}
+
 func writeStepStatusDetail(b *strings.Builder, sr *db.StepResult, flavor prBodyFlavor) {
+	if reason := recordedSkipReason(sr); reason != "" {
+		b.WriteString("Step was skipped: " + escapePRText(reason, flavor) + "\n\n")
+		return
+	}
 	switch sr.Status {
 	case types.StepStatusPending:
 		b.WriteString("Step has not started yet.\n\n")
