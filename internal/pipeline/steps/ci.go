@@ -26,13 +26,14 @@ const (
 // checks that are still running. The canonical strings live in cimonitor so all
 // producers and consumers agree on them.
 const (
-	ciChecksPassedMsg           = cimonitor.ChecksPassedMsg
-	ciChecksPassedCompleteMsg   = cimonitor.ChecksPassedCompleteMsg
-	ciNoChecksPassedMsg         = cimonitor.NoChecksPassedMsg
-	ciNoChecksPassedCompleteMsg = cimonitor.NoChecksPassedCompleteMsg
-	ciChecksRunningMsg          = cimonitor.ChecksRunningMsg
-	ciChecksAwaitingApprovalMsg = cimonitor.ChecksAwaitingApprovalMsg
-	ciBehindBaseMsg             = cimonitor.BehindBaseMsg
+	ciChecksPassedMsg            = cimonitor.ChecksPassedMsg
+	ciChecksPassedCompleteMsg    = cimonitor.ChecksPassedCompleteMsg
+	ciNoChecksPassedMsg          = cimonitor.NoChecksPassedMsg
+	ciNoChecksPassedCompleteMsg  = cimonitor.NoChecksPassedCompleteMsg
+	ciChecksRunningMsg           = cimonitor.ChecksRunningMsg
+	ciChecksAwaitingApprovalMsg  = cimonitor.ChecksAwaitingApprovalMsg
+	ciChecksAwaitingManualJobMsg = cimonitor.ChecksAwaitingManualJobMsg
+	ciBehindBaseMsg              = cimonitor.BehindBaseMsg
 )
 
 // CIStep monitors an open PR until it is merged, closed, or its configured idle
@@ -530,6 +531,7 @@ func (s *CIStep) Execute(sctx *pipeline.StepContext) (outcome *pipeline.StepOutc
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
+		pollBaseTip := ""
 		botCommentReadFailed := false
 		behindObserved := false
 
@@ -549,6 +551,7 @@ func (s *CIStep) Execute(sctx *pipeline.StepContext) (outcome *pipeline.StepOutc
 			tip, resolved := baseBranchTip(tipCtx)
 			cancel()
 			if resolved && tip != "" {
+				pollBaseTip = tip
 				if lastBaseTip == "" {
 					lastBaseTip = tip
 				} else if tip != lastBaseTip {
@@ -783,7 +786,14 @@ func (s *CIStep) Execute(sctx *pipeline.StepContext) (outcome *pipeline.StepOutc
 				sctx.Log("issues detected but checks still pending, waiting for all checks to complete...")
 			} else if hasIssues {
 				lastMonitorLog = ""
-				if s.lastRepairStillUnverified(checks, mergeConflict) {
+				if mergeConflict && unlimited {
+					tipCtx, cancel := context.WithTimeout(ctx, defaultBaseBranchTipResolveWindow)
+					if tip, resolved := baseBranchTip(tipCtx); resolved {
+						pollBaseTip = tip
+					}
+					cancel()
+				}
+				if s.lastRepairStillUnverified(checks, mergeConflict, pollBaseTip) {
 					// The provider has not re-run the checks the last
 					// published repair targeted: the failures on screen are
 					// the ones that repair was for, not a verdict on it.
@@ -814,8 +824,8 @@ func (s *CIStep) Execute(sctx *pipeline.StepContext) (outcome *pipeline.StepOutc
 						botComments:         reviewBotComments(sctx, host, pr, checks),
 						greenBots:           reviewBotCommentsAlways(sctx),
 					})
-					if hasAwaitingApprovalChecks(checks) {
-						sctx.Log(ciChecksAwaitingApprovalMsg)
+					if hold := humanHoldMessage(checks); hold != "" {
+						sctx.Log(hold)
 					}
 					sctx.Log(fmt.Sprintf("issues detected: %s", findings.Summary))
 					return ciObservationOutcome(findings), nil
@@ -940,14 +950,30 @@ func (s *CIStep) Execute(sctx *pipeline.StepContext) (outcome *pipeline.StepOutc
 	}
 }
 
+// humanHoldMessage names the hold a check set is under, or "" when every
+// pending check can still finish on its own. The two holds read differently to
+// the person they wait on - approve a workflow versus run a job - so
+// each keeps its own wording instead of one hold's message describing the
+// other's.
+func humanHoldMessage(checks []scm.Check) string {
+	if hasAwaitingApprovalChecks(checks) {
+		return ciChecksAwaitingApprovalMsg
+	}
+	if hasAwaitingManualJobChecks(checks) {
+		return ciChecksAwaitingManualJobMsg
+	}
+	return ""
+}
+
 // ciWaitingMessage names what the monitor is waiting for when no check has
-// failed. A workflow the provider is holding for approval has run nothing and
-// will run nothing until a maintainer acts, so calling that "checks running"
+// failed. A check the provider is holding for a person - a workflow awaiting
+// maintainer approval, or a blocking manual job - has run nothing more and
+// will run nothing until that person acts, so calling it "checks running"
 // describes work that does not exist and hides the one thing that would move
 // the run along. Anything else is an ordinary wait on checks in flight.
 func ciWaitingMessage(checks []scm.Check) string {
-	if hasAwaitingApprovalChecks(checks) {
-		return ciChecksAwaitingApprovalMsg
+	if hold := humanHoldMessage(checks); hold != "" {
+		return hold
 	}
 	return ciChecksRunningMsg
 }
