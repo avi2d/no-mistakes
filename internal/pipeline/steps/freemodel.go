@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -68,7 +69,11 @@ func runFreeModelTurn(sctx *pipeline.StepContext, kind agent.FreeModelKind, opts
 	}
 	ctx, cancel := context.WithTimeout(sctx.Ctx, freeModelTimeout(kind, sctx.Config))
 	defer cancel()
-	return runner.RunFreeModel(ctx, kind, opts)
+	result, err := runner.RunFreeModel(ctx, kind, opts)
+	if errors.Is(err, agent.ErrFreeModelUnsupported) {
+		return nil, fmt.Errorf("free model %q has no runner on this run", string(kind))
+	}
+	return result, err
 }
 
 func runFreeModelFallbackTurn(sctx *pipeline.StepContext, kind agent.FreeModelKind, opts agent.RunOpts) (*agent.Result, error) {
@@ -78,7 +83,11 @@ func runFreeModelFallbackTurn(sctx *pipeline.StepContext, kind agent.FreeModelKi
 	}
 	ctx, cancel := context.WithTimeout(sctx.Ctx, freeModelTimeout(kind, sctx.Config))
 	defer cancel()
-	return runner.RunFallbackModel(ctx, kind, opts)
+	result, err := runner.RunFallbackModel(ctx, kind, opts)
+	if errors.Is(err, agent.ErrFreeModelUnsupported) {
+		return nil, fmt.Errorf("free model %q has no runner on this run", string(kind))
+	}
+	return result, err
 }
 
 // The downgrade is forced here, not in the prompt: a model that ignores the read-only rule still cannot park the gate.

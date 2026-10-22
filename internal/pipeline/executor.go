@@ -2188,6 +2188,14 @@ func (a *gateStepBoundaryAgent) Run(ctx context.Context, opts agent.RunOpts) (*a
 
 func (a *gateStepBoundaryAgent) Close() error { return a.inner.Close() }
 
+func (a *gateStepBoundaryAgent) RunFreeModel(ctx context.Context, kind agent.FreeModelKind, opts agent.RunOpts) (*agent.Result, error) {
+	return agent.ForwardFreeModel(a.inner, ctx, kind, opts)
+}
+
+func (a *gateStepBoundaryAgent) RunFallbackModel(ctx context.Context, kind agent.FreeModelKind, opts agent.RunOpts) (*agent.Result, error) {
+	return agent.ForwardFallbackModel(a.inner, ctx, kind, opts)
+}
+
 func (a *gateStepBoundaryAgent) SupportsSessionResume() bool {
 	return agent.SupportsSessionResume(a.inner)
 }
@@ -2242,6 +2250,14 @@ func (a *lifecycleAgent) Run(ctx context.Context, opts agent.RunOpts) (*agent.Re
 
 func (a *lifecycleAgent) Close() error {
 	return a.inner.Close()
+}
+
+func (a *lifecycleAgent) RunFreeModel(ctx context.Context, kind agent.FreeModelKind, opts agent.RunOpts) (*agent.Result, error) {
+	return agent.ForwardFreeModel(a.inner, ctx, kind, opts)
+}
+
+func (a *lifecycleAgent) RunFallbackModel(ctx context.Context, kind agent.FreeModelKind, opts agent.RunOpts) (*agent.Result, error) {
+	return agent.ForwardFallbackModel(a.inner, ctx, kind, opts)
 }
 
 // SupportsSessionResume forwards the wrapped adapter's session capability so

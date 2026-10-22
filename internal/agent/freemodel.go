@@ -22,6 +22,24 @@ const (
 
 var ErrFreeModelEmpty = errors.New("free model returned an empty answer")
 
+var ErrFreeModelUnsupported = errors.New("agent chain has no free model runner")
+
+func ForwardFreeModel(a Agent, ctx context.Context, kind FreeModelKind, opts RunOpts) (*Result, error) {
+	runner, ok := a.(FreeModelRunner)
+	if !ok {
+		return nil, ErrFreeModelUnsupported
+	}
+	return runner.RunFreeModel(ctx, kind, opts)
+}
+
+func ForwardFallbackModel(a Agent, ctx context.Context, kind FreeModelKind, opts RunOpts) (*Result, error) {
+	runner, ok := a.(FreeModelRunner)
+	if !ok {
+		return nil, ErrFreeModelUnsupported
+	}
+	return runner.RunFallbackModel(ctx, kind, opts)
+}
+
 type FreeModelSpec struct {
 	Enabled       bool
 	Model         string
