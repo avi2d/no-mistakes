@@ -257,6 +257,7 @@ func (s *CIStep) autoFixCI(sctx *pipeline.StepContext, host scm.Host, pr *scm.PR
 	if mergesMovedBase(sctx) {
 		promptRules += "\n\t\t" + ciAppendOnlyRule
 	}
+	promptRules += "\n\t\t" + `- Do not run git commit: leave your fixes in the working tree and the pipeline commits them. The only commit you may run is the merge-conclude commit the merge instructions ask for.`
 
 	prompt := fmt.Sprintf(
 		`%s
@@ -343,7 +344,13 @@ CI logs:
 	if errors.As(err, &refusal) {
 		head, recordErr := stepGitHeadSHA(sctx)
 		if recordErr == nil && head != sctx.Run.HeadSHA {
-			_, recordErr = s.recordLocalRepair(sctx, head)
+			if normErr := normalizeAgentHead(sctx); normErr != nil {
+				return repair, errors.Join(err, normErr)
+			}
+			head, recordErr = stepGitHeadSHA(sctx)
+			if recordErr == nil && head != sctx.Run.HeadSHA {
+				_, recordErr = s.recordLocalRepair(sctx, head)
+			}
 		}
 		return repair, errors.Join(err, recordErr)
 	}
@@ -670,6 +677,14 @@ func (s *CIStep) retryProtectedPathRepair(sctx *pipeline.StepContext) (ciRepairR
 }
 
 func (s *CIStep) commitRepair(sctx *pipeline.StepContext, summary string, producer *agent.Result) (ciRepairResult, error) {
+	// A rebase replay rewrites the recorded head by design, so the gate below
+	// cannot measure it against that head. The replay proof owns the rewritten
+	// range instead, and the rebase stamps its committer from this worktree.
+	if s.replayBase == "" {
+		if err := normalizeAgentHead(sctx); err != nil {
+			return ciRepairResult{}, err
+		}
+	}
 	status, err := stepGitRun(sctx, "status", "--porcelain")
 	if err != nil {
 		return ciRepairResult{}, fmt.Errorf("check CI changes: %w", err)
@@ -714,7 +729,11 @@ func (s *CIStep) commitRepair(sctx *pipeline.StepContext, summary string, produc
 		}
 		return ciRepairResult{}, nil
 	}
-	if _, err := stepGitRun(sctx, "commit", "-m", message); err != nil {
+	name, email, err := pipelineCommitIdentity(sctx, sctx.Run.HeadSHA)
+	if err != nil {
+		return ciRepairResult{}, err
+	}
+	if _, err := stepGitRunWithEnv(sctx, pipelineIdentityEnv(name, email), "-c", "user.name="+name, "-c", "user.email="+email, "commit", "-m", message); err != nil {
 		return ciRepairResult{}, fmt.Errorf("commit: %w", err)
 	}
 	headSHA, err := stepGitHeadSHA(sctx)
