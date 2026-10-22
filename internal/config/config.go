@@ -213,6 +213,9 @@ type GlobalConfig struct {
 	// Global-only: repository input must not select credential/model profiles.
 	ReviewAgents  map[string]ReviewAgent `yaml:"review_agents"`
 	ReviewerChain []ReviewAgent          `yaml:"reviewer_chain"`
+	// Global-only: repository input must not select the model that runs.
+	MinimaxExtraReview MinimaxExtraReview `yaml:"minimax_extra_review"`
+	BeamDrafts         BeamDrafts         `yaml:"beam_drafts"`
 	// WorktreeRoots places a repository's pipeline run worktrees under a
 	// directory the operator chose instead of the default
 	// <NM_HOME>/worktrees/<repoID>. Keys are registered checkout paths
@@ -298,6 +301,8 @@ type globalConfigRaw struct {
 	QuotaRouting              QuotaRoutingRaw            `yaml:"quota_routing"`
 	ReviewAgents              map[string]ReviewAgent     `yaml:"review_agents"`
 	ReviewerChain             []ReviewAgent              `yaml:"reviewer_chain"`
+	MinimaxExtraReview        *minimaxExtraReviewRaw     `yaml:"minimax_extra_review"`
+	BeamDrafts                *beamDraftsRaw             `yaml:"beam_drafts"`
 	WorktreeRoots             map[string]string          `yaml:"worktree_roots"`
 	Worktree                  WorktreeRaw                `yaml:"worktree"`
 	CITimeout                 string                     `yaml:"ci_timeout"`
@@ -884,6 +889,8 @@ type Config struct {
 	QuotaProviders            map[string]string
 	ReviewAgents              map[string]ReviewAgent
 	ReviewerChain             []ReviewAgent
+	MinimaxExtraReview        MinimaxExtraReview
+	BeamDrafts                BeamDrafts
 	CITimeout                 time.Duration
 	StepQuietWarning          time.Duration
 	AgentTimeout              time.Duration
@@ -2769,6 +2776,16 @@ func LoadGlobalFromBytes(data []byte) (*GlobalConfig, error) {
 	}
 	cfg.ReviewAgents = raw.ReviewAgents
 	cfg.ReviewerChain = raw.ReviewerChain
+	minimax, err := parseMinimaxExtraReview(raw.MinimaxExtraReview != nil, derefMinimaxRaw(raw.MinimaxExtraReview))
+	if err != nil {
+		return nil, err
+	}
+	cfg.MinimaxExtraReview = minimax
+	beam, err := parseBeamDrafts(raw.BeamDrafts != nil, derefBeamRaw(raw.BeamDrafts))
+	if err != nil {
+		return nil, err
+	}
+	cfg.BeamDrafts = beam
 	if raw.WorktreeRoots != nil {
 		if err := ValidateWorktreeRoots(raw.WorktreeRoots); err != nil {
 			return nil, err
@@ -4029,6 +4046,8 @@ func merge(global *GlobalConfig, repo *RepoConfig, override *RepositoryOverride)
 		QuotaProviders:            global.QuotaProviders,
 		ReviewAgents:              global.ReviewAgents,
 		ReviewerChain:             append([]ReviewAgent(nil), global.ReviewerChain...),
+		MinimaxExtraReview:        global.MinimaxExtraReview,
+		BeamDrafts:                global.BeamDrafts,
 		CITimeout:                 global.CITimeout,
 		StepQuietWarning:          global.StepQuietWarning,
 		AgentTimeout:              global.AgentTimeout,
