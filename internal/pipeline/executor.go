@@ -1562,12 +1562,12 @@ rounds:
 			// file instead poisons that path in reportedFiles. Either way an
 			// answered-and-verified finding would stay outstanding for a reason
 			// that has nothing to do with it.
-			verificationFindings := dropReviewQuestionFindingsJSON(roundFindings)
+			verificationFindings := dropExtraReviewFindingsJSON(dropReviewQuestionFindingsJSON(roundFindings))
 			var fixedThisRound []string
 			if sctx.Fixing && !sctx.SkipFixExecution {
 				fixedThisRound = findingIDList(remapFindingIDsJSON(outstandingFindings, sctx.PreviousFindings))
 			}
-			outstandingFindings = dropReviewQuestionFindingsJSON(outstandingFindings)
+			outstandingFindings = dropExtraReviewFindingsJSON(dropReviewQuestionFindingsJSON(outstandingFindings))
 			// An answer round retracts by naming ids, never by silence - and
 			// ONLY an answer round. A fix round is held to the coverage rule,
 			// so a retraction it claimed would clear a selected finding no
@@ -2851,7 +2851,7 @@ func answerRoundCarriedFindings(answering bool, outstanding string) string {
 	if !answering {
 		return ""
 	}
-	return dropReviewQuestionFindingsJSON(outstanding)
+	return dropExtraReviewFindingsJSON(dropReviewQuestionFindingsJSON(outstanding))
 }
 
 // ReviewConversationAnswerDir is where an answer for this run may be appended,
