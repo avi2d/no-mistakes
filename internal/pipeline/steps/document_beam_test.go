@@ -3,6 +3,7 @@ package steps
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -146,6 +147,35 @@ func TestBeamDocument_DirectEditIsDiscarded(t *testing.T) {
 	}
 	if runCalls != 1 {
 		t.Fatalf("standard calls = %d, want 1", runCalls)
+	}
+	content, err := os.ReadFile(filepath.Join(dir, "feature.txt"))
+	if err != nil || string(content) != "feature code"+"\n" {
+		t.Fatalf("feature.txt = %q, want the committed content", content)
+	}
+}
+
+func TestBeamDocument_FailedDraftsRestoreBeforeAnalyzerPass(t *testing.T) {
+	t.Parallel()
+	dir, baseSHA, headSHA := setupGitRepo(t)
+	gitCmd(t, dir, "checkout", "--detach", headSHA)
+	ag := newMockFreeModelAgent(func(context.Context, agent.RunOpts) (*agent.Result, error) {
+		return &agent.Result{Output: json.RawMessage(`{"findings":[],"summary":"verify clean"}`)}, nil
+	})
+	ag.freeFn = func(_ context.Context, _ agent.FreeModelKind, opts agent.RunOpts) (*agent.Result, error) {
+		if err := os.WriteFile(filepath.Join(opts.CWD, "feature.txt"), []byte("unchecked beam edit\n"), 0o644); err != nil {
+			return nil, err
+		}
+		return nil, fmt.Errorf("beam exploded")
+	}
+	ag.fallbackFn = func(context.Context, agent.FreeModelKind, agent.RunOpts) (*agent.Result, error) {
+		return nil, fmt.Errorf("fallback exploded")
+	}
+	sctx := freeModelStepContext(t, ag, dir, baseSHA, headSHA)
+	if _, err := (&DocumentStep{}).Execute(sctx); err != nil {
+		t.Fatal(err)
+	}
+	if head := gitCmd(t, dir, "rev-parse", "HEAD"); head != headSHA {
+		t.Fatalf("HEAD moved to %s: the analyzer pass committed the unchecked beam edit", head)
 	}
 	content, err := os.ReadFile(filepath.Join(dir, "feature.txt"))
 	if err != nil || string(content) != "feature code"+"\n" {

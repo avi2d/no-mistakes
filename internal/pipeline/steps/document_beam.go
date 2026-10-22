@@ -19,6 +19,19 @@ Draft protocol (this turn only):
 - Fill in "findings" and "summary" exactly as the task below describes; the pipeline checks the diff mechanically and applies it itself.
 `
 
+// An unchecked draft's edits never reach another agent's pass: a failed
+// restore stops the handoff with an error instead of passing dirty state on.
+func discardBeamDirectEdits(sctx *pipeline.StepContext, snap worktreeSnapshot) (bool, error) {
+	if !snap.mutated(sctx.Ctx, sctx.WorkDir) {
+		return false, nil
+	}
+	sctx.Log("beam draft edited the checkout directly; its edits were discarded")
+	if err := snap.restore(sctx.Ctx, sctx.WorkDir); err != nil {
+		return false, fmt.Errorf("beam draft restore: %w", err)
+	}
+	return true, nil
+}
+
 // A Beam draft that parses still passes the mechanical patch check before use.
 func (s *DocumentStep) executeBeamDocumentTurn(sctx *pipeline.StepContext, prompt string, schema []byte, purpose, headBefore string, combinedLint bool) (*pipeline.StepOutcome, bool, error) {
 	snap, err := snapshotWorktree(sctx.Ctx, sctx.WorkDir)
@@ -46,21 +59,30 @@ func (s *DocumentStep) executeBeamDocumentTurn(sctx *pipeline.StepContext, promp
 		result = nil
 	}
 	if result == nil {
+		if _, err := discardBeamDirectEdits(sctx, snap); err != nil {
+			return nil, false, err
+		}
 		sctx.Log("beam draft unusable; retrying on the fallback model")
 		if result, err = runFreeModelFallbackTurn(sctx, agent.FreeModelBeam, opts); err != nil {
 			sctx.Log(fmt.Sprintf("beam draft fallback failed (%s)", err))
+			if _, restoreErr := discardBeamDirectEdits(sctx, snap); restoreErr != nil {
+				return nil, false, restoreErr
+			}
 			return nil, false, nil
 		}
 		if draft, err = parseBeamDocumentOutput(result.Output); err != nil {
 			sctx.Log(fmt.Sprintf("beam draft fallback unusable (%s)", err))
+			if _, restoreErr := discardBeamDirectEdits(sctx, snap); restoreErr != nil {
+				return nil, false, restoreErr
+			}
 			return nil, false, nil
 		}
 	}
-	if snap.mutated(sctx.Ctx, sctx.WorkDir) {
-		sctx.Log("beam draft edited the checkout directly; its edits were discarded")
-		if err := snap.restore(sctx.Ctx, sctx.WorkDir); err != nil {
-			sctx.Log(fmt.Sprintf("beam draft restore: %s", err))
-		}
+	discarded, err := discardBeamDirectEdits(sctx, snap)
+	if err != nil {
+		return nil, false, err
+	}
+	if discarded {
 		return nil, false, nil
 	}
 	encoded, err := types.MarshalFindingsJSON(draft.Findings)
