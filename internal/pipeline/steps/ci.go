@@ -16,10 +16,11 @@ import (
 	"github.com/kunchenguid/no-mistakes/internal/types"
 )
 
-const (
-	defaultBaseBranchTipResolveWindow = 30 * time.Second
-	defaultPublishedHeadResolveWindow = 30 * time.Second
-)
+const defaultBaseBranchTipResolveWindow = 30 * time.Second
+
+// publishedHeadResolveWindow bounds each remote read of the published branch
+// head. Overridable so tests can drive the deadline without waiting it out.
+var publishedHeadResolveWindow = 30 * time.Second
 
 // CI monitoring status messages. These are surfaced to the user and parsed by
 // the TUI and the agent-facing axi commands to distinguish passed checks from
@@ -82,6 +83,11 @@ type CIStep struct {
 	// set only for the duration of that repair's recording. recordRepair
 	// proves a pure replay against exactly this commit and nothing else.
 	replayBase string
+	// provenMergeHead is the merge HEAD the pipeline's own merge machinery
+	// concluded this round, set only for the duration of its recording. The
+	// agent-commit shaper refuses every merge, so it stands aside for exactly
+	// this commit, whose message is git's own rather than an agent's.
+	provenMergeHead string
 }
 
 // SetPollIntervalOverride is a test hook; production leaves the override unset.

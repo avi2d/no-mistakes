@@ -210,6 +210,14 @@ func (s *CIStep) autoFixCI(sctx *pipeline.StepContext, host scm.Host, pr *scm.PR
 		}
 		if (merge == nil || len(merge.conflicts) == 0) && targets.onlyMergeConflict() {
 			sctx.Log("no merge conflicts left to resolve, skipping the fix agent")
+			if merge != nil {
+				head, err := stepGitHeadSHA(sctx)
+				if err != nil {
+					return ciRepairResult{}, fmt.Errorf("resolve merge head: %w", err)
+				}
+				s.provenMergeHead = head
+				defer func() { s.provenMergeHead = "" }()
+			}
 			repair, err := s.commitRepair(sctx, "", nil)
 			if repair.HeadAdvanced {
 				repair.Summary = "merge the base branch"
@@ -326,6 +334,12 @@ CI logs:
 		if err := merge.prove(ctx, sctx); err != nil {
 			return ciRepairResult{}, fmt.Errorf("merge the base branch: %w", err)
 		}
+		head, err := stepGitHeadSHA(sctx)
+		if err != nil {
+			return ciRepairResult{}, fmt.Errorf("resolve merge head: %w", err)
+		}
+		s.provenMergeHead = head
+		defer func() { s.provenMergeHead = "" }()
 	}
 
 	conclusion, conclusionErr := extractCIFixConclusion(result)
@@ -676,7 +690,39 @@ func (s *CIStep) retryProtectedPathRepair(sctx *pipeline.StepContext) (ciRepairR
 	return s.recordRepair(sctx, head)
 }
 
+// isProvenMergeHead reports whether HEAD is the merge the pipeline's own
+// merge machinery concluded for this repair. That commit carries git's
+// deterministic merge message, so there is no agent-authored subject for the
+// commit-settings shaper to rewrite and nothing it could refuse.
+func (s *CIStep) isProvenMergeHead(sctx *pipeline.StepContext) bool {
+	if s.provenMergeHead == "" {
+		return false
+	}
+	head, err := stepGitHeadSHA(sctx)
+	return err == nil && head == s.provenMergeHead
+}
+
 func (s *CIStep) commitRepair(sctx *pipeline.StepContext, summary string, producer *agent.Result) (ciRepairResult, error) {
+	render := func() (string, error) {
+		repairSummary := summary
+		if repairSummary == "" {
+			repairSummary = "repair failing checks"
+		}
+		message, err := sctx.Config.Commit.RenderFixMessageForBranch(types.StepCI, repairSummary, sctx.Run.Branch)
+		if err != nil {
+			return "", fmt.Errorf("render CI repair commit message: %w", err)
+		}
+		message, err = withCommitTrailers(sctx, message, producer)
+		if err != nil {
+			return "", fmt.Errorf("render CI repair commit trailers: %w", err)
+		}
+		return message, nil
+	}
+	if !s.isProvenMergeHead(sctx) {
+		if err := conformAgentCommits(sctx, types.StepCI, render); err != nil {
+			return ciRepairResult{}, err
+		}
+	}
 	// A rebase replay rewrites the recorded head by design, so the gate below
 	// cannot measure it against that head. The replay proof owns the rewritten
 	// range instead, and the rebase stamps its committer from this worktree.
@@ -698,16 +744,9 @@ func (s *CIStep) commitRepair(sctx *pipeline.StepContext, summary string, produc
 		return ciRepairResult{}, nil
 	}
 
-	if summary == "" {
-		summary = "repair failing checks"
-	}
-	message, err := sctx.Config.Commit.RenderFixMessageForBranch(types.StepCI, summary, sctx.Run.Branch)
+	message, err := render()
 	if err != nil {
-		return ciRepairResult{}, fmt.Errorf("render CI repair commit message: %w", err)
-	}
-	message, err = withCommitTrailers(sctx, message, producer)
-	if err != nil {
-		return ciRepairResult{}, fmt.Errorf("render CI repair commit trailers: %w", err)
+		return ciRepairResult{}, err
 	}
 	if err := stagePipelineChanges(sctx); err != nil {
 		return ciRepairResult{}, fmt.Errorf("stage CI changes: %w", err)
