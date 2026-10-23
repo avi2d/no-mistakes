@@ -193,6 +193,23 @@ func stepGitRun(sctx *pipeline.StepContext, args ...string) (string, error) {
 	return strings.TrimSpace(out), err
 }
 
+// stepGitRunWithEnv is stepGitRun with extra environment appended last, so
+// the entries win over ambient values. Identity pinning uses it because git
+// reads GIT_AUTHOR_* and GIT_COMMITTER_* ahead of -c flags.
+func stepGitRunWithEnv(sctx *pipeline.StepContext, extraEnv []string, args ...string) (string, error) {
+	cmd := stepCmd(sctx, "git", args...)
+	cmd.Env = append(git.NonInteractiveEnvFrom(cmd.Env, sctx.WorkDir), extraEnv...)
+	out, err := cmd.Output()
+	if err != nil {
+		stderr := ""
+		if ee, ok := err.(*exec.ExitError); ok {
+			stderr = strings.TrimSpace(string(ee.Stderr))
+		}
+		return "", fmt.Errorf("git %s: %w: %s", safeurl.RedactText(strings.Join(args, " ")), err, safeurl.RedactText(stderr))
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
 // stepGitRunRaw preserves NUL-delimited paths and porcelain status columns.
 func stepGitRunRaw(sctx *pipeline.StepContext, args ...string) (string, error) {
 	cmd := stepCmd(sctx, "git", args...)

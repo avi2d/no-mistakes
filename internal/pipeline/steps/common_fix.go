@@ -1,7 +1,6 @@
 package steps
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -413,17 +412,168 @@ func assertPipelineHeadContinuity(sctx *pipeline.StepContext, stepName types.Ste
 // CI repair commits, the generic git runner, and every user-authored commit keep
 // hook verification; the core pipeline and repository gates remain the
 // authoritative quality checks for what these commits contain.
-func commitPipelineCorrection(ctx context.Context, workDir, message string, logf func(string)) error {
-	return commitPipelineCorrectionWithCleanup(ctx, workDir, message, logf, os.RemoveAll)
+// pipelineIdentityEnv forces the author and committer for one git
+// invocation. Environment entries win over ambient values where -c flags do
+// not: git reads GIT_AUTHOR_* and GIT_COMMITTER_* ahead of the config file
+// the -c flags override, so flags alone cannot pin the identity.
+func pipelineIdentityEnv(name, email string) []string {
+	return []string{
+		"GIT_AUTHOR_NAME=" + name,
+		"GIT_AUTHOR_EMAIL=" + email,
+		"GIT_COMMITTER_NAME=" + name,
+		"GIT_COMMITTER_EMAIL=" + email,
+	}
+}
+
+// pipelineCommitIdentity is the author and committer the pipeline stamps on
+// its own commits: the worktree's configured identity, which the daemon copied
+// from the user's checkout at setup. A missing value fails the commit closed
+// instead of falling back, because any invented author trips the same identity
+// gate the foreign commit tripped. The recorded head's committer is the only
+// fallback, for a worktree that configures no identity and could not commit
+// otherwise.
+func pipelineCommitIdentity(sctx *pipeline.StepContext, recordedHead string) (string, string, error) {
+	name, err := stepGitRun(sctx, "config", "--get", "--default", "", "user.name")
+	if err != nil {
+		return "", "", fmt.Errorf("read pipeline commit identity: %w", err)
+	}
+	email, err := stepGitRun(sctx, "config", "--get", "--default", "", "user.email")
+	if err != nil {
+		return "", "", fmt.Errorf("read pipeline commit identity: %w", err)
+	}
+	if strings.TrimSpace(name) != "" && strings.TrimSpace(email) != "" {
+		return strings.TrimSpace(name), strings.TrimSpace(email), nil
+	}
+	if strings.TrimSpace(recordedHead) != "" {
+		ident, err := stepGitRun(sctx, "log", "-1", "--format=%cn%x00%ce", recordedHead)
+		if err == nil {
+			if parts := strings.Split(ident, "\x00"); len(parts) == 2 && strings.TrimSpace(parts[0]) != "" && strings.TrimSpace(parts[1]) != "" {
+				return strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]), nil
+			}
+		}
+	}
+	return "", "", fmt.Errorf("pipeline commit identity is not configured for %s and its recorded head names none", sctx.WorkDir)
+}
+
+// normalizeRewrittenHead re-authors the narrow replacement shape: a head that
+// rewrites the recorded head with a single new commit on an older parent,
+// such as an amended tip. The amend runs in place, so the rewrite keeps its
+// structure and the strategy checks still judge it as a rewrite. Anything
+// wider, a rebase replay or a merge, belongs to those checks and passes
+// through untouched.
+func normalizeRewrittenHead(sctx *pipeline.StepContext, recorded, head string) error {
+	count, err := stepGitRun(sctx, "rev-list", "--count", recorded+".."+head)
+	if err != nil {
+		return fmt.Errorf("measure rewritten head %s: %w", shortObjectID(head), err)
+	}
+	if strings.TrimSpace(count) != "1" {
+		return nil
+	}
+	parents, err := stepGitRun(sctx, "rev-list", "--parents", "-n", "1", head)
+	if err != nil {
+		return fmt.Errorf("inspect rewritten head %s: %w", shortObjectID(head), err)
+	}
+	if len(strings.Fields(parents)) != 2 {
+		return nil
+	}
+	name, email, err := pipelineCommitIdentity(sctx, recorded)
+	if err != nil {
+		return err
+	}
+	ident, err := stepGitRun(sctx, "log", "-1", "--format=%an%x00%ae%x00%cn%x00%ce", head)
+	if err != nil {
+		return fmt.Errorf("inspect rewritten head %s: %w", shortObjectID(head), err)
+	}
+	fields := strings.Split(ident, "\x00")
+	if len(fields) == 4 && strings.TrimSpace(fields[0]) == name && strings.TrimSpace(fields[1]) == email &&
+		strings.TrimSpace(fields[2]) == name && strings.TrimSpace(fields[3]) == email {
+		return nil
+	}
+	if _, err := stepGitRunWithEnv(sctx, pipelineIdentityEnv(name, email), "-c", "user.name="+name, "-c", "user.email="+email, "commit", "--amend", "--no-edit", "--reset-author"); err != nil {
+		return fmt.Errorf("re-author rewritten head %s: %w", shortObjectID(head), err)
+	}
+	sctx.Log(fmt.Sprintf("re-authored rewritten head %s with the pipeline identity", shortObjectID(head)))
+	return nil
+}
+
+// normalizeAgentHead restamps an agent-advanced head that carries a foreign
+// identity. A linear range collapses onto the recorded head with identical
+// content, so the caller sees a dirty tree and commits it with the pipeline
+// identity instead of adopting the foreign one. A merge in the range fails
+// closed, and a rewritten head goes to normalizeRewrittenHead: relinking
+// either would launder dropped or foreign-merged commits into a publishable
+// head.
+func normalizeAgentHead(sctx *pipeline.StepContext) error {
+	recorded := strings.TrimSpace(sctx.Run.HeadSHA)
+	if recorded == "" {
+		return nil
+	}
+	head, err := stepGitHeadSHA(sctx)
+	if err != nil {
+		return fmt.Errorf("resolve head for identity gate: %w", err)
+	}
+	if head == recorded {
+		return nil
+	}
+	if _, err := stepGitRun(sctx, "merge-base", "--is-ancestor", recorded, head); err != nil {
+		return normalizeRewrittenHead(sctx, recorded, head)
+	}
+	revList, err := stepGitRun(sctx, "rev-list", "--reverse", recorded+".."+head)
+	if err != nil {
+		return fmt.Errorf("list agent commits for identity gate: %w", err)
+	}
+	commits := strings.Fields(revList)
+	if len(commits) == 0 {
+		return nil
+	}
+	name, email, err := pipelineCommitIdentity(sctx, recorded)
+	if err != nil {
+		return err
+	}
+	hasMerge := false
+	foreign := false
+	for _, c := range commits {
+		parents, err := stepGitRun(sctx, "rev-list", "--parents", "-n", "1", c)
+		if err != nil {
+			return fmt.Errorf("inspect agent commit %s: %w", shortObjectID(c), err)
+		}
+		if len(strings.Fields(parents)) > 2 {
+			hasMerge = true
+		}
+		ident, err := stepGitRun(sctx, "log", "-1", "--format=%an%x00%ae%x00%cn%x00%ce", c)
+		if err != nil {
+			return fmt.Errorf("inspect agent commit %s: %w", shortObjectID(c), err)
+		}
+		fields := strings.Split(ident, "\x00")
+		if len(fields) != 4 || strings.TrimSpace(fields[0]) != name || strings.TrimSpace(fields[1]) != email ||
+			strings.TrimSpace(fields[2]) != name || strings.TrimSpace(fields[3]) != email {
+			foreign = true
+		}
+	}
+	if !foreign {
+		return nil
+	}
+	if hasMerge {
+		return fmt.Errorf("refusing to adopt %s: it concludes a merge with a foreign identity, which needs an operator re-author", shortObjectID(head))
+	}
+	if _, err := stepGitRun(sctx, "reset", "--soft", recorded); err != nil {
+		return fmt.Errorf("recollect agent commits onto %s: %w", shortObjectID(recorded), err)
+	}
+	sctx.Log(fmt.Sprintf("re-authored %d agent commit(s) with the pipeline identity; recommitting their content", len(commits)))
+	return nil
+}
+
+func commitPipelineCorrection(sctx *pipeline.StepContext, workDir, message string, logf func(string)) error {
+	return commitPipelineCorrectionWithCleanup(sctx, workDir, message, logf, os.RemoveAll)
 }
 
 func commitPipelineCorrectionWithCleanup(
-	ctx context.Context,
+	sctx *pipeline.StepContext,
 	workDir, message string,
 	logf func(string),
 	cleanup func(string) error,
 ) error {
-	gitRun := func(args ...string) (string, error) { return git.Run(ctx, workDir, args...) }
+	gitRun := func(args ...string) (string, error) { return stepGitRun(sctx, args...) }
 	staged, err := stagedChangesPresent(gitRun)
 	if err != nil {
 		return fmt.Errorf("inspect staged correction: %w", err)
@@ -432,11 +582,15 @@ func commitPipelineCorrectionWithCleanup(
 		return nil
 	}
 
+	name, email, err := pipelineCommitIdentity(sctx, "")
+	if err != nil {
+		return err
+	}
 	emptyHooksDir, err := os.MkdirTemp("", "no-mistakes-correction-hooks-")
 	if err != nil {
 		return fmt.Errorf("prepare hook-free commit environment: %w", err)
 	}
-	_, commitErr := git.Run(ctx, workDir, "-c", "core.hooksPath="+emptyHooksDir, "commit", "--no-verify", "-m", message)
+	_, commitErr := stepGitRunWithEnv(sctx, pipelineIdentityEnv(name, email), "-c", "core.hooksPath="+emptyHooksDir, "-c", "user.name="+name, "-c", "user.email="+email, "commit", "--no-verify", "-m", message)
 	if cleanupErr := cleanup(emptyHooksDir); cleanupErr != nil {
 		if logf != nil {
 			logf(fmt.Sprintf("warning: failed to remove temporary hook-free commit directory %s: %v", emptyHooksDir, cleanupErr))
@@ -490,6 +644,9 @@ func commitAgentFixesWithResult(sctx *pipeline.StepContext, stepName types.StepN
 	if err := assertPipelineHeadContinuity(sctx, stepName); err != nil {
 		return false, err
 	}
+	if err := normalizeAgentHead(sctx); err != nil {
+		return false, err
+	}
 	status, err := git.Run(ctx, sctx.WorkDir, "status", "--porcelain")
 	if err != nil {
 		return false, fmt.Errorf("check %s changes: %w", stepName, err)
@@ -523,7 +680,7 @@ func commitAgentFixesWithResult(sctx *pipeline.StepContext, stepName types.StepN
 	if err != nil {
 		return false, fmt.Errorf("resolve head before %s commit: %w", stepName, err)
 	}
-	if err := commitPipelineCorrection(ctx, sctx.WorkDir, commitMessage, sctx.Log); err != nil {
+	if err := commitPipelineCorrection(sctx, sctx.WorkDir, commitMessage, sctx.Log); err != nil {
 		return false, fmt.Errorf("commit %s changes: %w", stepName, err)
 	}
 	headSHA, err := git.HeadSHA(ctx, sctx.WorkDir)

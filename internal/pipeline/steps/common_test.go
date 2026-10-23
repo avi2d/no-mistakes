@@ -681,8 +681,9 @@ func TestCommitPipelineCorrection_ReportsCleanupFailureWithoutMaskingCommit(t *t
 	cleanupFailure := errors.New("cleanup denied")
 	var cleanedPath, warning string
 	var removeErr error
+	sctx := newTestContext(t, &mockAgent{name: "test"}, dir, "", "", config.Commands{})
 	err := commitPipelineCorrectionWithCleanup(
-		context.Background(),
+		sctx,
 		dir,
 		"no-mistakes(test): apply correction",
 		func(line string) { warning = line },
@@ -713,7 +714,8 @@ func TestCommitPipelineCorrection_EmptyIndexIsSuccessfulNoOp(t *testing.T) {
 	t.Parallel()
 	dir, _, headSHA := setupGitRepo(t)
 
-	err := commitPipelineCorrection(context.Background(), dir, "no-mistakes: empty handoff", nil)
+	sctx := newTestContext(t, &mockAgent{name: "test"}, dir, "", "", config.Commands{})
+	err := commitPipelineCorrection(sctx, dir, "no-mistakes: empty handoff", nil)
 	if err != nil {
 		t.Fatalf("empty-index correction must be a successful no-op: %v", err)
 	}
@@ -734,7 +736,8 @@ func TestCommitPipelineCorrection_RealCommitFailureStillFails(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := commitPipelineCorrection(context.Background(), dir, "no-mistakes: must fail", nil)
+	sctx := newTestContext(t, &mockAgent{name: "test"}, dir, "", "", config.Commands{})
+	err := commitPipelineCorrection(sctx, dir, "no-mistakes: must fail", nil)
 	if err == nil {
 		t.Fatal("commit with a locked index unexpectedly succeeded")
 	}

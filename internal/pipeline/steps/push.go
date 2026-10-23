@@ -70,7 +70,7 @@ func (s *PushStep) Execute(sctx *pipeline.StepContext) (*pipeline.StepOutcome, e
 		if err := stagePipelineChanges(sctx); err != nil {
 			return nil, fmt.Errorf("stage agent changes: %w", err)
 		}
-		if err := commitPipelineCorrection(ctx, sctx.WorkDir, message, sctx.Log); err != nil {
+		if err := commitPipelineCorrection(sctx, sctx.WorkDir, message, sctx.Log); err != nil {
 			return nil, fmt.Errorf("commit agent changes: %w", err)
 		}
 		headSHA, err := git.HeadSHA(ctx, sctx.WorkDir)

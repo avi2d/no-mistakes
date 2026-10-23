@@ -284,7 +284,7 @@ func fakeGitStaleDirtyStatusHandler(args []string) {
 }
 
 func fakeGitCommitErrorHandler(args []string) {
-	if len(args) > 0 && args[0] == "commit" {
+	if fakeGitSubcommand(args) == "commit" {
 		fmt.Fprintln(os.Stderr, "intentional commit failure")
 		os.Exit(1)
 	}
