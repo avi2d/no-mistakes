@@ -247,8 +247,7 @@ Task:
 
 Rules:
 %s
-- The summary must be one concise sentence fragment suitable for a git commit subject.
-- Keep the summary under 10 words.%s`,
+%s%s`,
 		intro,
 		sctx.Run.Branch,
 		baseSHA,
@@ -261,6 +260,7 @@ Rules:
 		trustedDocumentPolicySection(sctx),
 		lintDutySection(combinedLint),
 		editRule,
+		fixSummaryRules(sctx, s.Name()),
 		historySection,
 	)
 	if sctx.PreviousFindings != "" {
