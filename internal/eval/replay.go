@@ -451,6 +451,14 @@ func restoreCase(ctx context.Context, store *Store, c Case, root string) (string
 	if err := git.InitBare(ctx, gateDir); err != nil {
 		return "", fmt.Errorf("create isolated eval gate: %w", err)
 	}
+	// Git's automatic maintenance detaches into the background and can prune
+	// the entry "worktree add" has created but not yet locked. This gate is
+	// deleted when the replay ends, so it never needs maintenance.
+	for _, setting := range [][2]string{{"maintenance.auto", "false"}, {"gc.auto", "0"}} {
+		if _, err := git.Run(ctx, gateDir, "config", setting[0], setting[1]); err != nil {
+			return "", fmt.Errorf("disable isolated eval gate maintenance: %w", err)
+		}
+	}
 	if err := restoreCaseObjects(ctx, store.poolDir(c.RepoFingerprint), gateDir, c.ID); err != nil {
 		return "", err
 	}
