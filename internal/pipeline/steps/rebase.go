@@ -487,7 +487,7 @@ Instructions:
 		return fmt.Errorf("agent did not complete the rebase")
 	}
 
-	return nil
+	return restampReplayedCommits(sctx, targetRef)
 }
 
 // mergesMovedBase reports whether this run integrates a moved base with a merge

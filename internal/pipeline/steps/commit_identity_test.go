@@ -1,12 +1,15 @@
 package steps
 
 import (
+	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/kunchenguid/no-mistakes/internal/agent"
 	"github.com/kunchenguid/no-mistakes/internal/branchsync"
 	"github.com/kunchenguid/no-mistakes/internal/config"
 	"github.com/kunchenguid/no-mistakes/internal/db"
@@ -261,5 +264,147 @@ func TestNormalizeAgentHead_ReauthorsForeignTipReplacement(t *testing.T) {
 	}
 	if got := gitCmd(t, dir, "show", newHead+":amended.txt"); got != "amended" {
 		t.Fatalf("re-authored head lost the fix: %q", got)
+	}
+}
+
+func coAuthoredReplayFixture(t *testing.T) *replayFixture {
+	t.Helper()
+	f := newReplayFixture(t, true, false)
+	writeFile(t, f.dir, "coauthor.txt", "a contributor's change\n")
+	gitCmd(t, f.dir, "add", "-A")
+	cmd := exec.Command("git", "commit", "-m", "contributor change")
+	cmd.Dir = f.dir
+	cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=Ada", "GIT_AUTHOR_EMAIL=ada@example.com",
+		"GIT_COMMITTER_NAME=GitHub", "GIT_COMMITTER_EMAIL=noreply@github.com")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("contributor commit: %v: %s", err, out)
+	}
+	reviewed := gitCmd(t, f.dir, "rev-parse", "HEAD")
+	gitCmd(t, f.dir, "push", "origin", "feature")
+	if err := f.sctx.DB.UpdateRunHeadSHA(f.sctx.Run.ID, reviewed); err != nil {
+		t.Fatal(err)
+	}
+	f.sctx.Run.HeadSHA = reviewed
+	recordReviewApproval(t, f.sctx, reviewed)
+	f.headSHA = reviewed
+	f.reviewedHead = reviewed
+	return f
+}
+
+func TestCIStep_CommitRepair_RestampsForeignRebaseReplay(t *testing.T) {
+	t.Parallel()
+	f := coAuthoredReplayFixture(t)
+	rogueGit(t, f.dir, "rebase", f.base)
+	f.record(t)
+
+	if !strings.Contains(f.log(), "rebase repair is a pure replay of reviewed head") {
+		t.Fatalf("restamping broke the pure replay proof\nlog:\n%s", f.log())
+	}
+	replayed := strings.Fields(gitCmd(t, f.dir, "rev-list", "--reverse", f.base+"..HEAD"))
+	if len(replayed) != 3 {
+		t.Fatalf("replayed %d commits, want 3", len(replayed))
+	}
+	wantAuthors := []string{"test <test@test.com>", "test <test@test.com>", "Ada <ada@example.com>"}
+	for i, sha := range replayed {
+		author, committer := commitIdentities(t, f.dir, sha)
+		if author != wantAuthors[i] || committer != "test <test@test.com>" {
+			t.Fatalf("replayed commit %d identity = %s / %s, want %s / test <test@test.com>", i, author, committer, wantAuthors[i])
+		}
+	}
+	if got := gitCmd(t, f.dir, "log", "-1", "--format=%B"); got != "contributor change" {
+		t.Fatalf("replayed tip message = %q", got)
+	}
+}
+
+func TestCIStep_CommitRepair_RestampsAgentCommitAddedDuringReplay(t *testing.T) {
+	t.Parallel()
+	f := coAuthoredReplayFixture(t)
+	rogueGit(t, f.dir, "rebase", f.base)
+	rogueCommit(t, f.dir, "agentfix.txt", "agent fix")
+	f.record(t)
+
+	for _, sha := range strings.Fields(gitCmd(t, f.dir, "rev-list", f.base+"..HEAD")) {
+		author, committer := commitIdentities(t, f.dir, sha)
+		if author == "no-mistakes <no-mistakes@local>" || committer != "test <test@test.com>" {
+			t.Fatalf("commit %s identity = %s / %s, want no foreign identity", sha, author, committer)
+		}
+	}
+	if got, err := os.ReadFile(filepath.Join(f.dir, "agentfix.txt")); err != nil || string(got) != "agent fix" {
+		t.Fatalf("restamped head lost the agent fix: %q, %v", got, err)
+	}
+}
+
+func TestCIStep_CommitRepair_ReplayRestampLeavesPublishedCommitsAlone(t *testing.T) {
+	t.Parallel()
+	f := coAuthoredReplayFixture(t)
+	forkPoint := gitCmd(t, f.dir, "merge-base", "HEAD", f.base)
+	rogueCommit(t, f.dir, "agentfix.txt", "agent fix")
+	if _, err := (&CIStep{replayBase: forkPoint}).commitRepair(f.sctx, "fix on the current base", nil); err != nil {
+		t.Fatalf("recording the repair failed: %v\nlog:\n%s", err, f.log())
+	}
+
+	head := gitCmd(t, f.dir, "rev-parse", "HEAD")
+	if got := gitCmd(t, f.dir, "rev-parse", head+"^"); got != f.reviewedHead {
+		t.Fatalf("repair parent = %s, want the published reviewed head %s", got, f.reviewedHead)
+	}
+	author, committer := commitIdentities(t, f.dir, head)
+	if author != "test <test@test.com>" || committer != "test <test@test.com>" {
+		t.Fatalf("repair identity = %s / %s, want test <test@test.com>", author, committer)
+	}
+}
+
+func TestRebaseStep_FixModeRestampsForeignConflictResolution(t *testing.T) {
+	t.Parallel()
+	upstream := t.TempDir()
+	gitCmd(t, upstream, "init", "--bare")
+	dir := t.TempDir()
+	gitCmd(t, dir, "init")
+	gitCmd(t, dir, "config", "user.name", "test")
+	gitCmd(t, dir, "config", "user.email", "test@test.com")
+	gitCmd(t, dir, "checkout", "-b", "main")
+	gitCmd(t, dir, "remote", "add", "origin", upstream)
+	writeFile(t, dir, "shared.txt", "base content\n")
+	gitCmd(t, dir, "add", "-A")
+	gitCmd(t, dir, "commit", "-m", "base commit")
+	baseSHA := gitCmd(t, dir, "rev-parse", "HEAD")
+	gitCmd(t, dir, "push", "origin", "main")
+
+	gitCmd(t, dir, "checkout", "-b", "feature")
+	writeFile(t, dir, "shared.txt", "feature change\n")
+	gitCmd(t, dir, "add", "-A")
+	gitCmd(t, dir, "commit", "-m", "feature change")
+	headSHA := gitCmd(t, dir, "rev-parse", "HEAD")
+
+	gitCmd(t, dir, "checkout", "main")
+	writeFile(t, dir, "shared.txt", "main change\n")
+	gitCmd(t, dir, "add", "-A")
+	gitCmd(t, dir, "commit", "-m", "main conflict")
+	gitCmd(t, dir, "push", "origin", "main")
+	gitCmd(t, dir, "checkout", "feature")
+
+	ag := &mockAgent{name: "test", runFn: func(ctx context.Context, opts agent.RunOpts) (*agent.Result, error) {
+		writeFile(t, dir, "shared.txt", "resolved content\n")
+		rogueGit(t, dir, "add", "shared.txt")
+		rogueGit(t, dir, "-c", "core.editor=true", "rebase", "--continue")
+		return &agent.Result{Output: json.RawMessage(`{"summary":"resolve shared.txt"}`)}, nil
+	}}
+	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
+	sctx.Run.Branch = "refs/heads/feature"
+	sctx.Repo.UpstreamURL = upstream
+	sctx.Fixing = true
+	if _, err := (&RebaseStep{}).Execute(sctx); err != nil {
+		t.Fatal(err)
+	}
+
+	head := gitCmd(t, dir, "rev-parse", "HEAD")
+	author, committer := commitIdentities(t, dir, head)
+	if author != "test <test@test.com>" || committer != "test <test@test.com>" {
+		t.Fatalf("rebased commit identity = %s / %s, want test <test@test.com>", author, committer)
+	}
+	if got := gitCmd(t, dir, "show", "HEAD:shared.txt"); got != "resolved content" {
+		t.Fatalf("restamped head lost the resolution: %q", got)
+	}
+	if sctx.Run.HeadSHA != head {
+		t.Fatalf("Run.HeadSHA = %s, want the restamped head %s", sctx.Run.HeadSHA, head)
 	}
 }

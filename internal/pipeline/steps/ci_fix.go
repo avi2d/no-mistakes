@@ -723,13 +723,12 @@ func (s *CIStep) commitRepair(sctx *pipeline.StepContext, summary string, produc
 			return ciRepairResult{}, err
 		}
 	}
-	// A rebase replay rewrites the recorded head by design, so the gate below
-	// cannot measure it against that head. The replay proof owns the rewritten
-	// range instead, and the rebase stamps its committer from this worktree.
 	if s.replayBase == "" {
 		if err := normalizeAgentHead(sctx); err != nil {
 			return ciRepairResult{}, err
 		}
+	} else if err := restampReplayedCommits(sctx, s.replayBase); err != nil {
+		return ciRepairResult{}, err
 	}
 	status, err := stepGitRun(sctx, "status", "--porcelain")
 	if err != nil {
