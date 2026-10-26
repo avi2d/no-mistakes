@@ -401,6 +401,8 @@ If no activity arrives for longer than `step_quiet_warning`, `last_activity` is 
 When an agent invocation itself has produced nothing for that long, the run object also includes `stalled_agents`, one row per stalled step with its `agent`, `silent_for`, and `agent_pid`, and the status help names the agent and the step log to read.
 For older active runs with no recorded activity timestamp, AXI falls back to the step log file modification time.
 Finding descriptions are always rendered in full, so an `ask-user` finding can be relayed verbatim. Gate summaries are bounded in this default status view because a command gate's summary carries its command output; a truncated summary discloses its original length, and the gate help points to `no-mistakes axi logs --step <step> --full` for an implicitly resolved run or `no-mistakes axi logs --run <id> --step <step> --full` for an explicitly selected run.
+A review finding reported again from the previous round carries a `repeat` column naming that round, and a fix round that produced no new commit is listed in a `history` field.
+These marks are display only and never change which findings gate or how many rounds run.
 Relevant current-branch states also include a cached `branch_sync` object with full SHAs, the run's status, the persisted pipeline push binding, target kind and ref, relation, safety result, PR lifecycle, and a structured next action.
 Cached home and status rendering performs no network read and labels the remote observation `pipeline_push`; only explicit sync check or apply reports `live` freshness.
 
@@ -510,6 +512,8 @@ When `--run` is omitted, the run is resolved the same way as [`axi status`](#no-
 With `--run <id>`, logs are read from exactly that run regardless of branch.
 An unknown explicit run ID exits nonzero with `error: run "<id>" not found` instead of reporting that the current branch has no run.
 When the step recorded findings, the output leads with its `summary` and a `findings` table whose descriptions are always complete, including after the step's gate was resolved.
+A review finding reported again from the previous round carries a `repeat` column naming that round, and a fix round that produced no new commit is listed in a `history` field.
+These marks are display only and never change which findings gate or how many rounds run.
 If the recorded findings cannot be parsed, a `findings_error` field reports the parse error in their place and the step log still renders.
 Without `--full`, the summary is bounded like the gate's and long logs show the last 40 lines; when either is cut, a help hint names the `--full` command, retaining the run ID when `--run <id>` selected the log.
 Step logs include native subprocess agent lifecycle lines such as `codex started pid=4242`, `codex exited pid=4242 status=success`, and transient retry messages when the selected agent supports lifecycle events.
