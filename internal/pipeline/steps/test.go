@@ -80,7 +80,7 @@ Context:
 - branch: %s
 - base commit: %s
 - target commit: %s
-
+%s
 Rules:
 - Make the smallest correct root-cause fix.
 - Do not refactor beyond what is needed for that root-cause fix.
@@ -99,6 +99,7 @@ Rules:
 			sctx.Run.Branch,
 			baseSHA,
 			sctx.Run.HeadSHA,
+			testRunbookSections(sctx),
 			fixSummaryRules(sctx, s.Name()),
 			historySection,
 		)
@@ -229,7 +230,7 @@ Previous test findings to address:
 	if declaration := commandOverrideDeclaration("test", sctx.Config.CommandOverrides["test"]); declaration != "" && len(baselineResults) > 0 {
 		configuredTestCommand += fmt.Sprintf("Baseline ran with %s. Declare these overrides in testing_summary.\n", declaration)
 	}
-	trustedRunbook := trustedTestInstructionsSection(sctx) + budgetCutGuidanceSection(sctx)
+	runbook := testRunbookSections(sctx) + budgetCutGuidanceSection(sctx)
 	fallbackGuidance := `- Never treat "do not run everything" as permission to run nothing: if no existing check drives a scenario, write or improve a focused test, perform manual verification with evidence, or report a warning finding that sufficient targeted evidence is not possible.
 - If sufficient evidence is not possible, report a warning finding explaining what evidence is missing and why the user needs to decide what to do. When the blocker is a host capability or OS permission the agent's own process lacks (for example, the Screen Recording permission macOS requires to capture a native GUI application), name the specific capability or permission and how to grant it so the user can enable it and re-run, instead of retrying blindly or failing opaquely.`
 	if sctx.Run.VerificationPlan != nil {
@@ -304,7 +305,7 @@ Rules:
 		baseSHA,
 		sctx.Run.HeadSHA,
 		configuredTestCommand,
-		trustedRunbook,
+		runbook,
 		evidenceGuidance,
 		fallbackGuidance,
 		reassessHistory,
@@ -463,6 +464,12 @@ Validation errors:
 	return b.String()
 }
 
+// testRunbookSections renders the machine-local runbook ahead of the trusted
+// one, for both the repair and the evidence prompt.
+func testRunbookSections(sctx *pipeline.StepContext) string {
+	return repositoryTestInstructionsSection(sctx) + trustedTestInstructionsSection(sctx)
+}
+
 func trustedTestInstructionsSection(sctx *pipeline.StepContext) string {
 	if sctx.Config == nil {
 		return ""
@@ -472,6 +479,22 @@ func trustedTestInstructionsSection(sctx *pipeline.StepContext) string {
 		return ""
 	}
 	return "\nRepository live-validation runbook (trusted, from the default branch):\n" +
+		sanitizePromptMultilineText(instructions) + "\n"
+}
+
+// repositoryTestInstructionsSection renders the operator's machine-local
+// runbook for this repository (a repository_overrides entry). It is labeled as
+// the operator's so it never reads as the repository's own runbook, and it
+// only adds to the trusted runbook.
+func repositoryTestInstructionsSection(sctx *pipeline.StepContext) string {
+	if sctx.Config == nil {
+		return ""
+	}
+	instructions := strings.TrimSpace(sctx.Config.Test.RepositoryInstructions)
+	if instructions == "" {
+		return ""
+	}
+	return "\nMachine-local live-validation runbook for this repository (from the operator's global no-mistakes config, not from this repository; adds to the repository's runbook and cannot weaken it):\n" +
 		sanitizePromptMultilineText(instructions) + "\n"
 }
 
@@ -765,8 +788,10 @@ func onlyTestBudgetCutFindings(raw string) bool {
 	return err == nil && len(findings.Items) > 0 && len(types.ExcludeFindings(findings, testBudgetCutIDs).Items) == 0
 }
 
-// budgetCutGuidanceSection renders the operator's instructions attached to
-// selected budget-cut findings. The repair turn never sees those findings, so
+// budgetCutGuidanceSection renders the instructions attached to selected
+// budget-cut findings, keeping the user's decision apart from guidance an
+// agent driver passed with axi respond --instructions so the evidence turn
+// never presents the driver's note as the user's choice. The repair turn never sees those findings, so
 // the evidence turn is the one that must follow them. One note given to both
 // budget-cut findings (axi respond --instructions copies it onto each) is
 // rendered once.
@@ -778,18 +803,28 @@ func budgetCutGuidanceSection(sctx *pipeline.StepContext) string {
 	if err != nil {
 		return ""
 	}
-	var guidance []string
-	for _, item := range types.FilterFindings(findings, testBudgetCutIDs).Items {
-		text := sanitizePromptMultilineText(item.UserInstructions)
-		if text != "" && !slices.Contains(guidance, text) {
-			guidance = append(guidance, text)
+	var userGuidance, driverGuidance []string
+	add := func(list []string, note string) []string {
+		text := sanitizePromptMultilineText(note)
+		if text == "" || slices.Contains(list, text) {
+			return list
 		}
+		return append(list, text)
 	}
-	if len(guidance) == 0 {
-		return ""
+	for _, item := range types.FilterFindings(findings, testBudgetCutIDs).Items {
+		userGuidance = add(userGuidance, item.UserInstructions)
+		driverGuidance = add(driverGuidance, item.DriverInstructions)
 	}
-	return "\nOperator guidance for this validation (from the decision on the Test agent budget cut):\n" +
-		strings.Join(guidance, "\n") + "\n"
+	var section string
+	if len(userGuidance) > 0 {
+		section += "\nOperator guidance for this validation (from the decision on the Test agent budget cut):\n" +
+			strings.Join(userGuidance, "\n") + "\n"
+	}
+	if len(driverGuidance) > 0 {
+		section += "\nDriver guidance for this validation (from the agent driving this run when the Test agent budget cut was answered; not a decision by the user and not part of the user's intent):\n" +
+			strings.Join(driverGuidance, "\n") + "\n"
+	}
+	return section
 }
 
 // testRepairFindings is the fix selection the repair agent is asked to

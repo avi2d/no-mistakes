@@ -494,13 +494,14 @@ func (h *Host) GetChecks(ctx context.Context, pr *scm.PR) ([]scm.Check, error) {
 	if err != nil {
 		return nil, err
 	}
+	pr.ObservedHeadSHA = ""
 	headSHA := ""
 	if strings.TrimSpace(pr.HeadSHA) != "" || len(h.requiredReviews) > 0 {
 		headSHA, err = h.getPRHeadSHA(ctx, selector)
 		if err != nil {
 			return nil, err
 		}
-		pr.HeadSHA = headSHA
+		pr.ObservedHeadSHA = headSHA
 	}
 	var checks []scm.Check
 	if headSHA != "" {
@@ -522,12 +523,20 @@ func (h *Host) GetChecks(ctx context.Context, pr *scm.PR) ([]scm.Check, error) {
 		if err != nil {
 			return nil, err
 		}
+		pr.ObservedHeadSHA = currentHeadSHA
 		if currentHeadSHA != headSHA {
-			return nil, fmt.Errorf("PR head changed during check discovery from %s to %s", headSHA, currentHeadSHA)
+			return nil, fmt.Errorf("%w: PR head changed during check discovery from %s to %s", scm.ErrHeadChanged, headSHA, currentHeadSHA)
 		}
 	}
+	// External reviews are read for the live head this observation was bound
+	// to (reported in ObservedHeadSHA), without overwriting the caller's
+	// requested head.
+	reviewPR := *pr
+	if headSHA != "" {
+		reviewPR.HeadSHA = headSHA
+	}
 	for _, reviewer := range h.requiredReviews {
-		checks, err = h.requiredReviewChecks(ctx, pr, reviewer, checks)
+		checks, err = h.requiredReviewChecks(ctx, &reviewPR, reviewer, checks)
 		if err != nil {
 			return nil, err
 		}
@@ -745,9 +754,13 @@ func (h *Host) repoSlug() string {
 
 func (h *Host) appendUnrepresentedWorkflowRuns(checks, runs []scm.Check) []scm.Check {
 	represented := make(map[string][]int, len(checks))
+	jobRuns := make(map[string]bool, len(checks))
 	for i, check := range checks {
 		if runID := h.actionsRunID(check.Link); runID != "" {
 			represented[runID] = append(represented[runID], i)
+			if check.Kind == scm.CheckKindRun {
+				jobRuns[runID] = true
+			}
 		}
 	}
 	for _, run := range runs {
@@ -760,6 +773,28 @@ func (h *Host) appendUnrepresentedWorkflowRuns(checks, runs []scm.Check) []scm.C
 				checks[i].WorkflowID = run.WorkflowID
 			}
 			continue
+		}
+		// A jobless cancellation has no job name to match during collapse.
+		// Both API inputs belong to the same head. Suppress only its summary
+		// when a later run of the same workflow is represented by jobs.
+		if run.Bucket == scm.CheckBucketCancel && run.WorkflowID != 0 && runID != "" {
+			superseded := false
+			for _, replacement := range runs {
+				replacementID := h.actionsRunID(replacement.Link)
+				if replacement.WorkflowID != run.WorkflowID || replacementID == "" || replacementID == runID {
+					continue
+				}
+				if !jobRuns[replacementID] {
+					continue
+				}
+				if after, ordered := h.checkStartedAfter(replacement, run); ordered && after {
+					superseded = true
+					break
+				}
+			}
+			if superseded {
+				continue
+			}
 		}
 		checks = append(checks, run)
 		if runID != "" {

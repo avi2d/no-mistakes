@@ -217,6 +217,7 @@ func findingStatsKey(item types.Finding) types.Finding {
 	item.Source = ""
 	item.UserInstructions = ""
 	item.Carried = ""
+	item.DriverInstructions = ""
 	return item
 }
 
