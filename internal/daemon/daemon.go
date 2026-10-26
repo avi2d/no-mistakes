@@ -1706,6 +1706,10 @@ func stepToInfo(d *db.DB, s *db.StepResult) ipc.StepResultInfo {
 	if s.StepName == types.StepReview && (s.Status == types.StepStatusAwaitingApproval || s.Status == types.StepStatusFixReview) {
 		if rounds, err := d.GetRoundsByStep(s.ID); err == nil && len(rounds) != 0 {
 			info.LatestRoundID = rounds[len(rounds)-1].ID
+			if repeats, noChange := pipeline.ReviewRoundMarks(rounds); len(repeats) != 0 || len(noChange) != 0 {
+				info.RepeatMarks = repeats
+				info.NoChangeFixRounds = noChange
+			}
 		}
 	}
 	return info

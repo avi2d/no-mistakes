@@ -77,6 +77,15 @@ type findingRow struct {
 	Description string `toon:"description"`
 }
 
+type repeatFindingRow struct {
+	ID          string `toon:"id"`
+	Severity    string `toon:"severity"`
+	File        string `toon:"file"`
+	Action      string `toon:"action"`
+	Repeat      string `toon:"repeat"`
+	Description string `toon:"description"`
+}
+
 type runRow struct {
 	ID     string `toon:"id"`
 	Branch string `toon:"branch"`
@@ -101,26 +110,28 @@ type fixRow struct {
 // stepView is a render-ready view of a single pipeline step, decoupled from
 // whether it came from the daemon (ipc) or the local database.
 type stepView struct {
-	ID               string
-	Name             string
-	Status           string
-	DurationMS       int64
-	WorkScope        string
-	FindingsJSON     string
-	FixSummaries     []string
-	StartedAt        *int64
-	RoundStartedAt   *int64
-	LastActivityAt   *int64
-	LastActivity     string
-	AgentPID         *int
-	RoundCount       int
-	FixRoundCount    int
-	AutoFixLimit     int
-	PendingFixSource string
-	ReviewerAgent    string
-	QuietWarning     time.Duration
-	SkipReason       string
-	Stall            *ipc.AgentStall
+	ID                string
+	Name              string
+	Status            string
+	DurationMS        int64
+	WorkScope         string
+	FindingsJSON      string
+	FixSummaries      []string
+	StartedAt         *int64
+	RoundStartedAt    *int64
+	LastActivityAt    *int64
+	LastActivity      string
+	AgentPID          *int
+	RoundCount        int
+	FixRoundCount     int
+	AutoFixLimit      int
+	PendingFixSource  string
+	ReviewerAgent     string
+	RepeatMarks       map[string]int
+	NoChangeFixRounds []int
+	QuietWarning      time.Duration
+	SkipReason        string
+	Stall             *ipc.AgentStall
 }
 
 // runView is a render-ready view of a pipeline run.
@@ -178,21 +189,23 @@ func runViewFromIPC(r *ipc.RunInfo) runView {
 	}
 	for _, s := range r.Steps {
 		sv := stepView{
-			ID:               s.ID,
-			Name:             string(s.StepName),
-			Status:           string(s.Status),
-			FixSummaries:     s.FixSummaries,
-			StartedAt:        s.StartedAt,
-			RoundStartedAt:   s.RoundStartedAt,
-			LastActivityAt:   s.LastActivityAt,
-			AgentPID:         s.AgentPID,
-			RoundCount:       s.RoundCount,
-			FixRoundCount:    s.FixRoundCount,
-			AutoFixLimit:     s.AutoFixLimit,
-			PendingFixSource: s.PendingFixSource,
-			WorkScope:        s.WorkScope,
-			SkipReason:       s.SkipReason,
-			Stall:            s.Stall,
+			ID:                s.ID,
+			Name:              string(s.StepName),
+			Status:            string(s.Status),
+			FixSummaries:      s.FixSummaries,
+			RepeatMarks:       s.RepeatMarks,
+			NoChangeFixRounds: s.NoChangeFixRounds,
+			StartedAt:         s.StartedAt,
+			RoundStartedAt:    s.RoundStartedAt,
+			LastActivityAt:    s.LastActivityAt,
+			AgentPID:          s.AgentPID,
+			RoundCount:        s.RoundCount,
+			FixRoundCount:     s.FixRoundCount,
+			AutoFixLimit:      s.AutoFixLimit,
+			PendingFixSource:  s.PendingFixSource,
+			WorkScope:         s.WorkScope,
+			SkipReason:        s.SkipReason,
+			Stall:             s.Stall,
 		}
 		if s.LastActivity != nil {
 			sv.LastActivity = *s.LastActivity
@@ -783,7 +796,10 @@ func gateFieldsWithHelp(gate stepView, help []string) []toon.Field {
 	if gate.Name == string(types.StepReview) {
 		gfields = append(gfields, toon.Field{Key: "note", Value: "Review auto-fix is disabled by default (`auto_fix.review: 0`; a repo or global `auto_fix.review > 0` override re-enables it), so blocking and ask-user review findings park for your decision rather than being silently self-fixed."})
 	}
-	gfields = append(gfields, toon.Field{Key: "findings", Value: findingRows(parsed.Items)})
+	gfields = append(gfields, toon.Field{Key: "findings", Value: findingRows(parsed.Items, gate.RepeatMarks)})
+	if len(gate.NoChangeFixRounds) != 0 {
+		gfields = append(gfields, toon.Field{Key: "history", Value: noChangeHistoryLines(gate.NoChangeFixRounds)})
+	}
 
 	return []toon.Field{
 		{Key: "gate", Value: toon.NewObject(gfields...)},
@@ -802,8 +818,40 @@ type carriedFindingRow struct {
 	Description string `toon:"description"`
 }
 
-func findingRows(items []types.Finding) any {
+type carriedRepeatFindingRow struct {
+	ID          string `toon:"id"`
+	Severity    string `toon:"severity"`
+	File        string `toon:"file"`
+	Action      string `toon:"action"`
+	Carried     string `toon:"carried"`
+	Repeat      string `toon:"repeat"`
+	Description string `toon:"description"`
+}
+
+func findingRows(items []types.Finding, repeats map[string]int) any {
+	hasRepeat := false
+	for _, f := range items {
+		if _, ok := repeats[f.ID]; ok {
+			hasRepeat = true
+			break
+		}
+	}
 	if slices.ContainsFunc(items, func(f types.Finding) bool { return f.Carried != "" }) {
+		if hasRepeat {
+			rows := make([]carriedRepeatFindingRow, 0, len(items))
+			for _, f := range items {
+				rows = append(rows, carriedRepeatFindingRow{
+					ID:          f.ID,
+					Severity:    f.Severity,
+					File:        f.File,
+					Action:      f.Action,
+					Carried:     f.Carried.Label(),
+					Repeat:      repeatLabel(repeats[f.ID]),
+					Description: f.Description,
+				})
+			}
+			return rows
+		}
 		rows := make([]carriedFindingRow, 0, len(items))
 		for _, f := range items {
 			rows = append(rows, carriedFindingRow{
@@ -812,6 +860,20 @@ func findingRows(items []types.Finding) any {
 				File:        f.File,
 				Action:      f.Action,
 				Carried:     f.Carried.Label(),
+				Description: f.Description,
+			})
+		}
+		return rows
+	}
+	if hasRepeat {
+		rows := make([]repeatFindingRow, 0, len(items))
+		for _, f := range items {
+			rows = append(rows, repeatFindingRow{
+				ID:          f.ID,
+				Severity:    f.Severity,
+				File:        f.File,
+				Action:      f.Action,
+				Repeat:      repeatLabel(repeats[f.ID]),
 				Description: f.Description,
 			})
 		}
@@ -830,12 +892,27 @@ func findingRows(items []types.Finding) any {
 	return rows
 }
 
+func repeatLabel(fromRound int) string {
+	if fromRound <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("repeated from round %d", fromRound)
+}
+
+func noChangeHistoryLines(rounds []int) []string {
+	lines := make([]string, 0, len(rounds))
+	for _, n := range rounds {
+		lines = append(lines, fmt.Sprintf("fix round %d made no change", n))
+	}
+	return lines
+}
+
 // recordedFindingsFields renders a step's persisted summary and findings for
 // `axi logs`, which keeps them readable after the gate resolves and for any
 // explicitly selected run. It reports whether the summary was bounded.
 // Unparseable findings surface as a findings_error field rather than vanishing,
 // so a damaged record does not read as a step that recorded nothing.
-func recordedFindingsFields(findingsJSON string, full bool) ([]toon.Field, bool) {
+func recordedFindingsFields(findingsJSON string, full bool, repeats map[string]int, noChange []int) ([]toon.Field, bool) {
 	if findingsJSON == "" {
 		return nil, false
 	}
@@ -854,7 +931,10 @@ func recordedFindingsFields(findingsJSON string, full bool) ([]toon.Field, bool)
 		fields = append(fields, toon.Field{Key: "summary", Value: summary})
 	}
 	if len(parsed.Items) > 0 {
-		fields = append(fields, toon.Field{Key: "findings", Value: findingRows(parsed.Items)})
+		fields = append(fields, toon.Field{Key: "findings", Value: findingRows(parsed.Items, repeats)})
+	}
+	if len(noChange) != 0 {
+		fields = append(fields, toon.Field{Key: "history", Value: noChangeHistoryLines(noChange)})
 	}
 	return fields, bounded
 }

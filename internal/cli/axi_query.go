@@ -15,6 +15,7 @@ import (
 	"github.com/kunchenguid/no-mistakes/internal/db"
 	"github.com/kunchenguid/no-mistakes/internal/git"
 	"github.com/kunchenguid/no-mistakes/internal/ipc"
+	"github.com/kunchenguid/no-mistakes/internal/pipeline"
 	"github.com/kunchenguid/no-mistakes/internal/types"
 	"github.com/spf13/cobra"
 )
@@ -182,6 +183,9 @@ func annotateRunView(env *axiEnv, rv *runView) {
 						step.ReviewerAgent = *round.ReviewerAgent
 					}
 				}
+				if step.Name == string(types.StepReview) {
+					step.RepeatMarks, step.NoChangeFixRounds = pipeline.ReviewRoundMarks(rounds)
+				}
 			}
 		}
 		if step.LastActivityAt == nil {
@@ -290,7 +294,14 @@ func runAxiLogs(cmd *cobra.Command, step, runID string, full bool) error {
 	for _, s := range steps {
 		if string(s.StepName) == step && s.FindingsJSON != nil {
 			var recorded []toon.Field
-			recorded, bounded = recordedFindingsFields(*s.FindingsJSON, full)
+			var repeats map[string]int
+			var noChange []int
+			if s.StepName == types.StepReview {
+				if rounds, err := env.d.GetRoundsByStep(s.ID); err == nil {
+					repeats, noChange = pipeline.ReviewRoundMarks(rounds)
+				}
+			}
+			recorded, bounded = recordedFindingsFields(*s.FindingsJSON, full, repeats, noChange)
 			fields = append(fields, recorded...)
 			break
 		}
