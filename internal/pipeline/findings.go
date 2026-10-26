@@ -70,6 +70,7 @@ func findingKey(item types.Finding) types.Finding {
 	item.Source = ""
 	item.UserInstructions = ""
 	item.Carried = ""
+	item.DriverInstructions = ""
 	return item
 }
 
@@ -864,8 +865,8 @@ func resolveAddedFindingIDs(added []types.Finding, reserved ...string) []types.F
 	return merged.Items[len(gate.Items):]
 }
 
-func mergeUserOverridesJSON(raw string, instructions map[string]string, added []types.Finding) string {
-	if len(instructions) == 0 && len(added) == 0 {
+func mergeUserOverridesJSON(raw string, instructions, driverInstructions map[string]string, added []types.Finding) string {
+	if len(instructions) == 0 && len(driverInstructions) == 0 && len(added) == 0 {
 		return raw
 	}
 	base, err := types.ParseFindingsJSON(raw)
@@ -873,6 +874,11 @@ func mergeUserOverridesJSON(raw string, instructions map[string]string, added []
 		base = types.Findings{}
 	}
 	merged := types.MergeUserOverrides(base, instructions, added)
+	for i := range merged.Items[:len(base.Items)] {
+		if note, ok := driverInstructions[merged.Items[i].ID]; ok {
+			merged.Items[i].DriverInstructions = note
+		}
+	}
 	encoded, err := types.MarshalFindingsJSON(merged)
 	if err != nil {
 		return raw
