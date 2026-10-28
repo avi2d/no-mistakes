@@ -22,7 +22,7 @@ func TestNewPipelineAgent_FreeModelsWrappedWhenEnabled(t *testing.T) {
 			Steps: []string{"commit", "document"}, Repos: []string{"alpha"},
 		},
 	}
-	ag, _, err := newPipelineAgent(context.Background(), cfg, t.TempDir(), fakeLookPath, runenv.Overlay{}, nil)
+	ag, _, err := newPipelineAgent(context.Background(), cfg, t.TempDir(), fakeLookPath, runenv.Overlay{}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,7 +38,7 @@ func TestNewPipelineAgent_FreeModelsWrappedWhenEnabled(t *testing.T) {
 
 func TestNewPipelineAgent_FreeModelsPassThroughWhenDisabled(t *testing.T) {
 	cfg := &config.Config{Agent: types.AgentClaude}
-	ag, _, err := newPipelineAgent(context.Background(), cfg, t.TempDir(), fakeLookPath, runenv.Overlay{}, nil)
+	ag, _, err := newPipelineAgent(context.Background(), cfg, t.TempDir(), fakeLookPath, runenv.Overlay{}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

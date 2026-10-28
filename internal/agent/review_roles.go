@@ -12,7 +12,11 @@ import (
 type ReviewerCandidate struct {
 	Agent      Agent
 	Label      string
+	Name       string
 	CheckFloor func(context.Context) (string, error)
+	// Unavailable is a non-empty skip reason when the entry cannot serve this
+	// run at all; unlike a floor it also skips the last entry.
+	Unavailable string
 }
 
 type RoundedRole struct {
@@ -187,6 +191,9 @@ func (a *reviewAgents) Run(ctx context.Context, opts RunOpts) (*Result, error) {
 	var err error
 	if isReview && len(a.reviewer.Candidates) > 0 {
 		result, err, selected, label = runReviewerCandidates(ctx, opts, a.reviewer.Candidates)
+		if selected == nil {
+			return nil, err
+		}
 	} else {
 		result, err = selected.Run(ctx, opts)
 		if err != nil && isReview && IsUsageLimitError(err) {
@@ -219,50 +226,83 @@ func (a *reviewAgents) Run(ctx context.Context, opts RunOpts) (*Result, error) {
 	return result, err
 }
 
-type reviewerTraceEntry struct {
+type ReviewerTraceEntry struct {
 	Entry  int    `json:"entry"`
 	Reason string `json:"reason"`
 }
 
-type reviewerTrace struct {
+type ReviewerTrace struct {
 	Selected int                  `json:"selected"`
-	Skipped  []reviewerTraceEntry `json:"skipped,omitempty"`
+	Name     string               `json:"name,omitempty"`
+	Skipped  []ReviewerTraceEntry `json:"skipped,omitempty"`
+}
+
+func ParseReviewerTrace(raw string) (ReviewerTrace, bool) {
+	var trace ReviewerTrace
+	if err := json.Unmarshal([]byte(raw), &trace); err != nil || trace.Selected < 0 {
+		return ReviewerTrace{}, false
+	}
+	return trace, true
+}
+
+func (t ReviewerTrace) ServingEntry() string {
+	if t.Name != "" {
+		return t.Name
+	}
+	return fmt.Sprintf("reviewer_chain[%d]", t.Selected)
 }
 
 func runReviewerCandidates(ctx context.Context, opts RunOpts, candidates []ReviewerCandidate) (*Result, error, Agent, string) {
-	var skipped []reviewerTraceEntry
+	lastAvailable := -1
 	for i, candidate := range candidates {
-		if i < len(candidates)-1 && candidate.CheckFloor != nil {
+		if candidate.Unavailable == "" {
+			lastAvailable = i
+		}
+	}
+	var skipped []ReviewerTraceEntry
+	for i, candidate := range candidates {
+		if candidate.Unavailable != "" {
+			skipped = append(skipped, ReviewerTraceEntry{Entry: i, Reason: candidate.Unavailable})
+			continue
+		}
+		if i < lastAvailable && candidate.CheckFloor != nil {
 			reason, err := candidate.CheckFloor(ctx)
 			if err != nil || reason != "" {
 				if err != nil {
 					reason = err.Error()
 				}
-				skipped = append(skipped, reviewerTraceEntry{Entry: i, Reason: reason})
+				skipped = append(skipped, ReviewerTraceEntry{Entry: i, Reason: reason})
 				continue
 			}
 		}
 		result, err := candidate.Agent.Run(ctx, opts)
 		if err != nil && (IsUsageLimitError(err) || IsReviewerUnusableError(err)) {
-			if i < len(candidates)-1 {
-				skipped = append(skipped, reviewerTraceEntry{Entry: i, Reason: err.Error()})
+			if i < lastAvailable {
+				skipped = append(skipped, ReviewerTraceEntry{Entry: i, Reason: err.Error()})
 				continue
 			}
 		}
 		if err != nil && len(skipped) > 0 {
-			reasons := make([]string, 0, len(skipped))
-			for _, entry := range skipped {
-				reasons = append(reasons, entry.Reason)
-			}
-			err = fmt.Errorf("reviewer chain has no usable candidate: %s: %w", strings.Join(reasons, "; "), err)
+			err = fmt.Errorf("reviewer chain has no usable candidate: %s: %w", skipReasons(skipped), err)
 		}
 		if result != nil {
-			trace, _ := json.Marshal(reviewerTrace{Selected: i, Skipped: skipped})
+			trace, _ := json.Marshal(ReviewerTrace{Selected: i, Name: candidate.Name, Skipped: skipped})
 			result.ReviewerChainTrace = string(trace)
 		}
 		return result, err, candidate.Agent, candidate.Label
 	}
+	if len(skipped) > 0 {
+		return nil, fmt.Errorf("reviewer chain has no usable candidate: %s", skipReasons(skipped)), nil, ""
+	}
 	return nil, fmt.Errorf("reviewer chain has no usable candidate"), nil, ""
+}
+
+func skipReasons(skipped []ReviewerTraceEntry) string {
+	reasons := make([]string, 0, len(skipped))
+	for _, entry := range skipped {
+		reasons = append(reasons, entry.Reason)
+	}
+	return strings.Join(reasons, "; ")
 }
 
 func (a *reviewAgents) Close() error {

@@ -12,6 +12,7 @@ import (
 
 	toon "github.com/toon-format/toon-go"
 
+	"github.com/kunchenguid/no-mistakes/internal/agent"
 	"github.com/kunchenguid/no-mistakes/internal/db"
 	"github.com/kunchenguid/no-mistakes/internal/git"
 	"github.com/kunchenguid/no-mistakes/internal/ipc"
@@ -163,6 +164,17 @@ func emitNoRunForCaller(cmd *cobra.Command, env *axiEnv, branch string, runs []*
 	return nil
 }
 
+func servingReviewerEntry(rawTrace *string) string {
+	if rawTrace == nil {
+		return ""
+	}
+	trace, ok := agent.ParseReviewerTrace(*rawTrace)
+	if !ok {
+		return ""
+	}
+	return trace.ServingEntry()
+}
+
 func annotateRunView(env *axiEnv, rv *runView) {
 	if env == nil || rv == nil {
 		return
@@ -181,6 +193,7 @@ func annotateRunView(env *axiEnv, rv *runView) {
 				for _, round := range rounds {
 					if round.ReviewerAgent != nil && strings.TrimSpace(*round.ReviewerAgent) != "" {
 						step.ReviewerAgent = *round.ReviewerAgent
+						step.ReviewerEntry = servingReviewerEntry(round.ReviewerChainTrace)
 					}
 				}
 				if step.Name == string(types.StepReview) {

@@ -2812,7 +2812,14 @@ func LoadGlobalFromBytes(data []byte) (*GlobalConfig, error) {
 	if len(raw.ReviewerChain) > 0 && (raw.ReviewAgents[RoleReviewer].Agent != "" || raw.ReviewAgents[RoleReviewerAfterRound].Agent != "") {
 		return nil, fmt.Errorf("reviewer_chain cannot be combined with reviewer role overlays")
 	}
+	chainNames := make(map[string]int, len(raw.ReviewerChain))
 	for i, entry := range raw.ReviewerChain {
+		if entry.Name != "" {
+			if first, dup := chainNames[entry.Name]; dup {
+				return nil, fmt.Errorf("reviewer_chain[%d].name %q repeats reviewer_chain[%d]", i, entry.Name, first)
+			}
+			chainNames[entry.Name] = i
+		}
 		if !agentcfg.Known(entry.Agent) {
 			return nil, fmt.Errorf("reviewer_chain[%d].agent must name an explicit harness, got %q", i, entry.Agent)
 		}

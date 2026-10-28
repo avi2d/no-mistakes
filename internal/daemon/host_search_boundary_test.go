@@ -59,7 +59,7 @@ func TestNewPipelineAgent_SteersHostSearchBoundary(t *testing.T) {
 	piBin := writeStdinCapturingPiAgent(t, dir, capturePath)
 
 	cfg := &config.Config{Agent: types.AgentPi, AgentPathOverride: map[string]string{"pi": piBin}}
-	ag, _, err := newPipelineAgent(context.Background(), cfg, evidenceRoot, fakeLookPath, runenv.Overlay{}, nil)
+	ag, _, err := newPipelineAgent(context.Background(), cfg, evidenceRoot, fakeLookPath, runenv.Overlay{}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

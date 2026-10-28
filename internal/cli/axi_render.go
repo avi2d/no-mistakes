@@ -127,6 +127,7 @@ type stepView struct {
 	AutoFixLimit      int
 	PendingFixSource  string
 	ReviewerAgent     string
+	ReviewerEntry     string
 	RepeatMarks       map[string]int
 	NoChangeFixRounds []int
 	QuietWarning      time.Duration
@@ -611,6 +612,9 @@ func runObjectFieldWithKey(key string, rv runView) toon.Field {
 	for _, step := range rv.Steps {
 		if step.Name == string(types.StepReview) && step.ReviewerAgent != "" {
 			fields = append(fields, toon.Field{Key: "reviewer_agent", Value: step.ReviewerAgent})
+			if step.ReviewerEntry != "" {
+				fields = append(fields, toon.Field{Key: "reviewer_entry", Value: step.ReviewerEntry})
+			}
 			break
 		}
 	}

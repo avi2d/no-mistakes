@@ -90,6 +90,63 @@ reviewer_chain:
 	}
 }
 
+func TestLoadGlobal_ReviewerChainRunEnvEntry(t *testing.T) {
+	cfg := writeGlobalConfig(t, `
+reviewer_chain:
+  - name: run-token
+    agent: pi
+    model: claude-bridge/claude-haiku-5-5
+    env:
+      CLAUDE_CONFIG_DIR: /accounts/empty
+    run_env: [CLAUDE_CODE_OAUTH_TOKEN]
+  - agent: pi
+    model: claude-bridge/claude-opus-5-5
+`)
+	first := cfg.ReviewerChain[0]
+	if first.Name != "run-token" || len(first.RunEnv) != 1 || first.RunEnv[0] != "CLAUDE_CODE_OAUTH_TOKEN" || first.Env["CLAUDE_CONFIG_DIR"] != "/accounts/empty" {
+		t.Fatalf("run-token entry = %#v", first)
+	}
+	if second := cfg.ReviewerChain[1]; second.Name != "" || second.RunEnv != nil {
+		t.Fatalf("plain entry gained run-token fields: %#v", second)
+	}
+}
+
+func TestLoadGlobal_ReviewerChainRejectsAmbiguousRunEnvEntries(t *testing.T) {
+	for name, tc := range map[string]struct{ yaml, want string }{
+		"repeated name": {`
+reviewer_chain:
+  - {name: token, agent: pi, model: a}
+  - {name: token, agent: pi, model: b}
+`, "repeats reviewer_chain[0]"},
+		"name with surrounding space": {`
+reviewer_chain:
+  - {name: " token", agent: pi, model: a}
+`, "surrounding space"},
+		"invalid variable name": {`
+reviewer_chain:
+  - {agent: pi, model: a, run_env: [CLAUDE-TOKEN]}
+`, "not a valid variable name"},
+		"repeated variable": {`
+reviewer_chain:
+  - {agent: pi, model: a, run_env: [A, A]}
+`, "run_env repeats A"},
+		"variable also fixed in env": {`
+reviewer_chain:
+  - {agent: pi, model: a, env: {A: fixed}, run_env: [A]}
+`, "in both env and run_env"},
+		"run_env on a review_agents role": {`
+review_agents:
+  fixer: {agent: pi, model: a, run_env: [A]}
+`, "does not accept env, floor, name or run_env"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := loadGlobalConfigError(t, tc.yaml); !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestLoadGlobal_AgentConfig(t *testing.T) {
 	cfg := writeGlobalConfig(t, `
 agent_config:

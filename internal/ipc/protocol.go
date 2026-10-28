@@ -19,6 +19,8 @@ const (
 	MethodProbeOmitIntent           = "probe_omit_intent"
 	MethodReleaseVerificationPlan   = "release_verification_plan"
 	MethodCaptureVerificationPlan   = "capture_verification_plan"
+	MethodStageRunEnv               = "stage_run_env"
+	MethodReleaseRunEnv             = "release_run_env"
 	MethodStartFreshRun             = "start_fresh_run"
 	MethodClaimLaunchReceipt        = "claim_launch_receipt"
 	MethodGetRun                    = "get_run"
@@ -142,6 +144,22 @@ type ReleaseVerificationPlanParams struct {
 	RepoID    string `json:"repo_id"`
 	Branch    string `json:"branch"`
 	HeadSHA   string `json:"head_sha"`
+}
+
+// StageRunEnvParams carries axi run's --run-env-file variables for the next
+// run the daemon creates on this exact repository, branch and head. The
+// distinct RPC also refuses an older daemon before the push.
+type StageRunEnvParams struct {
+	RepoID  string            `json:"repo_id"`
+	Branch  string            `json:"branch"`
+	HeadSHA string            `json:"head_sha"`
+	Vars    map[string]string `json:"vars"`
+}
+
+type ReleaseRunEnvParams struct {
+	RepoID  string `json:"repo_id"`
+	Branch  string `json:"branch"`
+	HeadSHA string `json:"head_sha"`
 }
 
 // ProbeOmitIntentParams is the empty request for MethodProbeOmitIntent.
