@@ -132,6 +132,7 @@ no-mistakes axi run --intent "the user's goal" --closes 95 --closes owner/repo#1
 | `--intent`      | `string` | (none)  | What the user set out to accomplish; `-` reads stdin to EOF; exclusive with `--intent-file` |
 | `--intent-file` | `string` | (none)  | Read intent from a file relative to the caller's working directory; exclusive with `--intent` |
 | `--verification-plan` | `string` | (none) | Path to a nonempty UTF-8 verification plan, at most 64 KiB (65,536 bytes), captured as separate evidence for a new run only |
+| `--run-env-file` | `string` | none | Owner-only `KEY=VALUE` file held in daemon memory for a new run only, described under [Run-scoped secrets](#run-scoped-secrets) |
 | `-y`, `--yes`   | `bool`   | `false` | Auto-resolve eligible gates until a decision point or outcome                                       |
 | `--skip`        | `string` | (none)  | Comma-separated pipeline steps to skip                                                               |
 | `--base-branch` | `string` | (none)  | Integration branch for this run only; overrides [`pr.base_branch`](/no-mistakes/reference/repo-config/#prbase_branch) |
@@ -185,6 +186,34 @@ The captured bytes live privately at `<NM_HOME>/run-inputs/<run-id>/verification
 Review and Test, including their fix turns, receive the same digest-checked snapshot as labeled evidence. Editing or deleting the original source cannot change it; a missing or altered snapshot fails closed when consumed. Reattach with `no-mistakes axi run` **without** `--verification-plan`; providing the flag for an existing run is refused, including strict-launch replay. A new run without the flag does not inherit a prior run's plan. Capture time records when no-mistakes read the file, not proof that its author wrote it before implementation.
 
 Only attached runs receive plan-aware guidance. Review and Test assess the proposed scenarios and independent expected results against actual evidence; the attachment does not direct Review to execute verification. Test receives the execution guidance: when no existing check drives a scenario, perform repeatable product verification with a retained artifact, or name the missing capability and how to provide it and mark the scenario untested. Both steps must follow repository testing rules before changing permanent tests; an attached plan alone is not a reason to add tests. A missing-test finding must identify the observable failure, why existing checks and product evidence do not cover it, and the independent expected result. Runs without a plan retain their existing Review and Test guidance.
+
+### Run-scoped secrets
+
+```sh
+no-mistakes axi run --intent "the user's goal" --run-env-file /path/to/run.env
+```
+
+`--run-env-file` hands credentials to the [`reviewer_chain`](/no-mistakes/reference/global-config/#review_agents) entries that name them in `run_env`, for one new run only.
+The file holds one `KEY=VALUE` line per variable, and blank lines and `#` comment lines are ignored.
+Everything after the first `=` is the value, taken literally with no quote removal.
+An empty value, a repeated name, or a line without a valid variable name is refused.
+The file must be a regular file that only its owner can read or write, so `chmod 600` it.
+It may hold at most 64 KiB and 64 variables.
+Every refusal happens before the push, and no refusal quotes a value or a line.
+
+The CLI reads the file and hands its variables to the daemon over the local socket before pushing to the gate.
+The handover is bound to the repository, branch and submitted commit, and the run that commit starts claims it.
+The daemon keeps the variables in memory only.
+They never reach its database, logs, the run folder, the PR body, status output or an error message.
+Each `reviewer_chain` entry's agent process receives only the variables its `run_env` lists, and no other step or role sees them.
+Unclaimed variables are dropped once the launch finishes, and after five minutes at the latest.
+An older daemon refuses the handover, so the run is not started without them.
+
+A reviewer entry whose `run_env` the run cannot supply is skipped with the reason `run carries no <NAME>`, and the chain moves on, even when it is the last entry.
+That covers a run started without the flag and a run resumed after a daemon restart, because a restart drops the variables.
+The flag is refused for a reattach.
+It is also refused with `--model` or `--effort`, because a Pi profile pin replaces `reviewer_chain`.
+`axi status` reports the entry that served Review as `reviewer_entry`, described under [axi status](#no-mistakes-axi-status).
 
 ### Other run options
 
@@ -399,6 +428,8 @@ When the resolved run has a `running` or `fixing` step, the run object includes 
 Each row reports the whole step's elapsed time as `active_for`, the displayed execution or fix round's elapsed time as `round_active_for`, the latest meaningful log or native-agent lifecycle activity, the native agent PID if one is currently running, and the current round such as `round 1`, `auto-fix 1/3`, or `fix 2`.
 `round_active_for` resets when a fix round starts; older active runs created before this timing was recorded show it as empty.
 If no activity arrives for longer than `step_quiet_warning`, `last_activity` is prefixed with `quiet`; this is only a liveness signal and does not cancel the step.
+When Review was served from [`reviewer_chain`](/no-mistakes/reference/global-config/#review_agents), the run object includes `reviewer_entry` after `reviewer_agent`.
+It is the serving entry's `name`, or `reviewer_chain[<index>]` when the entry has none.
 When an agent invocation itself has produced nothing for that long, the run object also includes `stalled_agents`, one row per stalled step with its `agent`, `silent_for`, and `agent_pid`, and the status help names the agent and the step log to read.
 For older active runs with no recorded activity timestamp, AXI falls back to the step log file modification time.
 Finding descriptions are always rendered in full, so an `ask-user` finding can be relayed verbatim. Gate summaries are bounded in this default status view because a command gate's summary carries its command output; a truncated summary discloses its original length, and the gate help points to `no-mistakes axi logs --step <step> --full` for an implicitly resolved run or `no-mistakes axi logs --run <id> --step <step> --full` for an explicitly selected run.

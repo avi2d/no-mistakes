@@ -27,6 +27,7 @@ import (
 	"github.com/kunchenguid/no-mistakes/internal/paths"
 	"github.com/kunchenguid/no-mistakes/internal/pipeline"
 	"github.com/kunchenguid/no-mistakes/internal/pipeline/steps"
+	"github.com/kunchenguid/no-mistakes/internal/runsecret"
 	"github.com/kunchenguid/no-mistakes/internal/telemetry"
 	"github.com/kunchenguid/no-mistakes/internal/types"
 	"github.com/kunchenguid/no-mistakes/internal/verificationplan"
@@ -207,6 +208,12 @@ func newAxiRunCmd() *cobra.Command {
 			"the PR body fails the step instead of publishing a reference that would\n" +
 			"close nothing. Reattaching may add references until the PR body has been\n" +
 			"composed. It cannot be combined with --skip pr.\n\n" +
+			"--run-env-file PATH reads KEY=VALUE lines from a file only its owner can\n" +
+			"read (chmod 600) and hands them to the daemon for this new run only. The\n" +
+			"daemon holds them in memory, never in its database, logs or run folder,\n" +
+			"and gives each reviewer_chain entry only the variables its run_env names.\n" +
+			"An entry whose variables the run lacks is skipped. It cannot be combined\n" +
+			"with --model/--effort, whose pin replaces reviewer_chain.\n\n" +
 			"--model and/or --effort opt into an immutable Pi profile for a new run.\n" +
 			"An omitted field comes from agent_config.pi; both must resolve. Requires\n" +
 			"Pi-only agents; raw native selection flags conflict. The pin outranks\n" +
@@ -257,6 +264,7 @@ func newAxiRunCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&noPublishIntent, "no-publish-intent", false, "keep the generated Intent section out of the PR body for this run (tighten-only; full intent still reaches every step prompt except PR drafting)")
 	cmd.Flags().StringArrayVar(&closesIssues, "closes", nil, "issue this PR closes when merged; repeat for multiple issues (42, owner/repo#42, or a nested GitLab project path)")
 	cmd.Flags().String("verification-plan", "", "capture a nonempty UTF-8 verification plan as separate run evidence (new runs only)")
+	cmd.Flags().String("run-env-file", "", "owner-only (mode 600) KEY=VALUE file whose variables the daemon holds in memory for this new run only and hands to reviewer_chain entries that name them in run_env")
 	bindAxiWaitFlag(cmd, &wait)
 	bindPiProfileFlags(cmd, &model, &effort)
 	return cmd
@@ -290,6 +298,13 @@ func runAxiRunWithLaunchProof(cmd *cobra.Command, autoYes bool, skipSteps []type
 	}
 	if len(closesIssues) > 0 && slices.Contains(skipSteps, types.StepPR) {
 		return emitError(cmd, 2, "--closes cannot be combined with --skip pr: skipping the PR step publishes no closing reference", "Drop pr from --skip, or drop --closes.")
+	}
+	runVars, err := runEnvFromFlags(cmd)
+	if err != nil {
+		return emitError(cmd, 2, err.Error())
+	}
+	if runVars != nil && profile != nil {
+		return emitError(cmd, 2, "--run-env-file cannot be combined with --model/--effort: the Pi profile pin replaces reviewer_chain, so no run_env entry would serve the run")
 	}
 	ctx := cmd.Context()
 	driveCtx, cancel, err := boundAxiWait(ctx, wait)
@@ -382,6 +397,9 @@ func runAxiRunWithLaunchProof(cmd *cobra.Command, autoYes bool, skipSteps []type
 	if runID != "" && planRequested {
 		return emitError(cmd, 2, "--verification-plan is accepted only when starting a new run; omit it to reattach")
 	}
+	if runID != "" && runVars != nil {
+		return emitError(cmd, 2, "--run-env-file is accepted only when starting a new run; omit it to reattach")
+	}
 	if runID == "" {
 		if err := configErrorForFreshAxiRun(env, runID); err != nil {
 			return emitError(cmd, 1, err.Error(), repoInitHelp(err)...)
@@ -438,12 +456,12 @@ func runAxiRunWithLaunchProof(cmd *cobra.Command, autoYes bool, skipSteps []type
 		}
 		var err error
 		if launchNonce != "" {
-			launchReceipt, err = triggerProofRun(ctx, env, branch, headSHA, skipSteps, intent, baseBranch, omitIntent, launchNonce, validationGeneration, planID, closesIssues, profile)
+			launchReceipt, err = triggerProofRun(ctx, env, branch, headSHA, skipSteps, intent, baseBranch, omitIntent, launchNonce, validationGeneration, planID, closesIssues, runVars, profile)
 			if err == nil {
 				runID = launchReceipt.RunID
 			}
 		} else {
-			runID, err = triggerRun(ctx, env, branch, skipSteps, intent, baseBranch, omitIntent, planID, closesIssues, profile)
+			runID, err = triggerRun(ctx, env, branch, skipSteps, intent, baseBranch, omitIntent, planID, closesIssues, runVars, profile)
 		}
 		if err == nil && planID != "" && runID != planID {
 			err = fmt.Errorf("launched run does not own the captured verification plan")
@@ -478,6 +496,35 @@ func runAxiRunWithLaunchProof(cmd *cobra.Command, autoYes bool, skipSteps []type
 		return emitError(cmd, 1, fmt.Sprintf("drive run: %v", err))
 	}
 	return renderDriveResult(cmd, run, ciReady)
+}
+
+// runEnvFromFlags is nil when the command has no --run-env-file flag at all.
+func runEnvFromFlags(cmd *cobra.Command) (map[string]string, error) {
+	if cmd.Flags().Lookup("run-env-file") == nil || !cmd.Flags().Changed("run-env-file") {
+		return nil, nil
+	}
+	path, _ := cmd.Flags().GetString("run-env-file")
+	if strings.TrimSpace(path) == "" {
+		return nil, fmt.Errorf("--run-env-file requires a file path")
+	}
+	vars, err := runsecret.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("--run-env-file: %w", err)
+	}
+	return vars, nil
+}
+
+// stageRunEnv hands the variables to the daemon for the run the next push of
+// headSHA creates. The returned release drops them if no run claimed them.
+func stageRunEnv(env *axiEnv, branch, headSHA string, vars map[string]string) (func(), error) {
+	if vars == nil {
+		return func() {}, nil
+	}
+	key := ipc.ReleaseRunEnvParams{RepoID: env.repo.ID, Branch: branch, HeadSHA: headSHA}
+	if err := env.client.Call(ipc.MethodStageRunEnv, &ipc.StageRunEnvParams{RepoID: key.RepoID, Branch: key.Branch, HeadSHA: key.HeadSHA, Vars: vars}, nil); err != nil {
+		return nil, fmt.Errorf("hand --run-env-file to the daemon: %w", err)
+	}
+	return func() { _ = env.client.Call(ipc.MethodReleaseRunEnv, &key, nil) }, nil
 }
 
 func digestLaunchIntent(intent string) string {
@@ -754,7 +801,7 @@ func freshRunBranchOwnershipState(ctx context.Context, env *axiEnv) *branchsync.
 // the gate to trigger a pipeline, and falls back to a rerun when the push was a
 // no-op (the gate already had this commit). Callers must check for an existing
 // active run first (see activeRunID) and apply pre-flight guards.
-func triggerRun(ctx context.Context, env *axiEnv, branch string, skipSteps []types.StepName, intent, baseBranch string, omitIntent bool, planID string, closesIssues []string, profiles ...*agentcfg.PiProfile) (string, error) {
+func triggerRun(ctx context.Context, env *axiEnv, branch string, skipSteps []types.StepName, intent, baseBranch string, omitIntent bool, planID string, closesIssues []string, runVars map[string]string, profiles ...*agentcfg.PiProfile) (string, error) {
 	profile := agentcfg.OptionalPiProfile(profiles)
 	pushOptions := append(formatSkipPushOptions(skipSteps), formatPiProfilePushOptions(profile)...)
 	pushOptions = append(pushOptions, formatVerificationPlanPushOptions(planID)...)
@@ -797,6 +844,11 @@ func triggerRun(ctx context.Context, env *axiEnv, branch string, skipSteps []typ
 	if _, err := verificationplan.Resolve(env.p.RunInputsDir(), planID, env.repo.ID, branch, submissionHead); err != nil {
 		return "", err
 	}
+	releaseRunEnv, err := stageRunEnv(env, branch, submissionHead, runVars)
+	if err != nil {
+		return "", err
+	}
+	defer releaseRunEnv()
 	abandoned, err := abandonedSubmission(env.d, env.repo.ID, branch)
 	if err != nil {
 		return "", fmt.Errorf("prepare private mirror for %q: read the branch's runs: %w", branch, err)
@@ -853,6 +905,9 @@ func triggerRun(ctx context.Context, env *axiEnv, branch string, skipSteps []typ
 	if err != nil {
 		return "", err
 	}
+	if runVars != nil && params.CallerHeadSHA != submissionHead {
+		return "", fmt.Errorf("HEAD moved from %s while starting the run; --run-env-file was handed over for that head only, so rerun axi run", submissionHead)
+	}
 	if _, err := verificationplan.Resolve(env.p.RunInputsDir(), planID, env.repo.ID, branch, params.CallerHeadSHA); err != nil {
 		return "", err
 	}
@@ -879,7 +934,7 @@ func claimLaunchReceipt(client *ipc.Client, repoID, branch, launchNonce, submitt
 // triggerProofRun captures the immutable submitted commit and waits only for
 // the matching nonce-bound receipt. Ordinary active-run heuristics never prove
 // strict launch identity.
-func triggerProofRun(ctx context.Context, env *axiEnv, branch, headSHA string, skipSteps []types.StepName, intent, baseBranch string, omitIntent bool, launchNonce, validationGeneration, planID string, closesIssues []string, profiles ...*agentcfg.PiProfile) (*ipc.LaunchReceipt, error) {
+func triggerProofRun(ctx context.Context, env *axiEnv, branch, headSHA string, skipSteps []types.StepName, intent, baseBranch string, omitIntent bool, launchNonce, validationGeneration, planID string, closesIssues []string, runVars map[string]string, profiles ...*agentcfg.PiProfile) (*ipc.LaunchReceipt, error) {
 	profile := agentcfg.OptionalPiProfile(profiles)
 	pushOptions := append(formatSkipPushOptions(skipSteps), formatPiProfilePushOptions(profile)...)
 	pushOptions = append(pushOptions, formatVerificationPlanPushOptions(planID)...)
@@ -898,6 +953,11 @@ func triggerProofRun(ctx context.Context, env *axiEnv, branch, headSHA string, s
 	if state := freshRunBranchOwnershipState(ctx, env); state != nil {
 		return nil, &branchOwnershipError{state: *state}
 	}
+	releaseRunEnv, err := stageRunEnv(env, branch, headSHA, runVars)
+	if err != nil {
+		return nil, err
+	}
+	defer releaseRunEnv()
 	pushErr := git.PushCommitWithOptionsSkippingHooks(ctx, ".", gate.RemoteName, headSHA, "refs/heads/"+branch, "", false, pushOptions)
 	if pushErr != nil {
 		if state := freshRunBranchOwnershipState(ctx, env); state != nil {

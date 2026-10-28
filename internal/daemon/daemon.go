@@ -1392,6 +1392,33 @@ func registerHandlers(srv *ipc.Server, mgr *RunManager, d *db.DB, shutdown func(
 		return verificationplan.Capture(mgr.paths.RunInputsDir(), p.SourcePath, p.RepoID, p.Branch, p.HeadSHA)
 	})
 
+	srv.Handle(ipc.MethodStageRunEnv, func(ctx context.Context, params json.RawMessage) (interface{}, error) {
+		if err := refuseNested(ctx, false); err != nil {
+			return nil, err
+		}
+		var p ipc.StageRunEnvParams
+		if err := json.Unmarshal(params, &p); err != nil {
+			return nil, fmt.Errorf("invalid params")
+		}
+		repo, err := d.GetRepo(p.RepoID)
+		if err != nil {
+			return nil, err
+		}
+		if repo == nil {
+			return nil, fmt.Errorf("unknown repository")
+		}
+		return nil, mgr.runEnv.stage(runEnvKey{repoID: p.RepoID, branch: p.Branch, headSHA: p.HeadSHA}, p.Vars)
+	})
+
+	srv.Handle(ipc.MethodReleaseRunEnv, func(ctx context.Context, params json.RawMessage) (interface{}, error) {
+		var p ipc.ReleaseRunEnvParams
+		if err := json.Unmarshal(params, &p); err != nil {
+			return nil, fmt.Errorf("invalid params: %w", err)
+		}
+		mgr.runEnv.release(runEnvKey{repoID: p.RepoID, branch: p.Branch, headSHA: p.HeadSHA})
+		return nil, nil
+	})
+
 	srv.Handle(ipc.MethodReleaseVerificationPlan, func(ctx context.Context, params json.RawMessage) (interface{}, error) {
 		var p ipc.ReleaseVerificationPlanParams
 		if err := json.Unmarshal(params, &p); err != nil {

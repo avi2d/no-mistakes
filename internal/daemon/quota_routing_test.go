@@ -437,12 +437,12 @@ func TestPipelineQuotaSnapshotIsReadOnceAndNeverByReviewRoles(t *testing.T) {
 	for _, role := range config.ReviewAgentRoles {
 		cfg.ReviewAgents[role] = config.ReviewAgent{Agent: types.AgentCodex}
 	}
-	primary, record, err := newPipelineAgent(context.Background(), cfg, t.TempDir(), fakeLookPath, runenv.Overlay{}, nil)
+	primary, record, err := newPipelineAgent(context.Background(), cfg, t.TempDir(), fakeLookPath, runenv.Overlay{}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer primary.Close()
-	recovered, _, err := newPipelineAgent(context.Background(), cfg, t.TempDir(), fakeLookPath, runenv.Overlay{}, record)
+	recovered, _, err := newPipelineAgent(context.Background(), cfg, t.TempDir(), fakeLookPath, runenv.Overlay{}, nil, record)
 	if err != nil {
 		t.Fatal(err)
 	}

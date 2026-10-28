@@ -72,6 +72,8 @@ type RunManager struct {
 
 	branchLocks sync.Map // repoID+"/"+branch → *sync.Mutex
 
+	runEnv stagedRunEnv
+
 	// evalCaptureMu serializes automatic eval collection. Concurrent runs
 	// finishing together would otherwise write the same per-repository object
 	// pool and the same registry file at once.
@@ -205,7 +207,9 @@ func (m *RunManager) prepareRecoveredRun(ctx context.Context, run *db.Run) (*rec
 	if quotaRecord == nil {
 		cfg.QuotaRouting.Enabled = false
 	}
-	ag, _, err := newPipelineAgent(ctx, cfg, m.paths.EvidenceRoot(cfg.Test.Evidence.LocalRoot), exec.LookPath, forgeEnvironment(forgeCtx), quotaRecord)
+	// The daemon that held this run's variables has exited, so its run-token
+	// entries are skipped.
+	ag, _, err := newPipelineAgent(ctx, cfg, m.paths.EvidenceRoot(cfg.Test.Evidence.LocalRoot), exec.LookPath, forgeEnvironment(forgeCtx), nil, quotaRecord)
 	if err != nil {
 		return nil, err
 	}
@@ -322,7 +326,7 @@ func (m *RunManager) pinnedRunGates(runID string) ([]config.Gate, error) {
 	return gates, nil
 }
 
-func newPipelineAgent(ctx context.Context, cfg *config.Config, evidenceRoot string, lookPath func(string) (string, error), environment runenv.Overlay, quota *quotarouting.Record) (agent.Agent, *quotarouting.Record, error) {
+func newPipelineAgent(ctx context.Context, cfg *config.Config, evidenceRoot string, lookPath func(string) (string, error), environment runenv.Overlay, runVars map[string]string, quota *quotarouting.Record) (agent.Agent, *quotarouting.Record, error) {
 	if steps.IsDemoMode() {
 		return agent.NewNoop(), nil, nil
 	}
@@ -352,7 +356,8 @@ func newPipelineAgent(ctx context.Context, cfg *config.Config, evidenceRoot stri
 	for i, entry := range cfg.ReviewerChain {
 		roleConfig := cfg.ForReviewAgent(entry)
 		roleConfig.QuotaRouting.Enabled = false
-		next, _, err := newConfiguredAgent(ctx, roleConfig, evidenceRoot, lookPath, reviewerEnvironment(environment, entry.Env), nil)
+		taken, unavailable := takeRunEnv(entry.RunEnv, runVars)
+		next, _, err := newConfiguredAgent(ctx, roleConfig, evidenceRoot, lookPath, reviewerEnvironment(environment, entry.Env, taken), nil)
 		if err != nil {
 			_ = primary.Close()
 			for _, existing := range roles {
@@ -364,7 +369,7 @@ func newPipelineAgent(ctx context.Context, cfg *config.Config, evidenceRoot stri
 			return nil, nil, fmt.Errorf("create reviewer_chain[%d]: %w", i, err)
 		}
 		label := reviewAgentEntryLabel(cfg, entry)
-		candidates = append(candidates, agent.ReviewerCandidate{Agent: next, Label: label, CheckFloor: reviewerFloorChecker(entry.Floor)})
+		candidates = append(candidates, agent.ReviewerCandidate{Agent: next, Label: label, Name: entry.Name, CheckFloor: reviewerFloorChecker(entry.Floor), Unavailable: unavailable})
 	}
 	reviewer := agent.RoundedRole{
 		Agent:      roles[config.RoleReviewer],
@@ -386,15 +391,39 @@ func newPipelineAgent(ctx context.Context, cfg *config.Config, evidenceRoot stri
 	}), record, nil
 }
 
-func reviewerEnvironment(base runenv.Overlay, entry map[string]string) runenv.Overlay {
+func reviewerEnvironment(base runenv.Overlay, layers ...map[string]string) runenv.Overlay {
 	overlay := base.Clone()
 	if overlay.Set == nil {
-		overlay.Set = make(map[string]string, len(entry))
+		overlay.Set = make(map[string]string)
 	}
-	for key, value := range entry {
-		overlay.Set[key] = value
+	for _, layer := range layers {
+		for key, value := range layer {
+			overlay.Set[key] = value
+		}
 	}
 	return overlay
+}
+
+// takeRunEnv hands an entry only the run variables it names. The skip reason
+// names the missing variables and never a value.
+func takeRunEnv(names []string, runVars map[string]string) (map[string]string, string) {
+	if len(names) == 0 {
+		return nil, ""
+	}
+	taken := make(map[string]string, len(names))
+	var missing []string
+	for _, name := range names {
+		value, ok := runVars[name]
+		if !ok || value == "" {
+			missing = append(missing, name)
+			continue
+		}
+		taken[name] = value
+	}
+	if len(missing) > 0 {
+		return nil, "run carries no " + strings.Join(missing, ", ")
+	}
+	return taken, ""
 }
 
 func reviewerFloorChecker(floor *config.ReviewerFloor) func(context.Context) (string, error) {
@@ -1611,6 +1640,9 @@ func (m *RunManager) withBranchLock(repoID, branch string, action func() (string
 // the repository/branch lock. Proof fields are empty for ordinary launches,
 // and retry is nil for every run that does not continue a failed one.
 func (m *RunManager) startRunWithIntentSourceLocked(ctx context.Context, repo *db.Repo, branch, headSHA, baseSHA, trigger string, skipSteps []types.StepName, intent, source, launchNonce, validationGeneration, intentDigest, prBaseBranch string, omitIntent bool, inheritedPRURL, planID string, closingIssues []string, retry *retryLaunch, profiles ...*agentcfg.PiProfile) (string, error) {
+	// Claimed before the run row exists, so a caller that can see the run never
+	// releases variables the run has yet to claim.
+	runVars := m.runEnv.claim(runEnvKey{repoID: repo.ID, branch: branch, headSHA: headSHA})
 	sequence := m.reserveAdmission()
 	defer m.releaseAdmission(sequence)
 	branchRole := telemetryBranchRole(branch, repo.DefaultBranch)
@@ -1911,7 +1943,7 @@ func (m *RunManager) startRunWithIntentSourceLocked(ctx context.Context, repo *d
 	// wires review-role routing plus the trusted-opt-out gate-neutralization
 	// fail-closed check. The quota-aware record is fresh-read here (a nil
 	// input) and persisted beside the gates pin below.
-	ag, quotaRecord, err := newPipelineAgent(ctx, cfg, m.paths.EvidenceRoot(cfg.Test.Evidence.LocalRoot), exec.LookPath, forgeEnvironment(forgeCtx), nil)
+	ag, quotaRecord, err := newPipelineAgent(ctx, cfg, m.paths.EvidenceRoot(cfg.Test.Evidence.LocalRoot), exec.LookPath, forgeEnvironment(forgeCtx), runVars, nil)
 	if err != nil {
 		m.db.UpdateRunError(run.ID, err.Error())
 		trackStartFailure("create_agent")

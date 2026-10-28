@@ -376,6 +376,10 @@ normal `agent` selection and fallback chain; other pipeline steps are unchanged.
 
 ```yaml
 reviewer_chain:
+  - name: run-token
+    agent: pi
+    model: claude-bridge/claude-haiku-5-5
+    run_env: [CLAUDE_CODE_OAUTH_TOKEN]
   - agent: pi
     model: openai-codex/gpt-6.1-sol
     floor:
@@ -403,7 +407,7 @@ review_agents:
 
 `reviewer_chain` is an ordered list.
 Each entry requires an explicit `agent` with a name from `agent_config`.
-This example checks the Codex account first, then the Claude Pro account, then the Claude Max account.
+This example first uses a token handed to the run, then checks the Codex account, then the Claude Pro account, then the Claude Max account.
 The floor command must print JSON, and `field` names the numeric percentage to read with a dotted path.
 Before using an entry with a floor, the review step skips it when the command fails, the field is unusable, or the remaining percentage is below `minimum`.
 The last entry is always tried, even when it has a floor.
@@ -411,6 +415,13 @@ The review step also tries the next entry after a usage-limit or quota error, or
 When no entry can serve, the review round fails naming every entry's reason.
 Other agent errors fail the review round.
 `env` overrides environment variables only for that entry's agent process.
+`run_env` lists variables the entry takes from the run's [`axi run --run-env-file`](/no-mistakes/reference/cli/#run-scoped-secrets).
+The daemon holds them in memory and passes them only to that entry's agent process.
+An entry whose `run_env` the run cannot supply is skipped with the reason `run carries no <NAME>`, even when it is the last entry.
+A `run_env` name must be a valid environment variable name, and it may not repeat or also appear in `env`.
+The optional `name` labels an entry, and names must be unique within the chain.
+`axi status` reports the serving entry as `reviewer_entry`, by `name` or else as `reviewer_chain[<index>]`.
+`name` and `run_env` are refused on `review_agents` roles.
 Model and effort are optional and inherit `agent_config` for that harness when empty.
 Nonempty role values override that profile, but native `agent_args_override` flags still win.
 The selected reviewer and skipped entries with their reasons are stored with the review round.

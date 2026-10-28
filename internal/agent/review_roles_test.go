@@ -129,7 +129,7 @@ func TestReviewerCandidatesSkipBelowFloorAndRecordTrace(t *testing.T) {
 	if err != nil || result.AgentIdentity != "Claude Max" || len(first.calls) != 0 || len(second.calls) != 1 || len(last.calls) != 1 || floorChecks != 2 {
 		t.Fatalf("result=%+v err=%v calls=%d/%d/%d floorChecks=%d", result, err, len(first.calls), len(second.calls), len(last.calls), floorChecks)
 	}
-	var trace reviewerTrace
+	var trace ReviewerTrace
 	if err := json.Unmarshal([]byte(result.ReviewerChainTrace), &trace); err != nil {
 		t.Fatalf("trace %q: %v", result.ReviewerChainTrace, err)
 	}
@@ -152,12 +152,62 @@ func TestReviewerCandidatesSkipRefusedAccountAndRecordTrace(t *testing.T) {
 	if err != nil || result.AgentIdentity != "Claude Max" || len(quota.calls) != 1 || len(refused.calls) != 1 || len(last.calls) != 1 {
 		t.Fatalf("result=%+v err=%v calls=%d/%d/%d", result, err, len(quota.calls), len(refused.calls), len(last.calls))
 	}
-	var trace reviewerTrace
+	var trace ReviewerTrace
 	if err := json.Unmarshal([]byte(result.ReviewerChainTrace), &trace); err != nil {
 		t.Fatalf("trace %q: %v", result.ReviewerChainTrace, err)
 	}
 	if trace.Selected != 2 || len(trace.Skipped) != 2 || trace.Skipped[0].Entry != 0 || trace.Skipped[1].Entry != 1 || !strings.Contains(trace.Skipped[1].Reason, "disabled Claude subscription access") {
 		t.Fatalf("trace = %+v", trace)
+	}
+}
+
+func TestReviewerCandidatesUnavailableEntryIsNeverRunAndTheServerIsNamed(t *testing.T) {
+	token := &roleRecorder{name: "run-token"}
+	named := &roleRecorder{name: "second"}
+	role := RoundedRole{Candidates: []ReviewerCandidate{
+		{Agent: token, Label: "pi/claude-bridge/claude-haiku-5-5", Name: "run-token", Unavailable: "run carries no CLAUDE_CODE_OAUTH_TOKEN"},
+		{Agent: named, Label: "pi/claude-bridge/claude-opus-5-5", Name: "second"},
+	}}
+	ag := WithReviewRoles(&roleRecorder{name: "default"}, ReviewRoles{Reviewer: role})
+	result, err := ag.Run(context.Background(), RunOpts{Purpose: "review"})
+	if err != nil || len(token.calls) != 0 || len(named.calls) != 1 {
+		t.Fatalf("result=%+v err=%v calls=%d/%d", result, err, len(token.calls), len(named.calls))
+	}
+	trace, ok := ParseReviewerTrace(result.ReviewerChainTrace)
+	if !ok || trace.Selected != 1 || trace.ServingEntry() != "second" || len(trace.Skipped) != 1 || trace.Skipped[0].Reason != "run carries no CLAUDE_CODE_OAUTH_TOKEN" {
+		t.Fatalf("trace = %q", result.ReviewerChainTrace)
+	}
+}
+
+func TestReviewerCandidatesFloorDoesNotSkipTheLastEntryThatCanServe(t *testing.T) {
+	floored := &roleRecorder{name: "floored"}
+	token := &roleRecorder{name: "run-token"}
+	role := RoundedRole{Candidates: []ReviewerCandidate{
+		{Agent: floored, Label: "Floored", CheckFloor: func(context.Context) (string, error) {
+			t.Fatal("floor of the last entry that can serve must not run")
+			return "", nil
+		}},
+		{Agent: token, Label: "Run token", Unavailable: "run carries no CLAUDE_CODE_OAUTH_TOKEN"},
+	}}
+	ag := WithReviewRoles(&roleRecorder{name: "default"}, ReviewRoles{Reviewer: role})
+	result, err := ag.Run(context.Background(), RunOpts{Purpose: "review"})
+	if err != nil || len(floored.calls) != 1 || len(token.calls) != 0 {
+		t.Fatalf("result=%+v err=%v calls=%d/%d", result, err, len(floored.calls), len(token.calls))
+	}
+	if trace, ok := ParseReviewerTrace(result.ReviewerChainTrace); !ok || trace.ServingEntry() != "reviewer_chain[0]" {
+		t.Fatalf("trace = %q", result.ReviewerChainTrace)
+	}
+}
+
+func TestReviewerCandidatesAllUnavailableFailsNamingEveryReason(t *testing.T) {
+	token := &roleRecorder{name: "run-token"}
+	role := RoundedRole{Candidates: []ReviewerCandidate{
+		{Agent: token, Label: "Run token", Unavailable: "run carries no CLAUDE_CODE_OAUTH_TOKEN"},
+	}}
+	ag := WithReviewRoles(&roleRecorder{name: "default"}, ReviewRoles{Reviewer: role})
+	_, err := ag.Run(context.Background(), RunOpts{Purpose: "review"})
+	if err == nil || !strings.Contains(err.Error(), "run carries no CLAUDE_CODE_OAUTH_TOKEN") || len(token.calls) != 0 {
+		t.Fatalf("err=%v calls=%d", err, len(token.calls))
 	}
 }
 

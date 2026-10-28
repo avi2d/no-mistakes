@@ -5,8 +5,10 @@ import (
 	"math"
 	"slices"
 	"strings"
+	"unicode"
 
 	"github.com/kunchenguid/no-mistakes/internal/agentcfg"
+	"github.com/kunchenguid/no-mistakes/internal/runsecret"
 	"github.com/kunchenguid/no-mistakes/internal/types"
 )
 
@@ -32,11 +34,15 @@ var baseRoleFor = map[string]string{
 // ReviewAgent pins one review-loop role to an explicit harness. Empty model or
 // effort inherits agent_config for that harness; native argument overrides win.
 type ReviewAgent struct {
+	Name   string            `yaml:"name"`
 	Agent  types.AgentName   `yaml:"agent"`
 	Model  string            `yaml:"model"`
 	Effort agentcfg.Effort   `yaml:"effort"`
 	Env    map[string]string `yaml:"env"`
 	Floor  *ReviewerFloor    `yaml:"floor"`
+	// RunEnv names variables the entry takes from the run's --run-env-file;
+	// the entry is skipped for a run missing any of them.
+	RunEnv []string `yaml:"run_env"`
 	// AfterRound is the number of leading review rounds that stay on the base
 	// role; this entry serves every round above it. Only the *_after_round
 	// roles accept it, and an unset value means 1 (take over from round 2).
@@ -72,8 +78,8 @@ func validateReviewAgents(roles map[string]ReviewAgent) error {
 		if err := agentcfg.Validate(entry.Agent, agentcfg.Profile{Model: strings.TrimSpace(entry.Model), Effort: entry.Effort}); err != nil {
 			return fmt.Errorf("invalid review_agents.%s: %w", role, err)
 		}
-		if len(entry.Env) > 0 || entry.Floor != nil {
-			return fmt.Errorf("review_agents.%s does not accept env or floor", role)
+		if len(entry.Env) > 0 || entry.Floor != nil || entry.Name != "" || len(entry.RunEnv) > 0 {
+			return fmt.Errorf("review_agents.%s does not accept env, floor, name or run_env", role)
 		}
 		if _, isOverlay := baseRoleFor[role]; !isOverlay {
 			if entry.AfterRound != nil {
@@ -97,6 +103,20 @@ func validateReviewerEntry(entry ReviewAgent) error {
 	for key, value := range entry.Env {
 		if strings.TrimSpace(key) == "" || strings.ContainsAny(key, "=\x00") || strings.ContainsRune(value, '\x00') {
 			return fmt.Errorf("invalid environment entry %q", key)
+		}
+	}
+	if entry.Name != strings.TrimSpace(entry.Name) || strings.ContainsFunc(entry.Name, unicode.IsControl) {
+		return fmt.Errorf("name must not carry surrounding space or control characters")
+	}
+	for i, name := range entry.RunEnv {
+		if !runsecret.ValidName(name) {
+			return fmt.Errorf("run_env[%d] %q is not a valid variable name", i, name)
+		}
+		if slices.Contains(entry.RunEnv[:i], name) {
+			return fmt.Errorf("run_env repeats %s", name)
+		}
+		if _, fixed := entry.Env[name]; fixed {
+			return fmt.Errorf("%s is in both env and run_env", name)
 		}
 	}
 	if entry.Floor != nil {
