@@ -556,6 +556,57 @@ Step logs include native subprocess agent lifecycle lines such as `codex started
 They also include fix-loop markers such as `auto-fix round 1/3 starting after round 1` and `user-fix round starting after round 2`.
 `--step` accepts the nine core step names and valid repository gate names such as `gate.test.mutation-budget`. Use the exact gate name shown by `axi status`.
 
+## no-mistakes axi rounds
+
+Read the stored findings and decisions for every execution round of one step, in ascending round order.
+This is a read-only export for local tools that need round history without depending on the SQLite schema.
+It does not start or contact the daemon, run migrations, change a gate, or emit telemetry.
+
+```sh
+no-mistakes axi rounds --step review
+no-mistakes axi rounds --step review --run <id> --json
+no-mistakes axi rounds --step gate.test.mutation-budget --json
+```
+
+| Flag | Type | Default | Description |
+| --- | --- | --- | --- |
+| `--step` | `string` | (none) | Required core step or repository gate name |
+| `--run` | `string` | current-branch run | Inspect exactly this run, including from outside a checkout |
+| `--json` | `bool` | `false` | Emit JSON instead of TOON |
+
+Implicit run selection follows [`axi status`](#no-mistakes-axi-status): this branch's active run, then its most recent run, never another branch's.
+A detached HEAD requires `--run`.
+An unknown run, an unrecorded step, an unreadable database, or malformed stored findings or decisions exits 1 rather than reporting a clean history.
+A missing or invalid `--step` exits 2.
+Errors produced by the query use `error` in the selected encoding; JSON errors also carry `schema_version`.
+An existing step without recorded rounds succeeds with `rounds: []`.
+There is no fallback to the step's latest findings and no pagination or truncation.
+An active run's export is a snapshot; a subsequent call may include more rounds or a newly recorded decision.
+
+### JSON contract (version 1)
+
+The top-level keys are `schema_version` (currently `1`), `run_id`, `step`, and `rounds` (an ordered array).
+Each round has these fields:
+
+- `round`: the step-local round number; identify a round by `(run_id, step, round)`, not by finding ID alone.
+- `trigger`: the recorded execution trigger, such as `initial`, `auto_fix`, legacy `user_fix`, `coverage`, `answer`, or `retry`; consumers must allow new trigger values.
+- `summary` and `findings`: the round's complete summary and array of finding objects, or `null` when absent.
+  Finding fields are preserved, including optional fields and instructions; consumers must ignore unknown fields.
+  TOON prints an integer outside ±(2^53−1) as a quoted decimal string to keep it exact; `--json` keeps it a number.
+  An explicit empty findings array stays `[]` and does not mean that earlier findings were resolved.
+- `selected_finding_ids`: IDs selected for fixing **after this round**, or `null` when no selection was recorded.
+  `[]` is an explicit selection of nothing, distinct from no decision.
+- `selection_source`: the recorded source (`user`, `auto_fix`, or `user_declined`), or `null`.
+  An automatic selection does not mean the user declined the remaining findings.
+  `user_declined` does not distinguish approve, skip, and abort; this export does not infer a verdict or whether a fix succeeded.
+- `response_origin`: the recorded caller classification (`interactive`, `auto_yes`, or `unknown`).
+- `user_findings`: the merged finding array dispatched after user edits or additions, or `null` when absent.
+- `fix_summary`: the recorded fix result, or `null` when absent.
+- `duration_ms` and `created_at`: recorded duration in milliseconds and creation time in Unix seconds.
+
+Consumers should tolerate additive fields and new source/origin values; incompatible changes require a new `schema_version`.
+The export excludes internal configuration snapshots and does not publish anything remotely, but finding descriptions and instructions can still contain private repository information.
+
 ## no-mistakes axi handoff
 
 End the current branch's green CI monitor when handing its open PR to human reviewers:
@@ -843,7 +894,7 @@ Checks:
 - Agent runners: native binaries `claude`, `codex`, `grok`, `acli`, `opencode`, `pi`, `copilot`, and `agy` (Antigravity), plus the optional ACP bridge `acpx`
 - ACP alias default binaries: `cursor-agent` plus `acpx` for `cursor`, and `devin` plus `acpx` for `devin`
 - Effective global agent configuration, reported as `gate validation`; an unavailable configured runner is a failed check because the gate cannot validate without it
-- Every configured [`forge_profiles`](/no-mistakes/reference/global-config/#forge_profiles) entry, reported as `forge <host>`: the profile resolves and validates, its provider CLI is installed, and that CLI is authenticated for the profile's host
+- Every configured [`forge_profiles`](/no-mistakes/reference/global-config/#forge_profiles) entry, reported as `forge <key>` (for example `forge github.com` or `forge github.com/owner`): the profile resolves and validates, its provider CLI is installed, and that CLI is authenticated for the profile's host
 - Every configured [`provider_plugins`](/no-mistakes/reference/global-config/#provider_plugins) entry, reported as `plugin <name>`: that its command executable resolves
 
 Uses indicators: `✓` (available), `–` (not found, optional), `✗` (problem detected).
