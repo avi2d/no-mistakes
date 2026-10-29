@@ -66,6 +66,9 @@ When a fork URL is already recorded, re-running `init` without `--fork-url` pres
 Passing `--fork-url` again replaces the stored fork URL after validation.
 If you rename or move an initialized working directory and the old path no longer exists, re-running `init` from the new path reattaches the existing gate, preserves the repo ID and run history, and updates the stored working path.
 If you copy an initialized working directory while the original still exists, the copy is treated as a separate repo and gets a fresh gate.
+On a fresh init and on a refresh alike, `init` decides from the literal `no-mistakes` remote URL in `.git/config`, before any `url.<base>.insteadOf` rewrite: it repoints stale wiring into its own `repos` directory, leaves alone a URL that your git config already rewrites to this gate for both fetch and push, and refuses anything else, including a remote with several URLs, rather than rewriting it.
+When the checkout's `.git` is shared with another no-mistakes home (another `NM_HOME`, for example a linked worktree used by another OS account), that remote names the other home's gate, so the refusal names both gates and prints the per-account rewrite `git config --global 'url.<this gate>.insteadOf' '<other gate>'`, with both paths shell-quoted so it can be pasted as is.
+With that rewrite in your own global git config, `init` leaves the shared remote alone and your pushes through it reach your own gate; a rolled-back init or an `eject` from your home leaves it in place too.
 Fresh init rolls back gate setup when a required gate or daemon step fails; refresh does not eject a pre-existing gate if daemon startup fails.
 Skill installation is best-effort: if the skill write fails, init reports it and leaves the working gate in place.
 
@@ -250,13 +253,14 @@ Long-running `axi run` calls are working, not stalled; if one returns a `gate:`,
 `--wait` defaults to 8m so an agent harness with a 10-minute tool cap gets a structured error instead of an unbounded hang. It bounds the active-run lookup, event-subscription acknowledgement, and subsequent run driving. Elapsed wait is not a pipeline failure and does not mean the daemon is dead: run `no-mistakes axi status` and reattach with `axi run`. A live daemon that is slow to answer a pre-drive `get_active_run` or `get_run` state read is retried after a health probe rather than reported as an I/O failure or mistaken for an absent run.
 Backgrounding a call is fine for an agent harness, but the run never advances past a gate on its own.
 When CI readiness is established - every registered check is green, or the trusted default-branch config declares [`no_ci: true`](/no-mistakes/reference/repo-config/#no_ci) with no registered checks - and known mergeability is clear, `axi run` exits successfully with `outcome: checks-passed` instead of waiting for a human merge. A generic empty check list without that declaration is not ready.
-Treat that outcome as the agent stopping point: ask the user to review and merge the PR from the `help` line.
+Treat that outcome as the agent stopping point: ask the user to review and merge the PR from the `help` line, or run [`axi handoff`](#no-mistakes-axi-handoff) to end green monitoring without cancelling the run.
+`axi handoff` records `handed_off` only for an actively monitored open PR with persisted readiness; the PR remains open and is not treated as merged.
 By default the run stays active and keeps monitoring the same PR.
 While that monitor is running, do not run `axi run`, `rerun`, or a manual rebase: the monitor auto-rebases onto the base, resolves actual conflicts, revalidates from Review because rebasing cannot prove continuity with the reviewed head, and re-pushes the branch through Push, while a PR that is merely behind but clean needs no command.
 On GitHub, a clean PR whose base requires up-to-date branches (`mergeStateStatus: BEHIND`) still reports `checks-passed` and waits for a human to bring it up to date, unless the repository opts into [`ci.rebase_behind`](/no-mistakes/reference/repo-config/#cirebase_behind), in which case it is rebased the same way.
-After that monitor ends, see [`no-mistakes rerun`](#no-mistakes-rerun) for the restart conditions.
+After that monitor ends, see [`no-mistakes rerun`](#no-mistakes-rerun) for the restart conditions; an explicit handoff is terminal and does not request a rerun.
 Under [`ci.release_after_checks_pass`](/no-mistakes/reference/repo-config/#cirelease_after_checks_pass) the run finishes at that verdict instead: `run.status` is `checks_passed`, it releases its worktree and its lane, and nothing is left monitoring the PR, so a later update is a fresh `axi run` on the updated head - this run will not rebase or re-push it.
-Successful outcomes (`checks-passed`, `passed`, `passed-with-override`, and `passed-with-skips`) also carry `help` instructions telling the agent to summarize the run.
+Successful outcomes (`checks-passed`, `passed`, `passed-with-override`, `passed-with-skips`, and `handed-off`) also carry `help` instructions telling the agent to summarize the run.
 `passed-with-override` qualifies either `passed` or `checks-passed` when the run has an explicitly approved Test exception or a CI approval over still-failing checks.
 It stays a success, including at the checks-passed stopping point, but does not claim a clean validation.
 A Test exception is an approval past a failing configured `commands.test`, a `no-go` verdict, an `inconclusive` verdict, or a [`test_agent_timeout`](/no-mistakes/reference/global-config/#test_agent_timeout) budget cut; approving a `no-surface` park records its reason without adding the override qualification.
@@ -486,7 +490,7 @@ A custody-returned branch can later be rebased and force-with-lease pushed to it
 
 ### Custody recovery
 
-A run that goes terminal (cancelled, failed, or completed without a push stage) after moving the pipeline head leaves the branch `pipeline_owned`. Status offers `next_action.code: recover_custody` only when recovery can establish the same eligibility it will enforce: an equal or ahead local head proves the source locally and can create the local anchor when the gate is unavailable, but any existing gate recovery ref must still match the recorded head; importing a missing preserved head requires an exact run-specific gate anchor (or legacy commit evidence that can be anchored), a clean worktree, and either local ancestry or the content-preservation proof described below. The archive-backed keep-local exception has its own stricter proof below. An eligible state reports `safety: blocked_pipeline_owned_recoverable`, the run's terminal `pipeline.status`, and the exact `submitted_head`/`current_head`/`relation` ownership facts.
+A run that goes terminal (cancelled, failed, handed off, or completed without a push stage) after moving the pipeline head leaves the branch `pipeline_owned`. Status offers `next_action.code: recover_custody` only when recovery can establish the same eligibility it will enforce: an equal or ahead local head proves the source locally and can create the local anchor when the gate is unavailable, but any existing gate recovery ref must still match the recorded head; importing a missing preserved head requires an exact run-specific gate anchor (or legacy commit evidence that can be anchored), a clean worktree, and either local ancestry or the content-preservation proof described below. The archive-backed keep-local exception has its own stricter proof below. An eligible state reports `safety: blocked_pipeline_owned_recoverable`, the run's terminal `pipeline.status`, and the exact `submitted_head`/`current_head`/`relation` ownership facts.
 A run whose terminalization verifies that the managed worktree head never changed from the submitted head releases the branch instead: the terminal outcome, including cancellation, ends ownership; status reports `state: user_owned` with the same exact ownership facts and no `next_action`; the branch and head are immediately usable for any separately authorized delivery; and nothing blocks a direct push or PR.
 Without positive evidence that the submitted head stayed unchanged, custody is not guessed away. Conflicting evidence, import cases with a dirty worktree, and genuinely divergent history retain manual-reconciliation guidance instead of being labeled as a missing preserved head. When a verified recorded head is absent from both the invoking worktree and an accessible local gate, with compatible recovery refs, status reports `safety: blocked_recover_preserved_head_missing` with `next_action.code: recover_custody` and `no-mistakes axi sync --recover --keep-local`: that flag is the operator's explicit choice to keep the current local head and discard the missing preserved commits. An unavailable gate remains blocked because absence cannot be established there. The archive-backed keep-local exception has its own stricter proof below.
 A run can also end without verified final-head evidence, when terminalization finds the managed worktree on a head that does not descend from the recorded head.
@@ -551,6 +555,18 @@ Without `--full`, the summary is bounded like the gate's and long logs show the 
 Step logs include native subprocess agent lifecycle lines such as `codex started pid=4242`, `codex exited pid=4242 status=success`, and transient retry messages when the selected agent supports lifecycle events.
 They also include fix-loop markers such as `auto-fix round 1/3 starting after round 1` and `user-fix round starting after round 2`.
 `--step` accepts the nine core step names and valid repository gate names such as `gate.test.mutation-budget`. Use the exact gate name shown by `axi status`.
+
+## no-mistakes axi handoff
+
+End the current branch's green CI monitor when handing its open PR to human reviewers:
+
+```bash
+no-mistakes axi handoff
+```
+
+The daemon accepts this only while the CI step is actively monitoring an open PR and has persisted `checks-passed` readiness (including trusted declared-no-CI readiness). Pending or failed checks, approval gates, and runs without an open PR are refused with guidance to continue with `axi run`. Successful handoff waits for the run to stop and records terminal `handed_off`, rendered as the `handed-off` drive outcome. It neither merges nor closes the PR, and it does not claim a merge occurred. The open/green check is a snapshot at the monitor evaluation. Like other branch-scoped mutations, it must be run from the repository's current branch.
+
+Use `axi abort` to discard a run instead; its cancellation behavior is unchanged. Handoff is explicit and opt-in, not an automatic finish-on-green policy. If the run has already completed, no active monitor remains to hand off.
 
 ## no-mistakes axi abort
 
@@ -621,6 +637,13 @@ The retry refuses, changing nothing, unless every proof holds:
 | `compatible configuration` | the run has no verification plan, its Pi profile still resolves to the same model and effort, and the repository's gates, read from the freshly fetched trusted default branch, are the gates the run pinned. A carried Review also needs the same effective repository configuration as the trusted commit its rounds recorded, the same global configuration when its rounds recorded one, and the same agent and model that served each carried step (an `auto` agent is resolved first). The configuration is checked twice: once before the launch, and again against the configuration the new run actually loads, so a change between the two refuses the retry. The refusal names the changed setting |
 | `review conversation` | a carried Review that recorded a question still has its question records on disk. They are copied into the new run, so open and withdrawn questions reach the PR body; if they are gone, the retry is refused |
 
+For the agent and model proof, configured reviewer fallbacks are eligible under
+the base or later-round role that served the invocation, including coverage turns.
+When an invocation recorded a configured model, that value must still match an
+eligible candidate, including its provider prefix. Removing or changing that
+candidate can therefore refuse the retry even when the reported model name is
+unchanged.
+
 Each refusal names the failed proof and points to `no-mistakes rerun`.
 The new run records which run, step, and round it continues, the failed step's error, and the preserved head it started from.
 Its run object shows that link as `retry_of`, and the failed run's run object names its continuation as `retried_by`; the new run's own outcome completes the trail.
@@ -641,7 +664,8 @@ Remove the gate from the current repository.
 no-mistakes eject
 ```
 
-Removes the `no-mistakes` remote, deletes the bare repo directory, cleans up worktrees, and deletes the database record (cascades to runs and steps).
+Removes the `no-mistakes` remote only when it has exactly one literal URL (as written in `.git/config`, before any `url.<base>.insteadOf` rewrite) inside this home's `repos` directory; any other remote, such as another no-mistakes home's gate in a shared `.git`, a remote you pointed elsewhere, or one with several URLs, is left in place.
+It deletes the bare repo directory, cleans up worktrees, and deletes the database record (cascades to runs and steps).
 It does not remove any legacy repo-local agent skill files left by older versions; current `init` installs the skill at user level instead.
 
 ## no-mistakes attach
