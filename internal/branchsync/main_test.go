@@ -7,6 +7,7 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	os.Unsetenv("GIT_CONFIG_COUNT")
 	// Fixtures must not depend on the machine's system git config: some
 	// distributions ship safe.bareRepository=explicit there, which refuses
 	// the in-directory use of the bare fixture repositories these tests
