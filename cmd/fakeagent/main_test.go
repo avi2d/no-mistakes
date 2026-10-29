@@ -7,6 +7,7 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	os.Unsetenv("GIT_CONFIG_COUNT")
 	os.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 	globalConfigDir, err := os.MkdirTemp("", "no-mistakes-fakeagent-tests-")
 	if err != nil {
