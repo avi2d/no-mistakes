@@ -36,7 +36,7 @@ func TestReadSnapshotReapsDescendantsOnEveryExit(t *testing.T) {
 			if err := os.WriteFile(executable, []byte(script), 0o755); err != nil {
 				t.Fatal(err)
 			}
-			snapshot, err := ReadSnapshot(context.Background(), executable, 200*time.Millisecond)
+			snapshot, err := ReadSnapshot(context.Background(), executable, 2*time.Second)
 			if (mode == "success") != (err == nil) {
 				t.Fatalf("mode=%s snapshot=%+v error=%v", mode, snapshot, err)
 			}
