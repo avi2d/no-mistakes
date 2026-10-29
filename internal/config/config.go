@@ -69,7 +69,7 @@ const (
 	// Global-config-only; a pushed branch cannot change it.
 	DefaultGateReconcileTimeout = 30 * time.Second
 	// CITimeoutUnlimited is the sentinel meaning "monitor until the PR is
-	// merged, closed, or the run is aborted - never self-terminate".
+	// merged, closed, handed off, or aborted - never self-terminate".
 	// Any non-positive ci_timeout, or the keywords "unlimited", "none",
 	// "off", and "never", resolves to this.
 	CITimeoutUnlimited = time.Duration(-1)
@@ -414,6 +414,9 @@ type RepoConfig struct {
 	Agents         []types.AgentName `yaml:"-"`
 	Commands       Commands          `yaml:"commands"`
 	IgnorePatterns []string          `yaml:"ignore_patterns"`
+	// TrustedIgnorePatterns preserves the default branch's authorized exclusions
+	// when review instructions override exclusions from the pushed branch.
+	TrustedIgnorePatterns []string `yaml:"-"`
 	// ProtectedPaths prevents automatic staging of dirty matching paths. It is
 	// trusted-only, regardless of allow_repo_commands, so a pushed branch cannot
 	// remove the maintainer's protection from its own fixes.
@@ -843,13 +846,13 @@ type CI struct {
 	CarryReviewOnReplay bool
 
 	// ReleaseAfterChecksPass makes the CI step finish the run at its checks
-	// verdict instead of monitoring the pull request until it is merged or
-	// closed.
+	// verdict instead of monitoring the pull request until it is merged, closed,
+	// declined, or explicitly handed off.
 	//
 	// false (default): the step records readiness and keeps polling, which is
 	// the behavior every run has had until now - a later base-branch advance or
 	// conflict is repaired and the merge itself is observed, bounded by
-	// ci_timeout.
+	// ci_timeout, unless an operator explicitly hands off the green monitor.
 	//
 	// true: the green observation ends the step, and the run completes with the
 	// checks_passed status, releasing its worktree and its lane while the merge
@@ -981,6 +984,8 @@ type Config struct {
 	NoCI bool
 	// Providers holds the resolved provider-specific settings.
 	Providers Providers
+	// TrustedIgnorePatterns is the default branch's authorized review exclusions.
+	TrustedIgnorePatterns []string
 }
 
 // ProvidersRaw is the YAML representation of provider-specific settings,
@@ -1226,6 +1231,8 @@ type TestRaw struct {
 // Pointer fields distinguish "not set" (nil) from explicit zero/false values.
 type EvidenceRaw struct {
 	StoreInRepo *bool `yaml:"store_in_repo"`
+	// Compact controls PR testing-section presentation only; pushed-readable.
+	Compact *bool `yaml:"compact"`
 	// AttachMedia uploads image and video evidence to GitHub user-attachments
 	// when the PR body is rendered. It defaults on so default-config PRs stop
 	// citing local disk paths for screenshots; set false to opt out even when
@@ -1282,6 +1289,8 @@ type Test struct {
 // GitHub user-attachments at PR render time so remote reviewers can open them
 // without an evidence branch. Text artifacts stay inlined or locally cited.
 type Evidence struct {
+	// Compact defaults true; false opts into inline PR evidence previews.
+	Compact     bool
 	StoreInRepo bool
 	AttachMedia bool
 	Dir         string
@@ -1563,7 +1572,8 @@ forgejo_axi_path: forgejo-axi
 # watch it keeps afterwards. Each base-branch advance re-arms this timer.
 # Set to "unlimited", "none", "off", "never", or any non-positive duration
 # to disable the timeout. By default the monitor keeps watching after checks
-# are green; ci.release_after_checks_pass ends the run at readiness.
+# are green; ci.release_after_checks_pass ends the run at readiness, and
+# no-mistakes axi handoff ends it explicitly for human review.
 # See docs/src/content/docs/reference/global-config.md#ci_timeout.
 ci_timeout: "168h"
 
@@ -1794,15 +1804,15 @@ ci:
   carry_review_on_replay: false
 
   # Whether the CI step finishes the run as soon as every check is green
-  # instead of monitoring the pull request until it is merged or closed.
-  # Defaults to false, which is what the step has always done: the run stays
-  # open, keeps watching the PR, and can still auto-rebase it if the base branch
-  # later conflicts. Set true to record the checks-passed verdict and release
-  # the run there (outcome: checks-passed, run status: checks_passed), so the
-  # run's worktree and lane are not held for a human merge decision - the
-  # recorded CI duration then measures CI only. CI readiness is still recorded
-  # either way; a repository that sets ci.release_after_checks_pass on its own
-  # default branch overrides this value.
+  # instead of monitoring the pull request until it is merged, closed, or
+  # explicitly handed off. Defaults to false, which is what the step has
+  # always done: the run stays open, keeps watching the PR, and can still
+  # auto-rebase it if the base branch later conflicts. Set true to record the
+  # checks-passed verdict and release the run there (outcome: checks-passed,
+  # run status: checks_passed), so the run's worktree and lane are not held for
+  # a human merge decision - the recorded CI duration then measures CI only.
+  # CI readiness is still recorded either way; a repository that sets
+  # ci.release_after_checks_pass on its own default branch overrides this value.
   release_after_checks_pass: false
 
 # Auto-fix commit subject template. Available variables: {{.Step}}, {{.Summary}}, and {{.Branch}}.
@@ -3387,7 +3397,9 @@ func EffectiveRepoConfig(pushed, trusted *RepoConfig, allowRepoCommands bool) *R
 		pushed = &RepoConfig{}
 	}
 	effective := *pushed
+	effective.TrustedIgnorePatterns = nil
 	if trusted != nil {
+		effective.TrustedIgnorePatterns = append([]string(nil), trusted.IgnorePatterns...)
 		effective.Document = trusted.Document
 		effective.ProtectedPaths = append([]string(nil), trusted.ProtectedPaths...)
 		// review.path_instructions steers the gate agent that reviews the pushed
@@ -3577,6 +3589,7 @@ func testDefaults() Test {
 	return Test{
 		Evidence: Evidence{
 			StoreInRepo: false,
+			Compact:     true,
 			AttachMedia: true,
 			Dir:         ".no-mistakes/evidence",
 			Branch:      evidence.DefaultBranch,
@@ -3595,6 +3608,9 @@ func testDefaults() Test {
 // The local-storage half is applied separately by applyEvidenceStorageOverrides
 // so a repository config can never reach it (see EvidenceRaw.LocalRoot).
 func applyTestOverrides(dst *Test, src *TestRaw) {
+	if src.Evidence.Compact != nil {
+		dst.Evidence.Compact = *src.Evidence.Compact
+	}
 	if src.Evidence.StoreInRepo != nil {
 		dst.Evidence.StoreInRepo = *src.Evidence.StoreInRepo
 	}
@@ -4197,6 +4213,7 @@ func merge(global *GlobalConfig, repo *RepoConfig, override *RepositoryOverride)
 		// trusted-only (EffectiveRepoConfig sourced it from the trusted copy).
 		DisableProjectSettings: repo.DisableProjectSettings,
 		NoCI:                   repo.NoCI,
+		TrustedIgnorePatterns:  append([]string(nil), repo.TrustedIgnorePatterns...),
 	}
 
 	// repo.Review is trusted-only (EffectiveRepoConfig). The repository value

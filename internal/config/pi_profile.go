@@ -62,6 +62,11 @@ func validatePiProfileAgents(agent types.AgentName, agents []types.AgentName, re
 		if entry.Agent != types.AgentPi {
 			return fmt.Errorf("Pi run profile conflicts with non-Pi review_agents")
 		}
+		for _, fallback := range entry.Fallback {
+			if fallback.Agent != types.AgentPi {
+				return fmt.Errorf("Pi run profile conflicts with non-Pi review_agents fallback")
+			}
+		}
 	}
 	for _, entry := range reviewerChain {
 		if entry.Agent != types.AgentPi {
