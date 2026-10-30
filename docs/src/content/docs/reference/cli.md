@@ -432,8 +432,9 @@ When the resolved run has a `running` or `fixing` step, the run object includes 
 Each row reports the whole step's elapsed time as `active_for`, the displayed execution or fix round's elapsed time as `round_active_for`, the latest meaningful log or native-agent lifecycle activity, the native agent PID if one is currently running, and the current round such as `round 1`, `auto-fix 1/3`, or `fix 2`.
 `round_active_for` resets when a fix round starts; older active runs created before this timing was recorded show it as empty.
 If no activity arrives for longer than `step_quiet_warning`, `last_activity` is prefixed with `quiet`; this is only a liveness signal and does not cancel the step.
-When Review was served from [`reviewer_chain`](/no-mistakes/reference/global-config/#review_agents), the run object includes `reviewer_entry` after `reviewer_agent`.
-It is the serving entry's `name`, or `reviewer_chain[<index>]` when the entry has none.
+When Review was served from [`reviewer_chain`](/no-mistakes/reference/global-config/#review_agents), the run object includes a `reviewer_entry` object after `reviewer_agent`.
+Its `index` is the serving entry's zero-based position in `reviewer_chain`, and its `name` is the entry's `name`, left out when the entry has none.
+It describes the latest review round that recorded a reviewer.
 When an agent invocation itself has produced nothing for that long, the run object also includes `stalled_agents`, one row per stalled step with its `agent`, `silent_for`, and `agent_pid`, and the status help names the agent and the step log to read.
 For older active runs with no recorded activity timestamp, AXI falls back to the step log file modification time.
 Finding descriptions are always rendered in full, so an `ask-user` finding can be relayed verbatim. Gate summaries are bounded in this default status view because a command gate's summary carries its command output; a truncated summary discloses its original length, and the gate help points to `no-mistakes axi logs --step <step> --full` for an implicitly resolved run or `no-mistakes axi logs --run <id> --step <step> --full` for an explicitly selected run.

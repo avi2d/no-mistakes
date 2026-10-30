@@ -25,11 +25,10 @@ type DB struct {
 
 // Open opens (or creates) the SQLite database at path and runs migrations.
 func Open(path string) (*DB, error) {
-	sqlDB, err := sql.Open("sqlite", path+"?_pragma=journal_mode(wal)&_pragma=foreign_keys(on)&_pragma=busy_timeout(5000)")
+	sqlDB, err := OpenSQLite(path + "?_pragma=journal_mode(wal)&_pragma=foreign_keys(on)&_pragma=busy_timeout(5000)")
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)
 	}
-	sqlDB.SetMaxOpenConns(1)
 	if _, err := sqlDB.Exec(schemaSQL); err != nil {
 		sqlDB.Close()
 		return nil, fmt.Errorf("migrate db: %w", err)

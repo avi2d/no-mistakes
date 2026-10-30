@@ -4,8 +4,8 @@ package e2e
 
 import (
 	"context"
+	"database/sql"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -16,6 +16,7 @@ import (
 	"github.com/kunchenguid/no-mistakes/internal/ipc"
 	"github.com/kunchenguid/no-mistakes/internal/paths"
 	"github.com/kunchenguid/no-mistakes/internal/types"
+	_ "modernc.org/sqlite"
 )
 
 // assertParkedRunIntact proves a refused dispatch never superseded a healthy
@@ -396,19 +397,22 @@ func TestLivePiProfileReattachAndRerunSemantics(t *testing.T) {
 	// The pin is immutable in the persisted run state: an external rewrite of
 	// the daemon's database is refused and the product still reports the pin.
 	dbPath := paths.WithRoot(h.NMHome).DB()
-	mutate := exec.Command("sqlite3", dbPath,
-		`UPDATE runs SET pi_profile = '{"model":"anthropic/other-e2e","effort":"low"}' WHERE id = '`+effortOnly.ID+`'`)
-	mutateOut, mutateErr := mutate.CombinedOutput()
-	if mutateErr == nil {
-		t.Fatalf("persisted pin was mutable: %s", mutateOut)
+	external, err := sql.Open("sqlite", dbPath+"?_pragma=busy_timeout(5000)")
+	if err != nil {
+		t.Fatalf("open daemon database: %v", err)
 	}
-	if !strings.Contains(string(mutateOut), "immutable") {
-		t.Fatalf("unexpected mutation failure: %v\n%s", mutateErr, mutateOut)
+	defer external.Close()
+	_, mutateErr := external.Exec(`UPDATE runs SET pi_profile = '{"model":"anthropic/other-e2e","effort":"low"}' WHERE id = ?`, effortOnly.ID)
+	if mutateErr == nil {
+		t.Fatal("persisted pin was mutable")
+	}
+	if !strings.Contains(mutateErr.Error(), "immutable") {
+		t.Fatalf("unexpected mutation failure: %v", mutateErr)
 	}
 	if now := h.RunInfo(effortOnly.ID); now.PiProfile == nil || now.PiProfile.Model != globalModel || now.PiProfile.Effort != "max" {
 		t.Fatalf("mutation attempt changed the live pin: %+v", now.PiProfile)
 	}
-	t.Logf("persisted pin mutation refused: %s", strings.TrimSpace(string(mutateOut)))
+	t.Logf("persisted pin mutation refused: %v", mutateErr)
 }
 
 // TestLivePiProfileConcurrentRunsStayIsolated proves two pinned validations for

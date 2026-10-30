@@ -12,8 +12,7 @@ import (
 	"time"
 
 	"github.com/kunchenguid/no-mistakes/internal/config"
-
-	_ "modernc.org/sqlite"
+	"github.com/kunchenguid/no-mistakes/internal/db"
 )
 
 // Store is the opt-in sqlite-first local registry. It is intentionally a
@@ -38,11 +37,12 @@ func Open(root string) (*Store, error) {
 	if err := os.MkdirAll(cases, 0o755); err != nil {
 		return nil, fmt.Errorf("create eval cases directory: %w", err)
 	}
-	database, err := sql.Open("sqlite", filepath.Join(root, "registry.sqlite")+"?_pragma=journal_mode(wal)&_pragma=foreign_keys(on)&_pragma=busy_timeout(5000)")
+	// A deferred transaction that reads before it writes fails SQLITE_BUSY
+	// without waiting when another process writes first; immediate ones wait.
+	database, err := db.OpenSQLite(filepath.Join(root, "registry.sqlite") + "?_pragma=journal_mode(wal)&_pragma=foreign_keys(on)&_pragma=busy_timeout(5000)&_txlock=immediate")
 	if err != nil {
 		return nil, fmt.Errorf("open eval registry: %w", err)
 	}
-	database.SetMaxOpenConns(1)
 	store := &Store{root: root, cases: cases, db: database, diversifiedSize: config.DefaultEvalDiversifiedSize}
 	if err := store.migrate(); err != nil {
 		_ = database.Close()

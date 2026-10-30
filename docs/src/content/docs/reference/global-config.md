@@ -421,7 +421,7 @@ The daemon holds them in memory and passes them only to that entry's agent proce
 An entry whose `run_env` the run cannot supply is skipped with the reason `run carries no <NAME>`, even when it is the last entry.
 A `run_env` name must be a valid environment variable name, and it may not repeat or also appear in `env`.
 The optional `name` labels an entry, and names must be unique within the chain.
-`axi status` reports the serving entry as `reviewer_entry`, by `name` or else as `reviewer_chain[<index>]`.
+`axi status` reports the serving entry as `reviewer_entry`, with its `index` in the chain and its `name` when it has one.
 `name` and `run_env` are refused on `review_agents` roles.
 Model and effort are optional and inherit `agent_config` for that harness when empty.
 Nonempty role values override that profile, but native `agent_args_override` flags still win.

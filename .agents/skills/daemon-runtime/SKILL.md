@@ -1,6 +1,6 @@
 ---
 name: daemon-runtime
-description: Use when changing daemon startup, singleton ownership, shutdown, logging, event subscriptions, lifecycle commands, or the daemon's login-shell environment.
+description: Use when changing daemon startup, singleton ownership, shutdown, logging, event subscriptions, lifecycle commands, the daemon's login-shell environment, or run-scoped reviewer variables (`axi run --run-env-file`).
 user-invocable: false
 metadata:
   internal: true
@@ -42,3 +42,10 @@ metadata:
 - Only a missing shell binary (`shellBinaryMissing`: fork/exec ENOENT or an unresolvable name) is waited for, and only at startup (`DefaultShellRetryWindow`): on macOS with nix-darwin the login shell lives under `/run/current-system`, which the activate-system daemon recreates after the Nix store mounts, so a RunAtLoad launch agent can race it (#143). A shell that exists but fails is never waited for. The environment is resolved once per daemon lifetime; restart the daemon to pick up a login shell that appeared or changed later.
 - `ipc.MethodDaemonEnvironment` reports the daemon's own proxy variables (`proxyEnvironment`, read-only) so `no-mistakes doctor` checks the environment agents actually inherit rather than the caller's shell or the service definition; the doctor dials each proxy and prints only `host:port`, never the value. Regressions: `TestDoctorFailsWhenTheDaemonNamesAProxyNothingListensOn`, `TestDoctorPassesADaemonWithoutAProxy`.
 - Regressions: `internal/shellenv/shellenv_retry_test.go` (incl. `TestDefaultShellCommandOutput_InteractiveShellFromForegroundTerminal`, which re-executes the test binary under `script(1)` to own a pty).
+
+**Run-Scoped Reviewer Variables (`internal/daemon/run_env.go`)**
+
+- `axi run --run-env-file` stages KEY=VALUE pairs over `ipc.MethodStageRunEnv` keyed by repo, branch and head; `stagedRunEnv` holds them in daemon memory only, the next run created for that exact key claims them once (`manager.go`, `m.runEnv.claim`), and an unclaimed stage expires after `stagedRunEnvLifetime` or is dropped by `MethodReleaseRunEnv`. They never reach the DB, a log, the run folder, step output, the PR body, argv, or an error message; a refusal names variables, never values.
+- Only `newPipelineAgent`'s `reviewer_chain` loop reads them, and `takeRunEnv` hands each entry exactly the names in its `run_env`, layered last by `reviewerEnvironment`. An entry missing any named variable is skipped with `run carries no <NAMES>` in the round's chain trace rather than launched without it. Crash recovery passes nil run vars, so a resumed run carries none and its `run_env` entries skip.
+- `axi status` renders the trace's serving entry as `reviewer_entry` (`index`, optional `name`); a trace without `selected` names no entry.
+- Regressions: `internal/daemon/run_env_test.go`, `internal/cli/axi_run_env_test.go`, `internal/cli/axi_reviewer_entry_test.go`, and the e2e `internal/e2e/run_env_test.go`, which drives the real binary with a placeholder token and asserts, via the fake agent's `FAKEAGENT_RECORD_ENV` digests, that only review turns receive it and no file under `NM_HOME` or CLI output holds it.

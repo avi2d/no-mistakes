@@ -238,18 +238,15 @@ type ReviewerTrace struct {
 }
 
 func ParseReviewerTrace(raw string) (ReviewerTrace, bool) {
-	var trace ReviewerTrace
-	if err := json.Unmarshal([]byte(raw), &trace); err != nil || trace.Selected < 0 {
+	var wire struct {
+		Selected *int                 `json:"selected"`
+		Name     string               `json:"name"`
+		Skipped  []ReviewerTraceEntry `json:"skipped"`
+	}
+	if err := json.Unmarshal([]byte(raw), &wire); err != nil || wire.Selected == nil || *wire.Selected < 0 {
 		return ReviewerTrace{}, false
 	}
-	return trace, true
-}
-
-func (t ReviewerTrace) ServingEntry() string {
-	if t.Name != "" {
-		return t.Name
-	}
-	return fmt.Sprintf("reviewer_chain[%d]", t.Selected)
+	return ReviewerTrace{Selected: *wire.Selected, Name: wire.Name, Skipped: wire.Skipped}, true
 }
 
 func runReviewerCandidates(ctx context.Context, opts RunOpts, candidates []ReviewerCandidate) (*Result, error, Agent, string) {

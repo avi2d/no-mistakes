@@ -174,7 +174,7 @@ func TestReviewerCandidatesUnavailableEntryIsNeverRunAndTheServerIsNamed(t *test
 		t.Fatalf("result=%+v err=%v calls=%d/%d", result, err, len(token.calls), len(named.calls))
 	}
 	trace, ok := ParseReviewerTrace(result.ReviewerChainTrace)
-	if !ok || trace.Selected != 1 || trace.ServingEntry() != "second" || len(trace.Skipped) != 1 || trace.Skipped[0].Reason != "run carries no CLAUDE_CODE_OAUTH_TOKEN" {
+	if !ok || trace.Selected != 1 || trace.Name != "second" || len(trace.Skipped) != 1 || trace.Skipped[0].Reason != "run carries no CLAUDE_CODE_OAUTH_TOKEN" {
 		t.Fatalf("trace = %q", result.ReviewerChainTrace)
 	}
 }
@@ -194,7 +194,7 @@ func TestReviewerCandidatesFloorDoesNotSkipTheLastEntryThatCanServe(t *testing.T
 	if err != nil || len(floored.calls) != 1 || len(token.calls) != 0 {
 		t.Fatalf("result=%+v err=%v calls=%d/%d", result, err, len(floored.calls), len(token.calls))
 	}
-	if trace, ok := ParseReviewerTrace(result.ReviewerChainTrace); !ok || trace.ServingEntry() != "reviewer_chain[0]" {
+	if trace, ok := ParseReviewerTrace(result.ReviewerChainTrace); !ok || trace.Selected != 0 || trace.Name != "" {
 		t.Fatalf("trace = %q", result.ReviewerChainTrace)
 	}
 }
