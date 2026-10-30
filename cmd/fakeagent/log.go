@@ -1,8 +1,11 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"os"
+	"strings"
 	"sync"
 	"time"
 )
@@ -19,6 +22,24 @@ type invocation struct {
 	Args   []string `json:"args"`
 	Prompt string   `json:"prompt"`
 	CWD    string   `json:"cwd,omitempty"`
+	// A digest, not the value: the log must never hold the secret a test hunts for.
+	EnvDigests map[string]string `json:"env_digests,omitempty"`
+}
+
+func recordedEnvDigests() map[string]string {
+	var digests map[string]string
+	for _, name := range strings.Split(os.Getenv("FAKEAGENT_RECORD_ENV"), ",") {
+		value := os.Getenv(strings.TrimSpace(name))
+		if value == "" {
+			continue
+		}
+		if digests == nil {
+			digests = make(map[string]string)
+		}
+		sum := sha256.Sum256([]byte(value))
+		digests[strings.TrimSpace(name)] = hex.EncodeToString(sum[:])
+	}
+	return digests
 }
 
 func logInvocation(agent, prompt string, args []string) {
@@ -28,11 +49,12 @@ func logInvocation(agent, prompt string, args []string) {
 	}
 	cwd, _ := os.Getwd()
 	rec := invocation{
-		Time:   time.Now().UTC().Format(time.RFC3339Nano),
-		Agent:  agent,
-		Args:   args,
-		Prompt: prompt,
-		CWD:    cwd,
+		Time:       time.Now().UTC().Format(time.RFC3339Nano),
+		Agent:      agent,
+		Args:       args,
+		Prompt:     prompt,
+		CWD:        cwd,
+		EnvDigests: recordedEnvDigests(),
 	}
 	data, err := json.Marshal(rec)
 	if err != nil {
