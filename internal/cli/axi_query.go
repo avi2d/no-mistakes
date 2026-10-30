@@ -164,15 +164,15 @@ func emitNoRunForCaller(cmd *cobra.Command, env *axiEnv, branch string, runs []*
 	return nil
 }
 
-func servingReviewerEntry(rawTrace *string) string {
+func servingReviewerEntry(rawTrace *string) *servedReviewerEntry {
 	if rawTrace == nil {
-		return ""
+		return nil
 	}
 	trace, ok := agent.ParseReviewerTrace(*rawTrace)
 	if !ok {
-		return ""
+		return nil
 	}
-	return trace.ServingEntry()
+	return &servedReviewerEntry{Index: trace.Selected, Name: trace.Name}
 }
 
 func annotateRunView(env *axiEnv, rv *runView) {

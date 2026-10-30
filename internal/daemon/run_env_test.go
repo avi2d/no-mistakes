@@ -146,7 +146,7 @@ func TestRunEnvFileTokenReachesOnlyTheRunTokenReviewerAndNeverTheDaemonsRecords(
 		t.Fatalf("reviewer invocation = %q, want the run-token entry with the token in its environment", line)
 	}
 	trace, ok := agent.ParseReviewerTrace(rawTrace)
-	if !ok || trace.ServingEntry() != "run-token" || len(trace.Skipped) != 0 {
+	if !ok || trace.Selected != 0 || trace.Name != "run-token" || len(trace.Skipped) != 0 {
 		t.Fatalf("trace = %q, want the run-token entry serving with nothing skipped", rawTrace)
 	}
 	if hits := filesContaining(t, nmHome, []byte(`"name":"run-token"`)); len(hits) == 0 {
@@ -168,7 +168,7 @@ func TestRunWithoutRunEnvFileSkipsTheRunTokenEntryInsteadOfLaunchingItTokenless(
 		t.Fatalf("reviewer invocation = %q, want only the fallback entry with no token", line)
 	}
 	trace, ok := agent.ParseReviewerTrace(rawTrace)
-	if !ok || trace.ServingEntry() != "reviewer_chain[1]" || len(trace.Skipped) != 1 || trace.Skipped[0].Reason != "run carries no RUN_TOKEN" {
+	if !ok || trace.Selected != 1 || trace.Name != "" || len(trace.Skipped) != 1 || trace.Skipped[0].Reason != "run carries no RUN_TOKEN" {
 		t.Fatalf("trace = %q, want reviewer_chain[1] serving after skipping the run-token entry", rawTrace)
 	}
 }

@@ -109,6 +109,11 @@ type fixRow struct {
 
 // stepView is a render-ready view of a single pipeline step, decoupled from
 // whether it came from the daemon (ipc) or the local database.
+type servedReviewerEntry struct {
+	Index int
+	Name  string
+}
+
 type stepView struct {
 	ID                string
 	Name              string
@@ -127,7 +132,7 @@ type stepView struct {
 	AutoFixLimit      int
 	PendingFixSource  string
 	ReviewerAgent     string
-	ReviewerEntry     string
+	ReviewerEntry     *servedReviewerEntry
 	RepeatMarks       map[string]int
 	NoChangeFixRounds []int
 	QuietWarning      time.Duration
@@ -612,8 +617,12 @@ func runObjectFieldWithKey(key string, rv runView) toon.Field {
 	for _, step := range rv.Steps {
 		if step.Name == string(types.StepReview) && step.ReviewerAgent != "" {
 			fields = append(fields, toon.Field{Key: "reviewer_agent", Value: step.ReviewerAgent})
-			if step.ReviewerEntry != "" {
-				fields = append(fields, toon.Field{Key: "reviewer_entry", Value: step.ReviewerEntry})
+			if entry := step.ReviewerEntry; entry != nil {
+				entryFields := []toon.Field{{Key: "index", Value: entry.Index}}
+				if entry.Name != "" {
+					entryFields = append(entryFields, toon.Field{Key: "name", Value: entry.Name})
+				}
+				fields = append(fields, toon.Field{Key: "reviewer_entry", Value: toon.NewObject(entryFields...)})
 			}
 			break
 		}
