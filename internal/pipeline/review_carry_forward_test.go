@@ -796,17 +796,18 @@ func TestExecutor_ReviewCarryForward_PendingSelectionsSurviveLaterRounds(t *test
 
 	waitForStepStatus(t, database, run.ID, types.StepReview, types.StepStatusAwaitingApproval)
 	steps, err := database.GetStepsByRun(run.ID)
-	if err != nil {
-		t.Fatal(err)
+	if err != nil || len(steps) == 0 {
+		t.Fatalf("get parked review: steps=%v, err=%v", steps, err)
 	}
+	stepResultID := steps[0].ID
 	if err := respondFixPartial(t, exec, types.StepReview, "review-1"); err != nil {
 		t.Fatal(err)
 	}
-	waitForParkedRounds(t, database, steps[0].ID, types.StepStatusFixReview, 2)
+	waitForParkedRounds(t, database, stepResultID, types.StepStatusFixReview, 2)
 	if err := respondFixPartial(t, exec, types.StepReview, "review-2"); err != nil {
 		t.Fatal(err)
 	}
-	waitForParkedRounds(t, database, steps[0].ID, types.StepStatusFixReview, 3)
+	waitForParkedRounds(t, database, stepResultID, types.StepStatusFixReview, 3)
 
 	steps, err = database.GetStepsByRun(run.ID)
 	if err != nil {

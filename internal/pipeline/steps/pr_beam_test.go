@@ -8,7 +8,9 @@ import (
 	"testing"
 
 	"github.com/kunchenguid/no-mistakes/internal/agent"
+	"github.com/kunchenguid/no-mistakes/internal/config"
 	"github.com/kunchenguid/no-mistakes/internal/scm"
+	"github.com/kunchenguid/no-mistakes/internal/types"
 )
 
 func beamPRContent(title, body string) *agent.Result {
@@ -18,19 +20,19 @@ func beamPRContent(title, body string) *agent.Result {
 
 func TestParsePRDraftContent(t *testing.T) {
 	t.Parallel()
-	content, ok := parsePRDraftContent(beamPRContent("feat: add thing", "## What Changed\n- thing").Output)
+	content, ok := parsePRDraftContent(nil, beamPRContent("feat: add thing", "## What Changed\n- thing").Output)
 	if !ok || content.Title != "feat: add thing" {
 		t.Fatalf("content = %+v, ok = %v", content, ok)
 	}
 	nested, _ := json.Marshal(map[string]string{"title": "feat: add thing", "body": string(mustJSON(t, prContent{Title: "x", Body: "## What Changed\n- nested"}))})
 	_ = nested
-	if _, ok := parsePRDraftContent([]byte("not json")); ok {
+	if _, ok := parsePRDraftContent(nil, []byte("not json")); ok {
 		t.Fatal("invalid JSON parsed")
 	}
-	if _, ok := parsePRDraftContent(beamPRContent("", "## What Changed\n- thing").Output); ok {
+	if _, ok := parsePRDraftContent(nil, beamPRContent("", "## What Changed\n- thing").Output); ok {
 		t.Fatal("empty title parsed")
 	}
-	if _, ok := parsePRDraftContent(beamPRContent("feat: x", "").Output); ok {
+	if _, ok := parsePRDraftContent(nil, beamPRContent("feat: x", "").Output); ok {
 		t.Fatal("empty body parsed")
 	}
 }
@@ -46,11 +48,11 @@ func mustJSON(t *testing.T, v prContent) []byte {
 
 func TestParsePRDraftTitle(t *testing.T) {
 	t.Parallel()
-	title, ok := parsePRDraftTitle(beamPRContent("feat: add thing", "x").Output)
-	if !ok || title != "feat: add thing" {
-		t.Fatalf("title = %q, ok = %v", title, ok)
+	title, ok := parsePRDraftTitle(nil, beamPRContent("feat: add thing", "x").Output)
+	if !ok || title.Title != "feat: add thing" {
+		t.Fatalf("title = %q, ok = %v", title.Title, ok)
 	}
-	if _, ok := parsePRDraftTitle(beamPRContent(" ", "x").Output); ok {
+	if _, ok := parsePRDraftTitle(nil, beamPRContent(" ", "x").Output); ok {
 		t.Fatal("blank title parsed")
 	}
 }
@@ -64,7 +66,10 @@ func TestBeamPRContent_ServesDraft(t *testing.T) {
 	}
 	sctx := freeModelStepContext(t, ag, dir, baseSHA, headSHA)
 	step := &PRStep{}
-	content, handled := step.draftPRContentWithBeam(sctx, "prompt", "stat", "risk", "testing", "pipeline", 0, scm.ProviderGitHub)
+	content, handled, err := step.draftPRContentWithBeam(sctx, "prompt", prContentSchema, "stat", "risk", "testing", "pipeline", 0, scm.ProviderGitHub)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !handled {
 		t.Fatal("beam draft not handled")
 	}
@@ -85,7 +90,7 @@ func TestBeamPRContent_FailureDeclines(t *testing.T) {
 	}
 	sctx := freeModelStepContext(t, ag, dir, baseSHA, headSHA)
 	step := &PRStep{}
-	if _, handled := step.draftPRContentWithBeam(sctx, "prompt", "stat", "risk", "testing", "pipeline", 0, scm.ProviderGitHub); handled {
+	if _, handled, _ := step.draftPRContentWithBeam(sctx, "prompt", prContentSchema, "stat", "risk", "testing", "pipeline", 0, scm.ProviderGitHub); handled {
 		t.Fatal("failed beam draft handled")
 	}
 	if ag.freeCalls != 1 || ag.fallbackCalls != 1 {
@@ -105,7 +110,10 @@ func TestBeamPRContent_GarbageRetriesFallback(t *testing.T) {
 	}
 	sctx := freeModelStepContext(t, ag, dir, baseSHA, headSHA)
 	step := &PRStep{}
-	content, handled := step.draftPRContentWithBeam(sctx, "prompt", "stat", "risk", "testing", "pipeline", 0, scm.ProviderGitHub)
+	content, handled, err := step.draftPRContentWithBeam(sctx, "prompt", prContentSchema, "stat", "risk", "testing", "pipeline", 0, scm.ProviderGitHub)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !handled || !strings.HasPrefix(content.Title, "feat:") {
 		t.Fatalf("content = %+v, handled = %v", content, handled)
 	}
@@ -123,8 +131,81 @@ func TestBeamPRTitle_ServesDraft(t *testing.T) {
 	}
 	sctx := freeModelStepContext(t, ag, dir, baseSHA, headSHA)
 	step := &PRStep{}
-	title, handled := step.draftConfiguredPRTitleWithBeam(sctx, "prompt")
+	title, handled := step.draftConfiguredPRTitleWithBeam(sctx, "prompt", prTitleSchema)
 	if !handled || !strings.HasPrefix(title, "feat:") {
 		t.Fatalf("title = %q, handled = %v", title, handled)
+	}
+}
+
+func beamPRContentWithBrief(t *testing.T, title, body string) *agent.Result {
+	t.Helper()
+	return &agent.Result{Output: mustJSON(t, prContent{Title: title, Body: body, IntentBrief: &prIntentBrief{
+		Goal:       "Validate the submitted change",
+		Why:        []string{"Catch mistakes before execution"},
+		Scope:      []string{"Check configured terms"},
+		OutOfScope: []string{"Keep the default behavior unchanged"},
+	}})}
+}
+
+func TestBeamPRContent_IntentBriefIsRequestedAndPublishedNotDropped(t *testing.T) {
+	t.Parallel()
+	dir, baseSHA, headSHA := setupGitRepo(t)
+	ag := newMockFreeModelAgent(nil)
+	ag.freeFn = func(_ context.Context, _ agent.FreeModelKind, opts agent.RunOpts) (*agent.Result, error) {
+		if !hasPRIntentBriefSchema(t, opts.JSONSchema) {
+			t.Fatalf("beam draft schema lacks the Intent brief contract: %s", opts.JSONSchema)
+		}
+		return beamPRContentWithBrief(t, "feat: add thing", "## What Changed\n- thing"), nil
+	}
+	sctx := freeModelStepContext(t, ag, dir, baseSHA, headSHA)
+	sctx.UserIntent = "private raw intent"
+	sctx.Config.PR.Intent.Format = "brief"
+	content, handled, err := (&PRStep{}).draftPRContentWithBeam(sctx, "prompt", prContentBriefSchema, "stat", "risk", "testing", "pipeline", 0, scm.ProviderGitHub)
+	if err != nil || !handled {
+		t.Fatalf("handled = %v, err = %v", handled, err)
+	}
+	if !strings.Contains(sctx.PublicIntentBrief, "Validate the submitted change") {
+		t.Fatalf("public Intent brief = %q, want the beam draft's brief", sctx.PublicIntentBrief)
+	}
+	if strings.Contains(content.Body, "private raw intent") {
+		t.Fatalf("raw intent leaked into the body:\n%s", content.Body)
+	}
+}
+
+func TestBeamPRContent_MissingIntentBriefDeclinesInsteadOfPublishingWithoutIt(t *testing.T) {
+	t.Parallel()
+	dir, baseSHA, headSHA := setupGitRepo(t)
+	ag := newMockFreeModelAgent(nil)
+	noBrief := func(context.Context, agent.FreeModelKind, agent.RunOpts) (*agent.Result, error) {
+		return beamPRContent("feat: add thing", "## What Changed\n- thing"), nil
+	}
+	ag.freeFn, ag.fallbackFn = noBrief, noBrief
+	sctx := freeModelStepContext(t, ag, dir, baseSHA, headSHA)
+	sctx.UserIntent = "private raw intent"
+	sctx.Config.PR.Intent.Format = "brief"
+	if _, handled, err := (&PRStep{}).draftPRContentWithBeam(sctx, "prompt", prContentBriefSchema, "stat", "risk", "testing", "pipeline", 0, scm.ProviderGitHub); handled || err != nil {
+		t.Fatalf("handled = %v, err = %v; want the configured model to draft", handled, err)
+	}
+	if sctx.PublicIntentBrief != "" {
+		t.Fatalf("public Intent brief = %q, want none from a declined draft", sctx.PublicIntentBrief)
+	}
+}
+
+func TestBeamPRContent_KeepModeStillCarriesTheAttestation(t *testing.T) {
+	t.Parallel()
+	dir, baseSHA, headSHA := setupGitRepo(t)
+	ag := newMockFreeModelAgent(nil)
+	ag.freeFn = func(context.Context, agent.FreeModelKind, agent.RunOpts) (*agent.Result, error) {
+		return beamPRContent("feat: add thing", "## What Changed\n- thing"), nil
+	}
+	sctx := freeModelStepContext(t, ag, dir, baseSHA, headSHA)
+	sctx.Config.PR.UpdateText = config.PRUpdateTextKeep
+	insertCompletedStep(t, sctx, types.StepReview, "", "")
+	content, handled, err := (&PRStep{}).draftPRContentWithBeam(sctx, "prompt", prContentSchema, "stat", "", "", "", 0, scm.ProviderGitHub)
+	if err != nil || !handled {
+		t.Fatalf("handled = %v, err = %v", handled, err)
+	}
+	if publishedAttestationHead(t, content.Body) != headSHA {
+		t.Fatalf("kept beam draft lacks the head attestation:\n%s", content.Body)
 	}
 }
