@@ -10,11 +10,15 @@ on:
     paths-ignore:
       - .release-please-manifest.json
       - CHANGELOG.md
-  # Tests and e2e run daily on main and on manual dispatch, so pull requests
-  # run only the static check.
-  schedule:
-    - cron: '17 6 * * *'
+  # The full matrix runs only on manual dispatch, so pull requests run only
+  # the static check. The trigger carries no docs-only filter: branch
+  # protection requires that check, so docs-only changes run it too.
   workflow_dispatch:
+
+# One run per branch: a newer push cancels the older run on the same branch.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   check:
@@ -245,6 +249,7 @@ jobs:
           - group: windows-steps
             job: test-windows-steps
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Require every shard in the group to pass
         env:
@@ -258,6 +263,7 @@ jobs:
   e2e:
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
 
@@ -276,36 +282,3 @@ jobs:
         env:
           NM_E2E_DAEMON_MAX: 4
         run: make e2e
-
-  # Keeps one open issue per failing daily run and closes it on the next green run.
-  report-daily-failure:
-    needs: [test-linux, test-macos, test-windows-core, test-windows-git, test-windows-steps, e2e]
-    if: always() && github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      issues: write
-    env:
-      GH_TOKEN: ${{ github.token }}
-      NEEDS: ${{ toJSON(needs) }}
-      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-    steps:
-      - name: Open, update or close the daily CI issue
-        run: |
-          title='Daily CI is failing'
-          label='daily-ci'
-          failed=$(jq -r 'to_entries[] | select(.value.result != "success" and .value.result != "skipped") | "- \(.key): \(.value.result)"' <<<"$NEEDS")
-          gh label create "$label" --repo "$GITHUB_REPOSITORY" --color B60205 --description 'Daily CI failures' --force >/dev/null
-          open=$(gh issue list --repo "$GITHUB_REPOSITORY" --label "$label" --state open --json number --jq '.[0].number // empty')
-          if [ -z "$failed" ]; then
-            if [ -n "$open" ]; then
-              gh issue close "$open" --repo "$GITHUB_REPOSITORY" --comment "Daily CI passed in $RUN_URL."
-            fi
-            exit 0
-          fi
-          body=$(printf 'Daily CI failed in %s.\n\nFailed jobs:\n%s' "$RUN_URL" "$failed")
-          if [ -n "$open" ]; then
-            gh issue comment "$open" --repo "$GITHUB_REPOSITORY" --body "$body"
-          else
-            gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --label "$label" --body "$body"
-          fi
