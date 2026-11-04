@@ -161,7 +161,7 @@ func TestRemoveRemote(t *testing.T) {
 	}
 }
 
-func TestCopyLocalUserIdentity(t *testing.T) {
+func TestPinUserIdentity(t *testing.T) {
 	ctx := context.Background()
 	src := initTestRepo(t)
 	dst := initTestRepo(t)
@@ -169,8 +169,8 @@ func TestCopyLocalUserIdentity(t *testing.T) {
 	run(t, dst, "git", "config", "--local", "--unset", "user.name")
 	run(t, dst, "git", "config", "--local", "--unset", "user.email")
 
-	if err := CopyLocalUserIdentity(ctx, src, dst); err != nil {
-		t.Fatalf("CopyLocalUserIdentity failed: %v", err)
+	if err := PinUserIdentity(ctx, src, dst); err != nil {
+		t.Fatalf("PinUserIdentity failed: %v", err)
 	}
 
 	if got := run(t, dst, "git", "config", "--local", "--get", "user.name"); got != "Test" {
@@ -178,6 +178,50 @@ func TestCopyLocalUserIdentity(t *testing.T) {
 	}
 	if got := run(t, dst, "git", "config", "--local", "--get", "user.email"); got != "test@test.com" {
 		t.Fatalf("user.email = %q, want %q", got, "test@test.com")
+	}
+}
+
+func TestPinUserIdentity_LeakedSharedGateIdentityDoesNotOutrankTheGlobalIdentity(t *testing.T) {
+	ctx := context.Background()
+	global := filepath.Join(t.TempDir(), "gitconfig")
+	t.Setenv("GIT_CONFIG_GLOBAL", global)
+	run(t, t.TempDir(), "git", "config", "--global", "user.name", "Owner")
+	run(t, t.TempDir(), "git", "config", "--global", "user.email", "owner@example.com")
+
+	src := initTestRepo(t)
+	run(t, src, "git", "config", "--local", "--unset", "user.name")
+	run(t, src, "git", "config", "--local", "--unset", "user.email")
+	sha := run(t, src, "git", "rev-parse", "HEAD")
+
+	gate := filepath.Join(t.TempDir(), "gate.git")
+	if err := InitBare(ctx, gate); err != nil {
+		t.Fatal(err)
+	}
+	if err := IsolateHooksPath(ctx, gate); err != nil {
+		t.Fatal(err)
+	}
+	run(t, src, "git", "push", "-q", gate, "HEAD:refs/heads/main")
+
+	earlier := filepath.Join(t.TempDir(), "earlier-run")
+	if err := WorktreeAdd(ctx, gate, earlier, sha); err != nil {
+		t.Fatal(err)
+	}
+	run(t, earlier, "git", "config", "user.name", "t")
+	run(t, earlier, "git", "config", "user.email", "t@t.t")
+
+	later := filepath.Join(t.TempDir(), "later-run")
+	if err := WorktreeAdd(ctx, gate, later, sha); err != nil {
+		t.Fatal(err)
+	}
+	if err := PinUserIdentity(ctx, src, later); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := run(t, later, "git", "config", "--get", "user.name"); got != "Owner" {
+		t.Errorf("user.name = %q, want the global Owner", got)
+	}
+	if got := run(t, later, "git", "config", "--get", "user.email"); got != "owner@example.com" {
+		t.Errorf("user.email = %q, want the global owner@example.com", got)
 	}
 }
 

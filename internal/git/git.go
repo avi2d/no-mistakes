@@ -708,21 +708,15 @@ func CommitAll(ctx context.Context, dir, message string) error {
 	return err
 }
 
-// CopyLocalUserIdentity copies local user.name and user.email from srcDir into
-// dstDir. Missing values in srcDir are ignored.
-//
-// The write into dstDir uses per-worktree scope (`git config --worktree`) when
-// the repository has worktree config enabled. dstDir is typically a linked
-// worktree of the shared gate bare repo, where an unscoped `git config --local`
-// write lands in the bare's shared config and takes <bare>/config.lock. Two
-// runs starting concurrently on different branches of the same repo then race
-// on that single lock and one fails with "could not lock config file ...
-// config: File exists". Writing per-worktree puts each run's identity in its own
-// <bare>/worktrees/<id>/config.worktree, so concurrent startups never contend.
-// Older Git without `--worktree` support falls back to `--local`.
-func CopyLocalUserIdentity(ctx context.Context, srcDir, dstDir string) error {
+// PinUserIdentity writes the user.name and user.email that srcDir resolves,
+// its local value or else the global one, into dstDir's per-worktree config.
+// Copying only srcDir's local value leaves dstDir resolving the shared gate
+// config, which any unscoped `git config` run inside any worktree of the gate
+// writes. Per-worktree scope also keeps concurrent run startups off the shared
+// <bare>/config.lock. Older Git without `--worktree` falls back to `--local`.
+func PinUserIdentity(ctx context.Context, srcDir, dstDir string) error {
 	for _, key := range []string{"user.name", "user.email"} {
-		value, err := Run(ctx, srcDir, "config", "--local", "--get", "--default", "", key)
+		value, err := Run(ctx, srcDir, "config", "--get", "--default", "", key)
 		if err != nil {
 			return err
 		}

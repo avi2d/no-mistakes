@@ -236,6 +236,13 @@ Prefer authenticating through the credential helper (`gh auth setup-git`) over e
 This only affects branches that modify workflow files.
 A branch that touches no `.github/workflows/*.yml` or `*.yaml` pushes normally with a standard `repo`-scoped token.
 
+### Pipeline commits carry an unexpected author
+
+Pipeline commits use the identity pinned when the run started, as the [pipeline steps reference](/no-mistakes/reference/pipeline-steps/) describes.
+An identity that a test or tool wrote with an unscoped `git config` inside a run worktree sits in the gate's shared config, where it shows up only in the gate's own reflogs.
+Check for one with `git config --file <gate-path>/config --get-regexp '^user\.'`.
+Remove it with `git config --file <gate-path>/config --unset user.email`, and the same for `user.name`, while no run is active.
+
 ### Rebase pauses because the branch carries unpushed default-branch commits
 
 This means a local default branch ahead of `origin/<default_branch>` is a strict ancestor of your branch, so the branch may contain unrelated local-default work.
