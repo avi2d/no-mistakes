@@ -5,6 +5,9 @@ on:
     types: [opened, edited, synchronize, reopened]
     branches:
       - main
+    paths-ignore:
+      - .release-please-manifest.json
+      - CHANGELOG.md
 
 permissions:
   contents: read
