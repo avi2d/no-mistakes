@@ -13,8 +13,8 @@ import (
 // and it must keep one of the messages the branch recorded. A commit dropped
 // from the branch has no such rewrite and is left to the other checks. base
 // is the rebase target, or "" when the round did not rebase or could not
-// resolve it; it, every remote-tracking ref and the last fetch hold upstream
-// commits, which the round did not write.
+// resolve it; it, every remote-tracking ref, every other local branch and
+// the last fetch hold upstream commits, which the round did not write.
 func refuseRewordedBranchCommits(sctx *pipeline.StepContext, stepName types.StepName, base string) error {
 	recorded := strings.TrimSpace(sctx.Run.HeadSHA)
 	if recorded == "" {
@@ -54,7 +54,12 @@ func refuseRewordedBranchCommits(sctx *pipeline.StepContext, stepName types.Step
 	if fetched, err := stepGitRun(sctx, "rev-parse", "--verify", "--quiet", "FETCH_HEAD^{commit}"); err == nil && fetched != "" {
 		revs = append(revs, "^"+fetched)
 	}
-	rewritten, err := authoredCommits(sctx, append(revs, "--no-merges", "--not", "--remotes")...)
+	revs = append(revs, "--no-merges", "--not")
+	// An --exclude applied to --branches matches the name without refs/heads/.
+	if current, err := stepGitRun(sctx, "symbolic-ref", "-q", "--short", "HEAD"); err == nil && current != "" {
+		revs = append(revs, "--exclude="+current)
+	}
+	rewritten, err := authoredCommits(sctx, append(revs, "--branches", "--remotes")...)
 	if err != nil {
 		return err
 	}
