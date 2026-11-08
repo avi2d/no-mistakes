@@ -47,9 +47,10 @@ type rule struct {
 
 // Config holds the header rules of one repository's commitlint config.
 type Config struct {
-	Source  string
-	rules   map[string]rule
-	pattern *regexp.Regexp
+	Source         string
+	rules          map[string]rule
+	pattern        *regexp.Regexp
+	defaultIgnores bool
 }
 
 // Violation is one error-level rule the header breaks.
@@ -140,6 +141,9 @@ func fromMap(source string, raw map[string]any) *Config {
 	}
 	preset, _ := raw["parserPreset"].(string)
 	cfg := newConfig(source, conventional, preset)
+	if raw["defaultIgnores"] == false {
+		cfg.defaultIgnores = false
+	}
 	if rules, ok := raw["rules"].(map[string]any); ok {
 		for name, entry := range rules {
 			if r, ok := ruleFromList(entry); ok {
@@ -151,7 +155,7 @@ func fromMap(source string, raw map[string]any) *Config {
 }
 
 func newConfig(source string, conventional bool, preset string) *Config {
-	cfg := &Config{Source: source, rules: map[string]rule{}, pattern: angularHeader}
+	cfg := &Config{Source: source, rules: map[string]rule{}, pattern: angularHeader, defaultIgnores: true}
 	if conventional {
 		cfg.rules = conventionalRules()
 	}
@@ -203,15 +207,17 @@ func ruleFromList(entry any) (rule, bool) {
 }
 
 var (
-	scriptComment = regexp.MustCompile(`/\*(?s:.*?)\*/|(?m:^\s*//.*$)`)
-	scriptRule    = regexp.MustCompile(`["']?([a-z]+(?:-[a-z]+)+)["']?\s*:\s*\[\s*([012]|RuleConfigSeverity\.(?:Disabled|Warning|Error))\s*(?:,\s*["'](always|never)["']\s*(?:,\s*(\d+|"[^"]*"|'[^']*'|\[[^\]]*\]))?)?\s*,?\s*\]`)
-	scriptString  = regexp.MustCompile(`"([^"]*)"|'([^']*)'`)
+	scriptComment          = regexp.MustCompile(`/\*(?s:.*?)\*/|(?m:^\s*//.*$)`)
+	scriptRule             = regexp.MustCompile(`["']?([a-z]+(?:-[a-z]+)+)["']?\s*:\s*\[\s*([012]|RuleConfigSeverity\.(?:Disabled|Warning|Error))\s*(?:,\s*["'](always|never)["']\s*(?:,\s*(\d+|"[^"]*"|'[^']*'|\[[^\]]*\]))?)?\s*,?\s*\]`)
+	scriptString           = regexp.MustCompile(`"([^"]*)"|'([^']*)'`)
+	scriptNoDefaultIgnores = regexp.MustCompile(`["']?defaultIgnores["']?\s*:\s*false\b`)
 )
 
 func fromScript(source, text string) *Config {
 	text = scriptComment.ReplaceAllString(text, "")
 	conventional := strings.Contains(text, "\""+conventionalPreset+"\"") || strings.Contains(text, "'"+conventionalPreset+"'")
 	cfg := newConfig(source, conventional, text)
+	cfg.defaultIgnores = !scriptNoDefaultIgnores.MatchString(text)
 	for _, m := range scriptRule.FindAllStringSubmatch(text, -1) {
 		r := rule{level: scriptSeverity(m[2]), when: m[3]}
 		switch value := m[4]; {
@@ -257,8 +263,13 @@ func (c *Config) MaxHeaderLength() int {
 // Lint returns the error-level rules header breaks. landedSuffix is the
 // length the forge adds to the header when it lands, counted only against
 // header-max-length. Rules this package cannot evaluate exactly are skipped,
-// never guessed, so a reported violation is one commitlint reports too.
+// never guessed, so a reported violation is one commitlint reports too. A
+// config's own ignores are functions this package cannot run, so a header
+// only they would waive is still linted.
 func (c *Config) Lint(header string, landedSuffix int) []Violation {
+	if c.defaultIgnores && defaultIgnored(strings.TrimRightFunc(header, unicode.IsSpace)) {
+		return nil
+	}
 	parsed := c.parse(header)
 	var out []Violation
 	for _, name := range ruleOrder {
@@ -278,6 +289,49 @@ var ruleOrder = []string{
 	"type-empty", "type-enum", "type-case",
 	"scope-empty", "scope-enum",
 	"subject-empty", "subject-case", "subject-full-stop",
+}
+
+var defaultIgnorePatterns = []*regexp.Regexp{
+	regexp.MustCompile(`(?m)^((Merge pull request)|(Merge (.*?) into (.*?)|(Merge branch (.*?)))(?:\r?\n)*$)`),
+	regexp.MustCompile(`(?m)^(Merge tag (.*?))(?:\r?\n)*$`),
+	regexp.MustCompile(`^(R|r)evert (.*)`),
+	regexp.MustCompile(`^(R|r)eapply (.*)`),
+	regexp.MustCompile(`^(amend|fixup|squash)!`),
+	regexp.MustCompile(`^(Merged (.*?)(in|into) (.*)|Merged PR (.*): (.*))`),
+	regexp.MustCompile(`^Merge remote-tracking branch(\s*)(.*)`),
+	regexp.MustCompile(`^Automatic merge(.*)`),
+	regexp.MustCompile(`^Auto-merged (.*?) into (.*)`),
+}
+
+var (
+	semverChorePrefix = regexp.MustCompile(`^chore(\([^)]+\))?:`)
+	semverSkipBracket = regexp.MustCompile(`(?i)\[(skip|ci)(-|\s)(ci|skip)\]`)
+	semverSkipParen   = regexp.MustCompile(`(?i)\((skip|ci)(-|\s)(ci|skip)\)`)
+	semverVersion     = regexp.MustCompile(`^\s*[v=]*\s*(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][a-zA-Z0-9-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][a-zA-Z0-9-]*))*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$`)
+)
+
+// defaultIgnored reports whether commitlint's built-in wildcards waive header
+// before any rule runs.
+func defaultIgnored(header string) bool {
+	for _, pattern := range defaultIgnorePatterns {
+		if pattern.MatchString(header) {
+			return true
+		}
+	}
+	stripped := replaceFirst(semverChorePrefix, header)
+	stripped = replaceFirst(semverSkipBracket, stripped)
+	stripped = strings.TrimSpace(replaceFirst(semverSkipParen, stripped))
+	return semverVersion.MatchString(stripped)
+}
+
+// replaceFirst deletes the first match, as JavaScript's String.replace does
+// with a non-global pattern.
+func replaceFirst(pattern *regexp.Regexp, s string) string {
+	loc := pattern.FindStringIndex(s)
+	if loc == nil {
+		return s
+	}
+	return s[:loc[0]] + s[loc[1]:]
 }
 
 type header struct {

@@ -173,3 +173,41 @@ func TestParse_MalformedJSONIsAnErrorNotSilence(t *testing.T) {
 		t.Fatal("Parse() of malformed JSON returned no error")
 	}
 }
+
+func TestLint_DefaultIgnoredTitlesPassAsCommitlintWaivesThemNotFailOnTypeRules(t *testing.T) {
+	waived := []string{
+		"Revert \"feat: add x\"",
+		"Merge branch 'main' into feature",
+		"fixup! feat: add x",
+		"v1.2.3",
+		"Automatic merge from main",
+		"Reapply \"feat: add x\"",
+		"Merged PR 12: thing",
+	}
+	on, err := Parse(".commitlintrc.json", []byte(`{"extends":["@commitlint/config-conventional"]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	off, err := Parse(".commitlintrc.json", []byte(`{"extends":["@commitlint/config-conventional"],"defaultIgnores":false}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	offScript, err := Parse("commitlint.config.mjs", []byte("export default { extends: ['@commitlint/config-conventional'], defaultIgnores: false };"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, title := range waived {
+		if got := on.Lint(title, 0); len(got) != 0 {
+			t.Errorf("Lint(%q) = %v, want commitlint's default ignore to waive it", title, got)
+		}
+		if got := off.Lint(title, 0); len(got) == 0 {
+			t.Errorf("Lint(%q) with defaultIgnores false = no violations, want the rules applied", title)
+		}
+		if got := offScript.Lint(title, 0); len(got) == 0 {
+			t.Errorf("script Lint(%q) with defaultIgnores false = no violations, want the rules applied", title)
+		}
+	}
+	if got := on.Lint("Update the README.", 0); len(got) == 0 {
+		t.Error("Lint(\"Update the README.\") = no violations, want a title no wildcard matches still linted")
+	}
+}

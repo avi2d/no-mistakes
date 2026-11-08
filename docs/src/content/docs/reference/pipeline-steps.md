@@ -346,6 +346,8 @@ Creates or updates a pull request.
   The config is read from the commit and never executed, so a JavaScript or TypeScript config counts only through a literal `@commitlint/config-conventional` extends and literal rule entries.
   The error-level header rules are checked: `header-max-length`, `header-min-length`, `header-trim`, `header-full-stop`, `type-empty`, `type-enum`, `type-case`, `scope-empty`, `scope-enum`, `subject-empty`, `subject-case` and `subject-full-stop`.
   A case this check cannot reproduce exactly, such as `start-case`, is left to CI.
+  A title that commitlint's default ignores waive, such as `Revert ...` or `Merge branch ...`, passes unless the config sets `defaultIgnores: false`.
+  A config's own `ignores` functions are not run, so a title only they would waive is still linted.
   `header-max-length` counts a 10-character squash-merge suffix, as [`pr.title_max_length`](/no-mistakes/reference/repo-config/#prtitle_max_length) does.
   A drafted or fallback title that breaks a rule gets one agent rewrite.
   A rewrite that still breaks one fails the step with the broken rules, instead of opening a PR that CI would fail.
