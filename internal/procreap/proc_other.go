@@ -26,3 +26,5 @@ func signalProcess(pid int, sig procSignal) error { return nil }
 func signalGroup(pgid int, sig procSignal) error { return nil }
 
 func listProcessStates() ([]processState, error) { return nil, nil }
+
+func listProcessCPUStates() ([]cpuState, error) { return nil, nil }

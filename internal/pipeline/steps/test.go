@@ -277,6 +277,7 @@ Drive each scenario:
 - Never guess a pass, and never mark a scenario live because you believe it would work.
 - Report every scenario in the "scenarios" array with name, result ("pass", "fail", or "untested"), live, evidence, and reason.
 - Await every required production build, browser run, and other check child before reporting a final "go". A background launch, early structured result, or completion notification does not prove that a check passed.
+- Run every probe with an explicit timeout so a hung command fails instead of spinning silently.
 - Nothing you started may still be running in the background when you return your result. Before returning, wait for or stop every background shell or job, monitor or watch, and scheduled wake-up you started. Background work that outlives the result keeps the turn open until the budget cuts it, and the finished result is lost.
 - Stop disposable browser and server children before exiting. The native boundary refuses successful exits with children still in its owned process group.
 - Read each required child's actual exit status and retained result evidence. Do not mask a failed check with a later successful shell command or report detached work as completed.
