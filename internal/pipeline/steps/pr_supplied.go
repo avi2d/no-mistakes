@@ -107,12 +107,22 @@ func logSuppliedPRTextUnused(sctx *pipeline.StepContext, reason string) {
 
 // renderSuppliedPRTitle applies pr.title_format to a supplied title, which then
 // stands for the bare {{.Title}}. Without a format the title is used as given:
-// conventional tightening would break the verbatim promise.
+// conventional tightening would break the verbatim promise, and so would an
+// agent rewrite, so a title the repository's commitlint rules reject fails.
 func renderSuppliedPRTitle(sctx *pipeline.StepContext, title string) (string, error) {
-	if sctx.Config == nil || sctx.Config.PR.TitleFormat == "" {
-		return title, nil
+	rendered := title
+	if sctx.Config != nil && sctx.Config.PR.TitleFormat != "" {
+		var err error
+		if rendered, err = formatPRTitle(sctx, title); err != nil {
+			return "", err
+		}
 	}
-	return renderPRTitle(sctx, title)
+	if lint := loadCommitlintConfig(sctx); lint != nil {
+		if violations := lint.Lint(rendered, config.PRTitleSquashSuffixReserveChars); len(violations) > 0 {
+			return "", fmt.Errorf("supplied PR title %q breaks the repository's commitlint rules in %s: %s", rendered, lint.Source, joinCommitlintViolations(violations))
+		}
+	}
+	return rendered, nil
 }
 
 // buildSuppliedPRContent composes a new PR whose description the caller
