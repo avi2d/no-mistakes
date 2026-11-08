@@ -33,8 +33,8 @@ jobs:
       - name: lint the pull request title
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
-        run: bunx --package @avi2dg/checks@0.65.1 checks-commit-title
+        run: bunx --package @avi2dg/checks@0.89.0 checks-commit-title
       - name: scan the pull request range for secrets
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: bunx --package @avi2dg/checks@0.65.1 checks-secrets "$BASE_SHA" HEAD
+        run: bunx --package @avi2dg/checks@0.89.0 checks-secrets "$BASE_SHA" HEAD
