@@ -186,6 +186,7 @@ func TestExecutor_AutoFixRespectsMaxAttempts(t *testing.T) {
 		name: types.StepLint,
 		fn: func(sctx *StepContext) (*StepOutcome, error) {
 			callCount++
+			landFixDiff(sctx)
 			// Always return NeedsApproval to exhaust auto-fix attempts
 			return &StepOutcome{
 				NeedsApproval: true,

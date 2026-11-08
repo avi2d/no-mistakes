@@ -810,6 +810,9 @@ Override auto-fix attempt limits for specific steps. Core-step fields not set he
 | `auto_fix.gates.<name>` | Non-negative `int` | `0`, trusted default branch only |
 
 Set to `0` to disable the follow-up auto-fix loop for a step (findings require manual approval).
+A fix round that hands code findings to the fixer and lands no diff stops the loop before the budget is spent.
+The step parks with the remaining findings and an `ask-user` `fix-round-no-diff` notice, because another automatic round would hand the same findings to a fixer that just changed nothing.
+`axi run --yes` and TUI yolo leave that gate for an explicit fix, approve, or skip.
 The document step attempts documentation fixes during its initial pass, so unresolved documentation findings pause for approval instead of using an automatic follow-up loop.
 For empty `commands.lint`, the document step's combined housekeeping pass also attempts safe lint fixes, and the lint step consumes its result; unresolved blocking lint findings pause for approval instead of starting another automatic fix loop.
 

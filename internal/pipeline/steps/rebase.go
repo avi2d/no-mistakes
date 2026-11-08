@@ -486,6 +486,9 @@ Instructions:
 		_, _ = git.Run(ctx, sctx.WorkDir, "rebase", "--abort")
 		return fmt.Errorf("agent did not complete the rebase")
 	}
+	if err := refuseRewordedBranchCommits(sctx, types.StepRebase, targetRef); err != nil {
+		return err
+	}
 
 	return restampReplayedCommits(sctx, targetRef)
 }

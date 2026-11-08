@@ -70,6 +70,7 @@ type CIStep struct {
 	observedCompletedAt  map[string]checkFreshness // terminally failed check freshness at the observation whose findings a fix round may repair
 	pendingFixSummary    string                    // one-line summary of the repair this execution published, attached to the outcome it ends with
 	pendingRepairPublish bool
+	pendingFixFailed     bool
 	fixAgentCrashes      int
 	lastFixAgentCrash    string
 	transientReruns      checkRerunBudget // per-check rerun budget spent on provider-reported transient failures
@@ -348,9 +349,11 @@ func (s *CIStep) Execute(sctx *pipeline.StepContext) (outcome *pipeline.StepOutc
 				outcome.FixSummary = s.pendingFixSummary
 			}
 			outcome.RepairPublished = s.pendingRepairPublish
+			outcome.FixAttemptFailed = s.pendingFixFailed
 		}
 		s.pendingFixSummary = ""
 		s.pendingRepairPublish = false
+		s.pendingFixFailed = false
 	}()
 	defer func() {
 		if !retryRefusal {

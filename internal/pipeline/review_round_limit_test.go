@@ -82,7 +82,8 @@ func TestExecutor_ReviewFixRoundLimitAutomaticAndMixed(t *testing.T) {
 			database, p, run, repo := setupTest(t)
 			cfg := &config.Config{Review: config.Review{MaxFixRounds: tc.limit}, AutoFix: config.AutoFix{Review: tc.auto, Lint: tc.auto}}
 			parks := make(chan string, 4)
-			step := &adaptiveCallStep{name: tc.step, fn: func(*StepContext) (*StepOutcome, error) {
+			step := &adaptiveCallStep{name: tc.step, fn: func(sctx *StepContext) (*StepOutcome, error) {
+				landFixDiff(sctx)
 				return &StepOutcome{NeedsApproval: true, AutoFixable: true, Findings: roundLimitFinding}, nil
 			}}
 			exec := NewExecutor(database, p, cfg, nil, []Step{step}, func(event ipc.Event) {

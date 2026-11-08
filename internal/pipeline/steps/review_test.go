@@ -338,6 +338,7 @@ func TestReviewStep_EachAgentInvocationGetsItsOwnBudget(t *testing.T) {
 			isFix := strings.Contains(opts.Prompt, "Investigate previous review findings")
 			calls = append(calls, call{fixTurn: isFix, remaining: time.Until(dl)})
 			if isFix {
+				writeFile(t, opts.CWD, "feature.txt", fmt.Sprintf("fixed in call %d\n", len(calls)))
 				return &agent.Result{Output: json.RawMessage(`{"summary":"fixed it"}`)}, nil
 			}
 			// Initial review and the first rereview each request another fix;
