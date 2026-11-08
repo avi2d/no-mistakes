@@ -759,6 +759,7 @@ It does not cancel the step, change auto-fix behavior, or mark the run failed.
 AXI renders the quiet signal in the `active_steps` table as part of `last_activity`, for example `quiet 12m3s ago: codex started pid=4242`.
 When the silent party is an agent invocation, the daemon also records a stall on the step: the step log gets one notice such as `pi has produced no output for 10m0s`, the run object lists the agent under `stalled_agents` with how long it has been silent, and a driving `axi run` or `axi respond` prints the notice to stderr.
 The stall clears as soon as the agent produces output again or its invocation ends.
+Once a stall is recorded, the daemon also guards the silence: it kills a descendant leaf process burning past most of one CPU core and logs the kill with its command line, and it ends a turn still silent after a second `step_quiet_warning` with a no-progress reason instead of waiting on it.
 For older active runs that do not yet have activity rows, AXI falls back to the step log file's modification time.
 
 ### agent_crash_retries

@@ -22,6 +22,7 @@ import (
 	"github.com/kunchenguid/no-mistakes/internal/git"
 	"github.com/kunchenguid/no-mistakes/internal/ipc"
 	"github.com/kunchenguid/no-mistakes/internal/paths"
+	"github.com/kunchenguid/no-mistakes/internal/procreap"
 	"github.com/kunchenguid/no-mistakes/internal/quotarouting"
 	"github.com/kunchenguid/no-mistakes/internal/reviewqa"
 	"github.com/kunchenguid/no-mistakes/internal/safeurl"
@@ -1429,7 +1430,7 @@ func (e *Executor) executeStep(ctx context.Context, step Step, sr *db.StepResult
 	}
 	// A stall notice is not agent activity, so it is appended without
 	// touching last_activity, which is when the silence began.
-	reportStall := func(agentName string, silentSince time.Time) {
+	reportStall := func(agentName string, pid int, silentSince time.Time) {
 		if dbErr := e.db.SetStepStall(sr.ID, agentName, silentSince.Unix()); dbErr != nil {
 			slog.Warn("failed to record step stall in db", "step", stepName, "error", dbErr)
 		}
@@ -1534,7 +1535,14 @@ func (e *Executor) executeStep(ctx context.Context, step Step, sr *db.StepResult
 			inner:       stepAgent,
 			onLifecycle: onAgentLifecycle,
 			watchStall: func(agentName string) *agentStallWatch {
-				return watchAgentStall(agentName, quiet, reportStall, clearStall)
+				w := watchAgentStall(agentName, quiet, reportStall, clearStall)
+				w.onSpinKill = func(victim procreap.SpinVictim) {
+					appendLog(fmt.Sprintf("killed spinning pid=%d using %.0f%% of one core while %s was silent: %s", victim.PID, victim.CPUFraction*100, agentName, truncateCommand(victim.Command, 300)))
+				}
+				w.onNoProgress = func(reason string) {
+					appendLog(reason)
+				}
+				return w
 			},
 		}
 		stepAgent = &perfRecordingAgent{
@@ -2487,11 +2495,27 @@ func (a *lifecycleAgent) Name() string {
 	return a.inner.Name()
 }
 
+// errSilenceNoProgress marks a turn the silence guard ended after a second
+// bound with no output. It is none of a crash, a budget cut, or a parent
+// cancellation, so it must reach the step as itself.
+var errSilenceNoProgress = errors.New("agent produced no output with no progress")
+
 func (a *lifecycleAgent) Run(ctx context.Context, opts agent.RunOpts) (*agent.Result, error) {
 	var stall *agentStallWatch
+	runCtx := ctx
 	if a.watchStall != nil {
 		stall = a.watchStall(a.inner.Name())
 		defer stall.end()
+		var stopRun context.CancelCauseFunc
+		runCtx, stopRun = context.WithCancelCause(ctx)
+		defer stopRun(nil)
+		prevNoProgress := stall.onNoProgress
+		stall.onNoProgress = func(reason string) {
+			stopRun(fmt.Errorf("%w: %s", errSilenceNoProgress, reason))
+			if prevNoProgress != nil {
+				prevNoProgress(reason)
+			}
+		}
 	}
 	// A nil OnChunk stays nil: some adapters only stream when it is set.
 	if onChunk := opts.OnChunk; onChunk != nil {
@@ -2503,6 +2527,12 @@ func (a *lifecycleAgent) Run(ctx context.Context, opts agent.RunOpts) (*agent.Re
 	previous := opts.OnLifecycle
 	opts.OnLifecycle = func(event agent.LifecycleEvent) {
 		stall.heard(event.Agent)
+		if event.Phase == agent.LifecyclePhaseStart && event.PID > 1 {
+			stall.setPID(event.PID)
+		}
+		if event.Phase == agent.LifecyclePhaseExit {
+			stall.noteExit()
+		}
 		if previous != nil {
 			previous(event)
 		}
@@ -2510,7 +2540,11 @@ func (a *lifecycleAgent) Run(ctx context.Context, opts agent.RunOpts) (*agent.Re
 			a.onLifecycle(event)
 		}
 	}
-	return a.inner.Run(ctx, opts)
+	result, err := a.inner.Run(runCtx, opts)
+	if cause := context.Cause(runCtx); errors.Is(cause, errSilenceNoProgress) && ctx.Err() == nil {
+		return nil, cause
+	}
+	return result, err
 }
 
 func (a *lifecycleAgent) Close() error {

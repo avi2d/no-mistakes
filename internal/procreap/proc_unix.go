@@ -106,6 +106,114 @@ func parseProcessTable(out string) []Process {
 	return procs
 }
 
+// listProcessCPUStates reads pid, lineage, state, wall age, cumulative CPU
+// time, and command for every process in one pass.
+func listProcessCPUStates() ([]cpuState, error) {
+	cmd := exec.Command(psExecutable(), "-ww", "-eo", "pid=,ppid=,pgid=,stat=,etime=,time=,command=")
+	cmd.Env = cEnv()
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("enumerate processes: %w", err)
+	}
+	return parseProcessCPUTable(string(out)), nil
+}
+
+// parseProcessCPUTable turns `ps -eo pid=,ppid=,pgid=,stat=,etime=,time=,command=`
+// output into cpuState values. Lines and CPU clocks it cannot parse are
+// skipped: a partially readable table is still useful, and an unreadable
+// line must never abort the probe.
+func parseProcessCPUTable(out string) []cpuState {
+	var states []cpuState
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 7 {
+			continue
+		}
+		pid, err := strconv.Atoi(fields[0])
+		if err != nil || pid <= 0 {
+			continue
+		}
+		ppid, err := strconv.Atoi(fields[1])
+		if err != nil {
+			continue
+		}
+		pgid, err := strconv.Atoi(fields[2])
+		if err != nil {
+			continue
+		}
+		elapsed, err := parseETime(fields[4])
+		if err != nil {
+			continue
+		}
+		total, err := parseCPUTime(fields[5])
+		if err != nil {
+			continue
+		}
+		command, ok := commandField(line)
+		if !ok {
+			continue
+		}
+		states = append(states, cpuState{
+			PID:     pid,
+			PPID:    ppid,
+			PGID:    pgid,
+			Stat:    fields[3],
+			Elapsed: elapsed,
+			Total:   total,
+			Command: command,
+		})
+	}
+	return states
+}
+
+// parseCPUTime parses cumulative CPU `ps time` output: [[DD-]HH:]MM:SS, with
+// an optional fractional-seconds suffix some platforms print.
+func parseCPUTime(value string) (time.Duration, error) {
+	rest := value
+	frac := time.Duration(0)
+	if i := strings.LastIndex(rest, "."); i >= 0 && strings.Contains(rest, ":") {
+		for _, r := range rest[i+1:] {
+			if r < '0' || r > '9' {
+				return 0, fmt.Errorf("parse cputime %q: unexpected fraction", value)
+			}
+		}
+		scale := time.Second
+		for range rest[i+1:] {
+			scale /= 10
+		}
+		n, err := strconv.Atoi(rest[i+1:])
+		if err != nil {
+			return 0, fmt.Errorf("parse cputime %q: %w", value, err)
+		}
+		frac = time.Duration(n) * scale
+		rest = rest[:i]
+	}
+	base, err := parseETime(rest)
+	if err != nil {
+		return 0, fmt.Errorf("parse cputime %q: %w", value, err)
+	}
+	return base + frac, nil
+}
+
+// commandField returns everything after the first six whitespace-separated
+// fields (pid, ppid, pgid, stat, etime, time). Positions, not values, locate
+// the command: a CPU clock equal to the wall age would match the wrong
+// column under a value search.
+func commandField(line string) (string, bool) {
+	rest := strings.TrimLeft(line, " \t")
+	for range 6 {
+		i := strings.IndexAny(rest, " \t")
+		if i < 0 {
+			return "", false
+		}
+		rest = strings.TrimLeft(rest[i:], " \t")
+		if rest == "" {
+			return "", false
+		}
+	}
+	return rest, true
+}
+
 // parseETime parses the POSIX `ps etime` format: [[DD-]HH:]MM:SS.
 func parseETime(value string) (time.Duration, error) {
 	days := 0
