@@ -1,0 +1,47 @@
+name: fork PR tests
+
+# Fork-only: upstream's ci.yml runs no Go tests on pull requests, and keeping
+# this out of ci.yml keeps upstream syncs free of conflicts there.
+on:
+  pull_request:
+    branches:
+      - main
+    paths-ignore:
+      - .release-please-manifest.json
+      - CHANGELOG.md
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fork-pr-tests-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: go test (packages the diff reaches)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      # The whole history, since the package selection diffs from the merge base.
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+
+      - name: Test the packages the diff reaches
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          selected=$(scripts/fork-pr-test-packages.sh "$BASE_SHA" HEAD)
+          if [ -z "$selected" ]; then
+            echo "::notice::The diff reaches no Go package."
+            exit 0
+          fi
+          echo "$selected"
+          mapfile -t packages <<<"$selected"
+          go test -race "${packages[@]}"
