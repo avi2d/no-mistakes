@@ -417,6 +417,7 @@ func TestDriveRun_YesLeavesRefusalGatesAwaitingResponse(t *testing.T) {
 		{types.StepCI, protectedPath, "1 awaiting", "package.lock"},
 		{types.StepTest, unvalidatedWork, "2 awaiting", "fix_test.go"},
 		{types.StepReview, `{"findings":[{"id":"review-fix-rounds-exhausted","severity":"warning","action":"ask-user","description":"Review used 1/1 fix rounds"}]}`, "1 awaiting", "Review used 1/1 fix rounds"},
+		{types.StepReview, `{"findings":[{"id":"R1","severity":"error","file":"main.go","description":"still broken","action":"auto-fix"},{"id":"fix-round-no-diff","severity":"warning","action":"ask-user","description":"fix_round_no_diff: the review fix round in round 2 landed no diff"}]}`, "1 awaiting, 1 auto-fix", "landed no diff"},
 	} {
 		for _, status := range []types.StepStatus{types.StepStatusAwaitingApproval, types.StepStatusFixReview} {
 			t.Run(string(refusal.step)+"/"+string(status), func(t *testing.T) {

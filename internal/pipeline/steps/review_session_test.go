@@ -172,6 +172,7 @@ func TestReviewLoop_IndependentReviewTurnsOneFixerSession(t *testing.T) {
 			}
 			return &agent.Result{Output: []byte(`{"findings":[],"summary":"clean","risk_level":"low","risk_rationale":"clean","risk_scope":"source-or-external","reviewed_paths":["feature.txt"]}`)}
 		case "review-fix":
+			writeFile(t, opts.CWD, "feature.txt", fmt.Sprintf("fixed bug %d\n", reviewRound))
 			return &agent.Result{Output: []byte(`{"summary":"fix the bug"}`)}
 		default:
 			t.Errorf("unexpected agent purpose %q", opts.Purpose)

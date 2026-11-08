@@ -126,7 +126,7 @@ func (m Model) maybeAutoApproveCmd() tea.Cmd {
 	if step == nil || m.yoloApproved[step.StepName] {
 		return nil
 	}
-	if pipeline.HasReviewFixRoundLimit(m.stepFindings[step.StepName]) {
+	if pipeline.HasReviewFixRoundLimit(m.stepFindings[step.StepName]) || pipeline.HasFixRoundNoDiff(m.stepFindings[step.StepName]) {
 		return nil
 	}
 	if pipeline.HasProtectedPathRefusal(m.stepFindings[step.StepName]) || pipeline.HasUnvalidatedWorkRefusal(m.stepFindings[step.StepName]) {

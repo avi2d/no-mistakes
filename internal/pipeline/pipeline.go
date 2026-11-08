@@ -221,6 +221,10 @@ type StepOutcome struct {
 	// FixSummary, when non-empty, records the result of a fix attempt.
 	FixSummary      string
 	RepairPublished bool
+	// FixAttemptFailed reports that the round's fixer failed before it could
+	// land a diff, so the round's unchanged head says nothing about whether
+	// the findings can be fixed.
+	FixAttemptFailed bool
 	// ReviewApprovedHeadSHA is set only by a successfully executed full review
 	// round. The executor durably records it only when the review step actually
 	// completes, never while that outcome is parked or after a failed round.

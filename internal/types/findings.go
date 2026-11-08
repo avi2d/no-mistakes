@@ -141,6 +141,8 @@ const FindingIDTestAgentUnvalidatedWork = "test-agent-unvalidated-work"
 // records an operator's budget, not a code mistake.
 const FindingIDReviewFixRoundsExhausted = "review-fix-rounds-exhausted"
 
+const FindingIDFixRoundNoDiff = "fix-round-no-diff"
+
 // Test scenario result constants: the vocabulary the test step's evidence
 // prompt instructs the agent to use for each derived scenario.
 //

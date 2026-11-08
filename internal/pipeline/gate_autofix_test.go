@@ -50,6 +50,7 @@ func TestExecutor_GateAutoFixBudget(t *testing.T) {
 				}
 				output := tc.outputs[calls]
 				calls++
+				landFixDiff(sctx)
 				if calls > 1 && (!sctx.Fixing || sctx.PreviousFindings == "") {
 					t.Error("repair lacks findings or fix context")
 				}

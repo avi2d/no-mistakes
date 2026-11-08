@@ -191,6 +191,7 @@ func (s *CIStep) repairFromFindings(sctx *pipeline.StepContext, host scm.Host, p
 			}
 			s.lastFixAgentCrash = cause
 		}
+		s.pendingFixFailed = true
 		sctx.Log(fmt.Sprintf("warning: CI fix failed: %v", err))
 		return nil, nil
 	}
@@ -823,6 +824,9 @@ func (s *CIStep) commitRepair(sctx *pipeline.StepContext, summary string, produc
 			return "", fmt.Errorf("render CI repair commit trailers: %w", err)
 		}
 		return message, nil
+	}
+	if err := refuseRewordedBranchCommits(sctx, types.StepCI, s.replayBase); err != nil {
+		return ciRepairResult{}, err
 	}
 	if !s.isProvenMergeHead(sctx) {
 		if err := conformAgentCommits(sctx, types.StepCI, render); err != nil {

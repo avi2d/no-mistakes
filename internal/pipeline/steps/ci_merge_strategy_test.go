@@ -267,7 +267,7 @@ func TestCIStep_RepairThatAmendsThePublishedHeadFollowsTheStrategy(t *testing.T)
 			f.sctx.Config.Rebase.Strategy = tc.strategy
 			writeCIFix(f.dir)
 			gitCmd(t, f.dir, "add", "-A")
-			gitCmd(t, f.dir, "commit", "--amend", "-m", "feature, amended with the fix")
+			gitCmd(t, f.dir, "commit", "--amend", "--no-edit")
 			amended := f.localHead(t)
 
 			repair, err := (&CIStep{}).commitRepair(f.sctx, "repair the failing check", nil)

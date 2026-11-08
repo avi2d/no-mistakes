@@ -1353,6 +1353,10 @@ func driveRunScoped(ctx context.Context, progress io.Writer, client *ipc.Client,
 				fmt.Fprintf(progress, "%s: total fix-round budget exhausted; --yes leaves the remaining findings awaiting an explicit response\n", gate.Name)
 				return run, false, nil
 			}
+			if pipeline.HasFixRoundNoDiff(gate.FindingsJSON) {
+				fmt.Fprintf(progress, "%s: a fix round landed no diff; --yes leaves the remaining findings awaiting an explicit response\n", gate.Name)
+				return run, false, nil
+			}
 			if pipeline.HasProtectedPathRefusal(gate.FindingsJSON) {
 				fmt.Fprintf(progress, "%s: protected-path refusal requires an explicit response; --yes leaves this gate awaiting a response\n", gate.Name)
 				return run, false, nil

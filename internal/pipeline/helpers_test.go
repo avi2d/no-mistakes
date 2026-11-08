@@ -226,6 +226,12 @@ func (a *adaptiveCallStep) Execute(sctx *StepContext) (*StepOutcome, error) {
 	return a.fn(sctx)
 }
 
+func landFixDiff(sctx *StepContext) {
+	if sctx.Fixing {
+		sctx.Run.HeadSHA += "+fix"
+	}
+}
+
 // waitForStepEvent polls the event collector until an event with the given type and step name appears.
 func waitForStepEvent(t *testing.T, ec *eventCollector, eventType ipc.EventType, stepName types.StepName) *ipc.Event {
 	t.Helper()

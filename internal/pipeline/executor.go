@@ -1506,7 +1506,7 @@ func (e *Executor) executeStep(ctx context.Context, step Step, sr *db.StepResult
 	var pendingVerificationIDs []string
 	selectedOutstandingIDs := state.selectedOutstandingIDs
 	if carryFindings {
-		outstandingFindings = excludeFindingsJSON(state.outstandingFindings, []string{types.FindingIDReviewFixRoundsExhausted})
+		outstandingFindings = excludeFindingsJSON(state.outstandingFindings, rederivedNoticeIDs)
 		pendingVerificationIDs = append([]string(nil), state.selectedOutstandingIDs...)
 		// An answer round is a round type the append-only set was not written
 		// for, and it does NOT earn pending-verification entries. A fix round
@@ -1782,9 +1782,7 @@ rounds:
 				fixedThisRound = findingIDList(remapFindingIDsJSON(outstandingFindings, sctx.PreviousFindings))
 			}
 			outstandingFindings = dropReviewQuestionFindingsJSON(outstandingFindings)
-			// The budget notice is re-derived, never a code finding whose
-			// absent file anchor can prevent positive verification.
-			outstandingFindings = excludeFindingsJSON(outstandingFindings, []string{types.FindingIDReviewFixRoundsExhausted})
+			outstandingFindings = excludeFindingsJSON(outstandingFindings, rederivedNoticeIDs)
 			// An answer round retracts by naming ids, never by silence - and
 			// ONLY an answer round. A fix round is held to the coverage rule,
 			// so a retraction it claimed would clear a selected finding no
@@ -1836,6 +1834,28 @@ rounds:
 			}
 			outcome.NeedsApproval = true
 			writeLog(reviewFixRoundLimitMessage(reviewFixRounds, maxReviewFixRounds))
+		}
+
+		// Check if auto-fix should be attempted.
+		// Only auto-fix findings whose action is "auto-fix".
+		// This runs before the NeedsApproval check so that all severity
+		// levels (including "info") get a chance at automatic fixing.
+		autoFixable := outcome.AutoFixable
+		if stepName.IsCustomGate() {
+			autoFixable = gateAutoFixEligible(roundFindings, sctx.PreviousFindings, sctx.DeferredFindings, sctx.Fixing)
+		}
+		autoFixAllowed := autoFixable && autoFixLimit > 0 && autoFixAttempts < autoFixLimit && !reviewBudgetExhausted
+		// The next automatic round would hand the same findings to a fixer that
+		// just changed nothing for them.
+		if autoFixAllowed && autoFixableFindingsJSON(roundFindings) != "" && !outcome.FixAttemptFailed && fixRoundLandedNoDiff(sctx, reviewStartingHeadSHA) {
+			var err error
+			effectiveFindings, err = appendFixRoundNoDiff(effectiveFindings, stepName, roundNum)
+			if err != nil {
+				return false, "", fmt.Errorf("report %s fix round that landed no diff: %w", stepName, err)
+			}
+			autoFixAllowed = false
+			outcome.NeedsApproval = true
+			writeLog(fixRoundNoDiffMessage(stepName, roundNum))
 		}
 
 		if effectiveFindings != "" {
@@ -1894,15 +1914,7 @@ rounds:
 			e.emitRunEvent(ipc.EventRunUpdated, run, repo)
 		}
 
-		// Check if auto-fix should be attempted.
-		// Only auto-fix findings whose action is "auto-fix".
-		// This runs before the NeedsApproval check so that all severity
-		// levels (including "info") get a chance at automatic fixing.
-		autoFixable := outcome.AutoFixable
-		if stepName.IsCustomGate() {
-			autoFixable = gateAutoFixEligible(roundFindings, sctx.PreviousFindings, sctx.DeferredFindings, sctx.Fixing)
-		}
-		if autoFixable && autoFixLimit > 0 && autoFixAttempts < autoFixLimit && !reviewBudgetExhausted {
+		if autoFixAllowed {
 			fixableFindings := autoFixableFindingsJSON(roundFindings)
 			if carryFindings {
 				fixableFindings = remapFindingIDsJSON(effectiveFindings, fixableFindings)

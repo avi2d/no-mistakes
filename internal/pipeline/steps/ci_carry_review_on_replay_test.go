@@ -161,7 +161,7 @@ func TestCIStep_CarryReviewOnReplay_OnlyAPureReplayKeepsTheApproval(t *testing.T
 			rewrite: func(t *testing.T, f *replayFixture) {
 				cleanRebase(t, f)
 				gitCmd(t, f.dir, "reset", "--soft", "HEAD~2")
-				gitCmd(t, f.dir, "commit", "-m", "squashed")
+				gitCmd(t, f.dir, "commit", "--date=2001-01-01T00:00:00Z", "-m", "squashed")
 			},
 			wantLog: "2 reviewed commits but 1 commits on the repaired head",
 		},
