@@ -13,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/kunchenguid/no-mistakes/internal/agent"
+	"github.com/kunchenguid/no-mistakes/internal/config"
 	"github.com/kunchenguid/no-mistakes/internal/conventional"
 	"github.com/kunchenguid/no-mistakes/internal/db"
 	"github.com/kunchenguid/no-mistakes/internal/git"
@@ -914,7 +915,7 @@ func prTitleScopeRules(sctx *pipeline.StepContext) string {
 	return "- When including a scope, it MUST be a real package/module name that exists in the codebase (for example, a directory under internal/, cmd/, or the equivalent top-level grouping for this project), identified by inspecting the changed paths. Pick the primary module affected by the change, not a secondary or incidental one.\n- Keep the scope at a coarse level, not too granular: a codebase typically has fewer than 10 distinct scopes in use across its history. Prefer a broad module name (e.g. \"daemon\", \"pipeline\", \"cli\") over a narrow file or sub-feature name. If you cannot confidently identify a real primary module, omit the scope and use \"type: description\"."
 }
 
-func renderPRTitle(sctx *pipeline.StepContext, title string) (string, error) {
+func formatPRTitle(sctx *pipeline.StepContext, title string) (string, error) {
 	if sctx == nil || sctx.Config == nil {
 		return conventional.TightenTitle(title), nil
 	}
@@ -1006,7 +1007,11 @@ func titleAlreadyFitsWithinBudget(sctx *pipeline.StepContext, title string) bool
 		return true
 	}
 	budget := sctx.Config.PR.TitleBudget()
-	return budget <= 0 || utf8.RuneCountInString(title) <= budget
+	if budget > 0 && utf8.RuneCountInString(title) > budget {
+		return false
+	}
+	lint := loadCommitlintConfig(sctx)
+	return lint == nil || len(lint.Lint(title, config.PRTitleSquashSuffixReserveChars)) == 0
 }
 
 // buildPipelineSection queries step results and rounds from the DB and

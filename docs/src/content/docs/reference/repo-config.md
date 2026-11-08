@@ -435,6 +435,8 @@ A limit that leaves no room for the title prefix fails PR publication instead of
 
 Updating an existing pull request whose current title is already a conventional title within the limit leaves that title in place instead of replacing it with a freshly drafted one.
 
+The PR step also checks the title against the repository's own commitlint config, independently of this setting, as [Pipeline Steps](/no-mistakes/reference/pipeline-steps/) describes.
+
 ### commands.prepare
 
 Optional dependency-preparation command for isolated run worktrees. Run via the platform shell - `sh -c` on POSIX, `cmd.exe /c` on Windows.

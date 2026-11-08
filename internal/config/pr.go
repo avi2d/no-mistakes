@@ -42,6 +42,10 @@ const (
 	prTitleSquashSuffixReserveChars = 10
 )
 
+// PRTitleSquashSuffixReserveChars is the room left for the " (#NNN)" a
+// squash merge appends to the title.
+const PRTitleSquashSuffixReserveChars = prTitleSquashSuffixReserveChars
+
 // MaxPRTitleBytes is the longest PR title pr.title_format may render, and the
 // bound on a caller-supplied title.
 const MaxPRTitleBytes = maxPRTitleBytes
