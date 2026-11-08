@@ -5,11 +5,13 @@ package e2e
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/kunchenguid/no-mistakes/internal/testgit"
 	"github.com/kunchenguid/no-mistakes/internal/types"
 )
 
@@ -53,7 +55,15 @@ commands:
 	finishWithOneFixRound := func(branch string) {
 		t.Helper()
 		h.CommitChange(branch, "feature.txt", "unsafe\n", "add unsafe feature")
-		h.PushToGate(branch)
+		// Harness.PushToGate's explicit identity would become the run's
+		// submission identity and hide the global one under test.
+		pushCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		push := exec.CommandContext(pushCtx, "git", "push", "no-mistakes", branch)
+		push.Dir, push.Env = h.WorkDir, testgit.IsolatedEnv(nil)
+		if out, err := push.CombinedOutput(); err != nil {
+			t.Fatalf("git push no-mistakes %s: %v\n%s", branch, err, out)
+		}
 		gated := waitForStepStatus(t, h, branch, types.StepReview, types.StepStatusFixReview, 60*time.Second)
 		h.Respond(gated.ID, types.StepReview, types.ActionApprove)
 		if run := h.WaitForRun(branch, 90*time.Second); run.Status != types.RunCompleted {

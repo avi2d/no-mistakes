@@ -75,7 +75,7 @@ func TestAxiRunEnvFileRefusalsHappenBeforeTheDaemonAndNeverQuoteTheValue(t *test
 }
 
 func TestAxiRunEnvFileOlderDaemonIsRefusedBeforeTheGatePush(t *testing.T) {
-	launched := olderDaemonFixture(t, func() (interface{}, error) { return &ipc.ProbeOmitIntentResult{OK: true}, nil })
+	launched := olderDaemonFixture(t, func() (interface{}, error) { return &ipc.ProbeOmitIntentResult{OK: true}, nil }, serveTranscriptHomesProbe)
 	writeGlobalConfig(t, "")
 	cmd := newAxiRunCmd()
 	cmd.SetContext(context.Background())
@@ -97,7 +97,7 @@ func TestAxiRunEnvFileOlderDaemonIsRefusedBeforeTheGatePush(t *testing.T) {
 func TestAxiRunEnvFileIsStagedForTheSubmittedHeadAndReleasedAfterTheLaunch(t *testing.T) {
 	var staged ipc.StageRunEnvParams
 	var released ipc.ReleaseRunEnvParams
-	olderDaemonFixture(t, func() (interface{}, error) { return &ipc.ProbeOmitIntentResult{OK: true}, nil }, func(srv *ipc.Server) {
+	olderDaemonFixture(t, func() (interface{}, error) { return &ipc.ProbeOmitIntentResult{OK: true}, nil }, serveTranscriptHomesProbe, func(srv *ipc.Server) {
 		srv.Handle(ipc.MethodStageRunEnv, func(_ context.Context, raw json.RawMessage) (interface{}, error) {
 			return nil, json.Unmarshal(raw, &staged)
 		})

@@ -143,6 +143,7 @@ type stepView struct {
 // runView is a render-ready view of a pipeline run.
 type runView struct {
 	PiProfile        *agentcfg.PiProfile
+	ReviewerProfile  *agentcfg.ReviewerProfile
 	VerificationPlan *verificationplan.Snapshot
 	// QuotaRouting is the run's parsed quota-aware ordering record, nil when
 	// the feature was off for this run.
@@ -181,6 +182,7 @@ func runViewFromIPC(r *ipc.RunInfo) runView {
 		CIOverrideReason:   r.CIOverrideReason,
 		TestOverrideReason: r.TestOverrideReason,
 		PiProfile:          r.PiProfile,
+		ReviewerProfile:    r.ReviewerProfile,
 		VerificationPlan:   r.VerificationPlan,
 		RetryOf:            r.RetryOf,
 		RetriedBy:          r.RetriedBy,
@@ -230,6 +232,7 @@ func runViewFromIPC(r *ipc.RunInfo) runView {
 func runViewFromDB(r *db.Run, steps []*db.StepResult, database *db.DB) runView {
 	rv := runView{
 		PiProfile:          r.PiProfile,
+		ReviewerProfile:    r.ReviewerProfile,
 		VerificationPlan:   r.VerificationPlan,
 		ID:                 r.ID,
 		Branch:             r.Branch,
@@ -598,7 +601,15 @@ func runObjectFieldWithKey(key string, rv runView) toon.Field {
 		)})
 	}
 	if rv.QuotaRouting != nil {
+		// The primary's quota selection remains independent of the reviewer.
 		fields = append(fields, quotaRoutingField(rv.QuotaRouting))
+	}
+	if rv.ReviewerProfile != nil {
+		fields = append(fields, toon.Field{Key: "reviewer_profile", Value: toon.NewObject(
+			toon.Field{Key: "agent", Value: string(rv.ReviewerProfile.Agent)},
+			toon.Field{Key: "model", Value: rv.ReviewerProfile.Model},
+			toon.Field{Key: "effort", Value: string(rv.ReviewerProfile.Effort)},
+		)})
 	}
 	if rv.PRURL != "" {
 		fields = append(fields, toon.Field{Key: "pr", Value: rv.PRURL})
@@ -739,6 +750,12 @@ func gateFieldsForRun(gate stepView, runID string) []toon.Field {
 		"Run `" + respond + " --action approve` to accept this step and continue",
 		"Run `" + respond + " --action fix --findings <ids> [--ignore <ids>]` to have the pipeline fix the selected findings (do not edit files yourself); list every finding below in `--findings` or `--ignore`, unless an earlier round of this step already decided it, and a finding that round chose to fix cannot be declined by a later response",
 	}
+	if pipeline.HasReviewFixRoundLimit(gate.FindingsJSON) {
+		help = []string{
+			"The total Review fix-round budget is exhausted; further fix requests are refused and automatic resolvers leave this gate parked. Remaining findings are unchanged.",
+			"Inspect the remaining findings, then explicitly run `" + respond + " --action approve` to accept them, or abort the run. A new run gets a new budget; changing config does not extend this run.",
+		}
+	}
 	if pipeline.CanContinueReviewCoverage(types.StepName(gate.Name), gate.FindingsJSON) {
 		help = append([]string{coverageHelp}, help...)
 	}
@@ -760,10 +777,11 @@ func gateFieldsForRun(gate stepView, runID string) []toon.Field {
 		}, help...)
 	}
 	if pipeline.HasProtectedPathRefusal(gate.FindingsJSON) {
-		help = []string{
-			"Protected-path refusals require an explicit operator response; Approve is rejected.",
-			"Have the operator inspect and resolve the reported protected-path edit through the repository's authorized workflow, then run `" + respond + " --action fix` to retry the refused step, including its commit and publication.",
+		next := "Have the operator inspect and resolve the reported protected-path edit through the repository's authorized workflow, then run `" + respond + " --action fix` to retry the refused step, including its commit and publication."
+		if pipeline.HasReviewFixRoundLimit(gate.FindingsJSON) {
+			next = "The total Review fix-round budget is exhausted, so a fix request is refused and cannot retry the refused step. Skip this step or run `no-mistakes axi abort" + runFlag(runID) + "` to stop the run. A new run gets a new budget; changing config does not extend this run."
 		}
+		help = []string{"Protected-path refusals require an explicit operator response; Approve is rejected.", next}
 	}
 	if parsed, err := types.ParseFindingsJSON(gate.FindingsJSON); err == nil && slices.ContainsFunc(parsed.Items, func(f types.Finding) bool { return f.Carried != "" }) {
 		help = append(help, "A finding with a `carried` note is one this round's reviewer did not report; one awaiting verification was fixed in an earlier round and stays until a later round verifies it or you approve")

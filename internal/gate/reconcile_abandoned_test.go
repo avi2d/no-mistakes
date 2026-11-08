@@ -60,12 +60,12 @@ func TestReconcileStaleBranchReplacesAbandonedSubmissionThatDroppedACommit(t *te
 	reconcileGit(t, f.work, "reset", "--hard", f.published)
 	liveHead := f.published
 
-	if _, err := ReconcileStaleBranch(ctx, f.gateDir, f.work, "feature", liveHead, AbandonedSubmission{}); err == nil || !strings.Contains(err.Error(), f.abandonedAt) {
+	if _, err := ReconcileStaleBranch(ctx, f.gateDir, f.work, "feature", liveHead, AbandonedSubmission{}, nil); err == nil || !strings.Contains(err.Error(), f.abandonedAt) {
 		t.Fatalf("dropped commit without an abandoned submission: err=%v, want a refusal naming %s", err, f.abandonedAt)
 	}
 	f.assertUntouched(t)
 
-	result, err := ReconcileStaleBranch(ctx, f.gateDir, f.work, "feature", liveHead, AbandonedSubmission{Head: f.abandonedAt})
+	result, err := ReconcileStaleBranch(ctx, f.gateDir, f.work, "feature", liveHead, AbandonedSubmission{Head: f.abandonedAt}, nil)
 	if err != nil {
 		t.Fatalf("abandoned, never-published submission was refused: %v", err)
 	}
@@ -86,7 +86,7 @@ func TestReconcileStaleBranchAbandonedSubmissionKeepsRefusalForPublishedContent(
 		t.Parallel()
 		f := newAbandonedFixture(t)
 		liveHead := f.liveOn(t, f.base)
-		_, err := ReconcileStaleBranch(ctx, f.gateDir, f.work, "feature", liveHead, AbandonedSubmission{Head: f.abandonedAt, Publications: []string{f.published}})
+		_, err := ReconcileStaleBranch(ctx, f.gateDir, f.work, "feature", liveHead, AbandonedSubmission{Head: f.abandonedAt, Publications: []string{f.published}}, nil)
 		if err == nil || !strings.Contains(err.Error(), f.published) || !strings.Contains(err.Error(), "published work") {
 			t.Fatalf("published ancestor dropped under the abandoned-submission exception: err=%v", err)
 		}
@@ -97,7 +97,7 @@ func TestReconcileStaleBranchAbandonedSubmissionKeepsRefusalForPublishedContent(
 		t.Parallel()
 		f := newAbandonedFixture(t)
 		liveHead := f.liveOn(t, f.published)
-		_, err := ReconcileStaleBranch(ctx, f.gateDir, f.work, "feature", liveHead, AbandonedSubmission{Head: f.abandonedAt, Publications: []string{f.abandonedAt}})
+		_, err := ReconcileStaleBranch(ctx, f.gateDir, f.work, "feature", liveHead, AbandonedSubmission{Head: f.abandonedAt, Publications: []string{f.abandonedAt}}, nil)
 		if err == nil || !strings.Contains(err.Error(), f.abandonedAt) {
 			t.Fatalf("published head replaced under the abandoned-submission exception: err=%v", err)
 		}
@@ -109,7 +109,7 @@ func TestReconcileStaleBranchAbandonedSubmissionKeepsRefusalForPublishedContent(
 		f := newAbandonedFixture(t)
 		liveHead := f.liveOn(t, f.published)
 		unknown := strings.Repeat("a", len(f.abandonedAt))
-		if _, err := ReconcileStaleBranch(ctx, f.gateDir, f.work, "feature", liveHead, AbandonedSubmission{Head: f.abandonedAt, Publications: []string{unknown}}); err == nil {
+		if _, err := ReconcileStaleBranch(ctx, f.gateDir, f.work, "feature", liveHead, AbandonedSubmission{Head: f.abandonedAt, Publications: []string{unknown}}, nil); err == nil {
 			t.Fatal("an unresolvable publication was treated as proof that nothing was published")
 		}
 		f.assertUntouched(t)
@@ -119,7 +119,7 @@ func TestReconcileStaleBranchAbandonedSubmissionKeepsRefusalForPublishedContent(
 		t.Parallel()
 		f := newAbandonedFixture(t)
 		liveHead := f.liveOn(t, f.published)
-		result, err := ReconcileStaleBranch(ctx, f.gateDir, f.work, "feature", liveHead, AbandonedSubmission{Head: f.abandonedAt, Publications: []string{f.published}})
+		result, err := ReconcileStaleBranch(ctx, f.gateDir, f.work, "feature", liveHead, AbandonedSubmission{Head: f.abandonedAt, Publications: []string{f.published}}, nil)
 		if err != nil {
 			t.Fatalf("only the never-published commit is dropped, yet it was refused: %v", err)
 		}
@@ -132,12 +132,12 @@ func TestReconcileStaleBranchAbandonedSubmissionKeepsRefusalForPublishedContent(
 		t.Parallel()
 		f := newAbandonedFixture(t)
 		liveHead := f.liveOn(t, f.published)
-		if _, err := ReconcileStaleBranch(ctx, f.gateDir, f.work, "feature", liveHead, AbandonedSubmission{Head: f.published}); err == nil {
+		if _, err := ReconcileStaleBranch(ctx, f.gateDir, f.work, "feature", liveHead, AbandonedSubmission{Head: f.published}, nil); err == nil {
 			t.Fatal("a private head the tool did not record as the abandoned submission was replaced")
 		}
 		f.assertUntouched(t)
 		abbreviated := f.abandonedAt[:12]
-		if _, err := ReconcileStaleBranch(ctx, f.gateDir, f.work, "feature", liveHead, AbandonedSubmission{Head: abbreviated}); err == nil {
+		if _, err := ReconcileStaleBranch(ctx, f.gateDir, f.work, "feature", liveHead, AbandonedSubmission{Head: abbreviated}, nil); err == nil {
 			t.Fatal("an abbreviated abandoned head was accepted as exact")
 		}
 		f.assertUntouched(t)
@@ -149,7 +149,7 @@ func TestPlanStaleBranchReconciliationAbandonedSubmissionMutatesNothing(t *testi
 	ctx := context.Background()
 	f := newAbandonedFixture(t)
 	liveHead := f.liveOn(t, f.published)
-	plan, err := PlanStaleBranchReconciliation(ctx, f.gateDir, f.work, "feature", liveHead, AbandonedSubmission{Head: f.abandonedAt, Publications: []string{f.published}})
+	plan, err := PlanStaleBranchReconciliation(ctx, f.gateDir, f.work, "feature", liveHead, AbandonedSubmission{Head: f.abandonedAt, Publications: []string{f.published}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

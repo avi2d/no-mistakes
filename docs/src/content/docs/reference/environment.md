@@ -196,6 +196,32 @@ Disable background update checks.
 
 Update checks run on every CLI invocation except `update` itself and version queries (`--version` / `-v`, which stay side-effect-free), fetch the GitHub release-asset channel manifest, cache the result in `$NM_HOME/update-check.json`, and print a one-line notification to stderr when a newer version is available. Dev builds (non-semver versions) and binaries that resolve into `/nix/store` suppress the check automatically.
 
+## `CLAUDE_CONFIG_DIR`
+
+Claude Code account directory used for intent transcript discovery.
+
+|         |             |
+| ------- | ----------- |
+| Type    | `string`    |
+| Default | `~/.claude` |
+
+no-mistakes reads Claude Code transcripts from `$CLAUDE_CONFIG_DIR/projects`.
+
+For both `CLAUDE_CONFIG_DIR` and [`CODEX_HOME`](#codex_home), CLI launches, push-hook notifications, and TUI reruns capture the caller's values, using the caller's home directory for defaults when a variable is unset or empty. The selected roots are stored with the run and survive daemon recovery, independently of the daemon's environment. A rerun captures the current caller's selection. A retry continuation retains the failed run's selection. Historical runs without recorded roots retain default-path discovery.
+
+Each selected root must be an absolute path. Relative paths, literal unexpanded `~` paths, and unresolved defaults disable only that provider's discovery and log the rejection in the Intent step. They do not prevent the run from starting or disable discovery for the other provider. Missing or unreadable selected homes never fall back to another account. These settings select transcripts and do not change pipeline-agent authentication.
+
+## `CODEX_HOME`
+
+Codex account directory used for intent transcript discovery.
+
+|         |            |
+| ------- | ---------- |
+| Type    | `string`   |
+| Default | `~/.codex` |
+
+no-mistakes reads Codex metadata from `$CODEX_HOME/state_*.sqlite` and transcripts from the referenced rollout files. Relative rollout paths resolve against the selected Codex home. The [caller-selection, persistence, and failure rules](#claude_config_dir) also apply to this variable.
+
 ## `XDG_DATA_HOME`
 
 Data directory used to discover OpenCode transcripts for intent extraction.
@@ -291,7 +317,7 @@ When telemetry is enabled, `no-mistakes` sends command, run, approval, fix, and 
 Mutation pageviews are sent alongside command events, so command status and duration remain available.
 They include only flag-derived context: `/axi/run` records booleans such as whether `--yes` or `--skip` was supplied and whether explicit intent was supplied through any [intent input transport](/no-mistakes/reference/cli/#intent-input); `/axi/respond` records the sanitized action and whether `--yes` was present. The intent boolean does not distinguish text, file, and stdin input, and intent input rejected by the CLI resolver emits no `axi-run` command event or pageview.
 
-Read-only surfaces (`axi` home, `axi status`, `axi logs`, `axi rounds`, `status`, `runs`) emit no telemetry at all, so agent status polling cannot flood remote analytics. Mutation surfaces (`axi run`, `axi respond`, `axi abort`, `axi retry`, `axi handoff`, run lifecycle, approvals, and fixes) stay full-fidelity.
+Read-only surfaces (`axi` home, `axi status`, `axi logs`, `axi rounds`, `status`, `runs`, `export`) emit no telemetry at all, so agent status polling cannot flood remote analytics. Mutation surfaces (`axi run`, `axi respond`, `axi abort`, `axi retry`, `axi handoff`, run lifecycle, approvals, and fixes) stay full-fidelity.
 Each explicit human CLI, AXI, or TUI branch-sync check/apply attempt emits one command event and no additional pageview.
 Its fields are bounded enums and booleans only: surface, mode, state, relation, target kind, pipeline phase, PR state, result, refusal reason, dirty state, and duration.
 It never sends a SHA, run ID, path, branch name, URL, remote name, or command argument.
@@ -319,6 +345,7 @@ A recorded `0` means the adapter reported zero; it is distinct from unknown.
 
 The count and timing definitions live in one authoritative place (`internal/agent/invocationmetrics.go`).
 Inspect the evidence with `no-mistakes stats --agents` (per-purpose aggregates, including a `METRICS` coverage count so a real zero is distinguishable from missing instrumentation) or `no-mistakes stats --run <id>` (one run's invocations, the per-round-vs-cumulative token split, and parked time).
+For a versioned JSON snapshot of one run's stored delivery facts, use [`no-mistakes export --run <id> --json`](/no-mistakes/reference/cli/#no-mistakes-export).
 
 ## `NO_MISTAKES_TELEMETRY`
 
@@ -335,10 +362,18 @@ The managed daemon reads this variable from your login shell like any other vari
 The macOS and Linux service definitions never store it.
 Windows Task Scheduler inherits the user's logon environment, so set it there for the managed daemon.
 
+## Git commit environment
+
+Submission identity capture honors `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL`, `GIT_COMMITTER_NAME`, and `GIT_COMMITTER_EMAIL` from the submitting process. The [pipeline commit identity policy](/no-mistakes/reference/pipeline-steps/) owns how that identity is bound to a run and preserved during correction rewriting.
+
+Pipeline-owned Git calls set those four variables to the run's saved identity and remove inherited `GIT_AUTHOR_DATE` and `GIT_COMMITTER_DATE`. New commit dates are not pinned. These calls retain inherited command-scope Git configuration, as do provider CLI and plugin calls.
+
+Agent and configured-command environments exclude inherited author and committer name, email and date variables, plus all command-scope Git configuration supplied through `GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_*`, `GIT_CONFIG_VALUE_*`, and `GIT_CONFIG_PARAMETERS`. Filtering happens after step, forge, and adapter overlays, so those overlays cannot restore the excluded variables. This removes non-identity command-scope settings too, such as proxy, credential-helper, and URL-rewrite settings. These subprocesses use normal Git repository and worktree configuration, where the run's identity is stored. Nested repositories retain their own configured identities.
+
 ## Environment the daemon sees
 
 When the daemon runs through a managed service (launchd, systemd user service, Task Scheduler), the macOS and Linux service definitions set only `HOME` and a default `PATH` with common user and system binary directories. They never copy proxy variables (`HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`, `ALL_PROXY`) from the shell that installs or restarts the service. That shell can be an agent sandbox whose local proxy stops when its session ends, and a proxy baked into the service would then stall every agent the daemon spawns. Set proxy variables in your login shell's rc files instead, where the startup probe below picks them up like any other variable. Refreshing a service definition that an older version wrote with proxy variables removes them. Windows Task Scheduler inherits your logon environment. At daemon startup, the daemon resolves environment once from your login shell on macOS and Linux (`$SHELL -l -i -c 'env -0'` for bash and zsh, run in its own session so an interactive shell never waits on a terminal), preserves your shell `PATH` order, and appends any missing well-known directories such as `~/.local/bin`, `~/go/bin`, `~/.cargo/bin`, `~/bin`, `/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin`, and `/bin`. When the login shell binary itself does not exist yet, which happens on macOS with nix-darwin when the daemon starts at login before `/run/current-system` has been recreated, startup waits for it with backoff for up to a minute before giving up. If login-shell resolution still fails or returns no entries, the daemon logs a warning and uses an augmented process-environment fallback that may omit version-manager directories such as nvm, fnm, or volta. Restart the daemon to pick up a login shell that appeared or changed after startup. On Windows it reuses the current process environment.
 
-If your env vars aren't set in your login shell's rc files (`.zprofile`, `.zshrc`, `.profile`, `.bash_profile`, `.bashrc`, PowerShell profile), the daemon won't see them. Put them somewhere a login shell will load, then restart the daemon to pick them up.
+For variables inherited by the daemon and its child processes, use the login shell's rc files (`.zprofile`, `.zshrc`, `.profile`, `.bash_profile`, `.bashrc`, PowerShell profile) or, on Windows, the logon environment; the daemon won't see them otherwise. Put them somewhere the daemon will load, then restart it to pick them up. Caller-selected [transcript homes](#claude_config_dir) follow their own capture rules above.
 
 `no-mistakes doctor` reads the running daemon's proxy variables over its socket and fails when one names an address where nothing listens.

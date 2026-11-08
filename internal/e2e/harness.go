@@ -142,6 +142,11 @@ func NewHarness(t *testing.T, opts SetupOpts) *Harness {
 	// daemon re-execs itself, also inheriting them.
 	t.Setenv("PATH", h.BinDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("HOME", h.HomeDir)
+	// An empty transcript home falls back under HOME; an inherited one
+	// points discovery at the operator's real agent accounts.
+	for _, name := range []string{"CLAUDE_CONFIG_DIR", "CODEX_HOME", "XDG_DATA_HOME"} {
+		t.Setenv(name, "")
+	}
 	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(h.HomeDir, "gitconfig-isolated"))
 	t.Setenv("NM_HOME", h.NMHome)
 	t.Setenv("FAKEAGENT_LOG", h.AgentLog)
