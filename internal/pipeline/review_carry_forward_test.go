@@ -799,14 +799,15 @@ func TestExecutor_ReviewCarryForward_PendingSelectionsSurviveLaterRounds(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
+	stepResultID := steps[0].ID
 	if err := respondFixPartial(t, exec, types.StepReview, "review-1"); err != nil {
 		t.Fatal(err)
 	}
-	waitForParkedRounds(t, database, steps[0].ID, types.StepStatusFixReview, 2)
+	waitForParkedRounds(t, database, stepResultID, types.StepStatusFixReview, 2)
 	if err := respondFixPartial(t, exec, types.StepReview, "review-2"); err != nil {
 		t.Fatal(err)
 	}
-	waitForParkedRounds(t, database, steps[0].ID, types.StepStatusFixReview, 3)
+	waitForParkedRounds(t, database, stepResultID, types.StepStatusFixReview, 3)
 
 	steps, err = database.GetStepsByRun(run.ID)
 	if err != nil {

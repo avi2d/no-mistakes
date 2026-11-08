@@ -35,7 +35,7 @@ func TestPRStep_GhNotAvailable(t *testing.T) {
 
 	dir, baseSHA, headSHA := setupGitRepo(t)
 	ag := &mockAgent{name: "test"}
-	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
+	sctx := newPRTestContext(t, ag, dir, baseSHA, headSHA, config.Commands{})
 
 	step := &PRStep{}
 	outcome, err := step.Execute(sctx)
@@ -57,7 +57,7 @@ func TestPRStep_UpdatesExistingPR(t *testing.T) {
 	env, logFile := fakeGH(t, "https://github.com/test/repo/pull/42")
 
 	ag := &mockAgent{name: "test"}
-	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
+	sctx := newPRTestContext(t, ag, dir, baseSHA, headSHA, config.Commands{})
 	sctx.Env = env
 	reviewStep, err := sctx.DB.InsertStepResult(sctx.Run.ID, types.StepReview)
 	if err != nil {
@@ -127,6 +127,7 @@ func TestPRStep_UpdateKeepsExistingConventionalTitleThatStillFits(t *testing.T) 
 	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
 	sctx.Env = env
 	sctx.Config.PR.TitleMaxLength = 90
+	recordPRTestPush(t, sctx)
 
 	step := &PRStep{}
 	if _, err := step.Execute(sctx); err != nil {
@@ -150,7 +151,7 @@ func TestPRStep_MalformedPRListFailsClosed(t *testing.T) {
 	env, logFile := fakeGH(t, "")
 	env = append(env, "FAKE_CLI_PR_LIST_JSON=[{")
 
-	sctx := newTestContextWithDBRecords(t, &mockAgent{name: "test"}, dir, baseSHA, headSHA, config.Commands{})
+	sctx := newPRTestContext(t, &mockAgent{name: "test"}, dir, baseSHA, headSHA, config.Commands{})
 	sctx.Env = env
 
 	_, err := (&PRStep{}).Execute(sctx)
@@ -191,7 +192,7 @@ func TestPRStep_UsesResolvedForgeProviderForSelfHostedRemote(t *testing.T) {
 	env, logFile := fakeGH(t, "https://code.example.test/test/repo/pull/42")
 
 	ag := &mockAgent{name: "test"}
-	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
+	sctx := newPRTestContext(t, ag, dir, baseSHA, headSHA, config.Commands{})
 	sctx.Env = append(env, "GH_TOKEN="+credentialSentinel)
 	sctx.Repo.UpstreamURL = "git@work-code:test/repo.git"
 	sctx.ForgeContext = &forgecontext.Context{
@@ -202,6 +203,7 @@ func TestPRStep_UsesResolvedForgeProviderForSelfHostedRemote(t *testing.T) {
 			Unset: []string{"GH_TOKEN"},
 		},
 	}
+	recordPRTestPush(t, sctx)
 
 	step := &PRStep{}
 	outcome, err := step.Execute(sctx)
@@ -244,15 +246,17 @@ func TestPRStep_BitbucketUpdatesExistingPR(t *testing.T) {
 	api := newFakeBitbucketPRAPI(t, 42, "https://bitbucket.org/test/repo/pull-requests/42")
 
 	ag := &mockAgent{name: "test"}
-	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
+	sctx := newPRTestContext(t, ag, dir, baseSHA, headSHA, config.Commands{})
 	sctx.Env = fakeBitbucketEnv(api.server.URL)
 	sctx.Repo.UpstreamURL = "https://bitbucket.org/test/repo.git"
 
+	assertNotice := capturePRProofNotice(t, sctx, "bitbucket")
 	step := &PRStep{}
 	outcome, err := step.Execute(sctx)
 	if err != nil {
 		t.Fatal(err)
 	}
+	assertNotice(bitbucketPRDescriptionForTest(t, api.lastUpdateBody))
 	if outcome.NeedsApproval {
 		t.Fatal("bitbucket PR step should never need approval")
 	}
@@ -289,7 +293,7 @@ func TestPRStep_BitbucketUpdatesExistingPRWithoutHTMLLink(t *testing.T) {
 	api.createdPRURL = ""
 
 	ag := &mockAgent{name: "test"}
-	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
+	sctx := newPRTestContext(t, ag, dir, baseSHA, headSHA, config.Commands{})
 	sctx.Env = fakeBitbucketEnv(api.server.URL)
 	sctx.Repo.UpstreamURL = "https://bitbucket.org/test/repo.git"
 	api.server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -321,11 +325,13 @@ func TestPRStep_BitbucketUpdatesExistingPRWithoutHTMLLink(t *testing.T) {
 		}
 	})
 
+	assertNotice := capturePRProofNotice(t, sctx, "bitbucket")
 	step := &PRStep{}
 	outcome, err := step.Execute(sctx)
 	if err != nil {
 		t.Fatal(err)
 	}
+	assertNotice(bitbucketPRDescriptionForTest(t, api.lastUpdateBody))
 	if outcome.NeedsApproval {
 		t.Fatal("bitbucket PR step should never need approval")
 	}
@@ -373,7 +379,7 @@ func TestPRStep_ZeroBaseSHA(t *testing.T) {
 
 	ag := &mockAgent{name: "test"}
 	zeroSHA := "0000000000000000000000000000000000000000"
-	sctx := newTestContextWithDBRecords(t, ag, dir, zeroSHA, headSHA, config.Commands{})
+	sctx := newPRTestContext(t, ag, dir, zeroSHA, headSHA, config.Commands{})
 	sctx.Env = env
 
 	step := &PRStep{}
@@ -401,7 +407,7 @@ func TestPRStep_CreatesConfiguredDraftPR(t *testing.T) {
 
 	findings := `{"findings":[],"summary":"clean","risk_level":"medium","risk_rationale":"touches critical error handling"}`
 	ag := &mockAgent{name: "test"}
-	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
+	sctx := newPRTestContext(t, ag, dir, baseSHA, headSHA, config.Commands{})
 	sctx.Env = env
 	sctx.Config.Providers.GitHub.DraftPullRequests = true
 	reviewStep, err := sctx.DB.InsertStepResult(sctx.Run.ID, types.StepReview)
@@ -477,7 +483,7 @@ func TestPRStep_ComposedBodyLocksOutLateClosingIssueRefsUpdate(t *testing.T) {
 	env, logFile := fakeGH(t, "")
 
 	ag := &mockAgent{name: "test"}
-	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
+	sctx := newPRTestContext(t, ag, dir, baseSHA, headSHA, config.Commands{})
 	sctx.Env = env
 
 	// The closing issue references was forwarded before the PR step sampled it, so it wins.
@@ -517,7 +523,7 @@ func TestPRStep_ClosesFailsWhenCreateReturnsNoVerifiableIdentity(t *testing.T) {
 	dir, baseSHA, headSHA := setupGitRepo(t)
 	env, _ := fakeGH(t, "")
 	env = append(env, "FAKE_CLI_PR_CREATE_EMPTY=1")
-	sctx := newTestContextWithDBRecords(t, &mockAgent{name: "test"}, dir, baseSHA, headSHA, config.Commands{})
+	sctx := newPRTestContext(t, &mockAgent{name: "test"}, dir, baseSHA, headSHA, config.Commands{})
 	sctx.Env = env
 	if err := sctx.DB.UpdateRunClosingIssueRefs(sctx.Run.ID, []string{"42"}); err != nil {
 		t.Fatal(err)
@@ -541,7 +547,7 @@ func TestPRStep_OrdinaryUpdateRendersRequestedIssuesOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	sctx := newTestContextWithDBRecords(t, &mockAgent{name: "test"}, dir, baseSHA, headSHA, config.Commands{})
+	sctx := newPRTestContext(t, &mockAgent{name: "test"}, dir, baseSHA, headSHA, config.Commands{})
 	sctx.Env = env
 	if err := sctx.DB.UpdateRunClosingIssueRefs(sctx.Run.ID, []string{"99", "42", "owner/repo#7"}); err != nil {
 		t.Fatal(err)
@@ -666,7 +672,7 @@ func TestPRStep_UsesConfiguredBaseBranch(t *testing.T) {
 	ensureLocalBranch(t, dir, "develop", baseSHA)
 	env, logFile := fakeGH(t, "")
 
-	sctx := newTestContextWithDBRecords(t, &mockAgent{name: "test"}, dir, baseSHA, headSHA, config.Commands{})
+	sctx := newPRTestContext(t, &mockAgent{name: "test"}, dir, baseSHA, headSHA, config.Commands{})
 	sctx.Env = env
 	sctx.Config.PR.BaseBranch = "develop"
 
@@ -701,7 +707,7 @@ func TestPRStep_ExistingPRAgainstDifferentBaseIsUpdatedNotDuplicated(t *testing.
 	env, logFile := fakeGHWithBase(t, "https://github.com/test/repo/pull/42", "develop")
 
 	ag := &mockAgent{name: "test"}
-	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
+	sctx := newPRTestContext(t, ag, dir, baseSHA, headSHA, config.Commands{})
 	sctx.Env = env
 	sctx.Config.PR.BaseBranch = "main"
 
@@ -741,7 +747,7 @@ func TestPRStep_SkipsWhenBranchMatchesConfiguredBaseBranch(t *testing.T) {
 	dir, baseSHA, headSHA := setupGitRepo(t)
 	env, logFile := fakeGH(t, "")
 
-	sctx := newTestContextWithDBRecords(t, &mockAgent{name: "test"}, dir, baseSHA, headSHA, config.Commands{})
+	sctx := newPRTestContext(t, &mockAgent{name: "test"}, dir, baseSHA, headSHA, config.Commands{})
 	sctx.Env = env
 	sctx.Config.PR.BaseBranch = "develop"
 	sctx.Run.Branch = "refs/heads/develop"
@@ -778,7 +784,7 @@ func TestPRStep_GitHubForkCreatesParentPRWithForkHead(t *testing.T) {
 			return &agent.Result{Output: payload}, nil
 		},
 	}
-	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
+	sctx := newPRTestContext(t, ag, dir, baseSHA, headSHA, config.Commands{})
 	sctx.Env = env
 	sctx.Repo.UpstreamURL = "https://github.com/parent-owner/no-mistakes.git"
 	sctx.Repo.ForkURL = "https://github.com/fork-owner/no-mistakes.git"
@@ -791,6 +797,8 @@ func TestPRStep_GitHubForkCreatesParentPRWithForkHead(t *testing.T) {
 		t.Fatal(err)
 	}
 	sctx.ForgeContext = forgeCtx
+	sctx.Env = append(sctx.Env, "FAKE_CLI_PR_SOURCE_REPO=fork-owner/no-mistakes")
+	recordPRTestPush(t, sctx)
 
 	step := &PRStep{}
 	if _, err := step.Execute(sctx); err != nil {
@@ -829,7 +837,7 @@ func TestPRStep_ClosesRefusedWhenTheProviderCannotCloseIssues(t *testing.T) {
 	t.Parallel()
 	dir, baseSHA, headSHA := setupGitRepo(t)
 	api := newFakeBitbucketPRAPI(t, 0, "")
-	sctx := newTestContextWithDBRecords(t, &mockAgent{name: "test"}, dir, baseSHA, headSHA, config.Commands{})
+	sctx := newPRTestContext(t, &mockAgent{name: "test"}, dir, baseSHA, headSHA, config.Commands{})
 	sctx.Env = fakeBitbucketEnv(api.server.URL)
 	sctx.Repo.UpstreamURL = "https://bitbucket.org/test/repo.git"
 	if err := sctx.DB.UpdateRunClosingIssueRefs(sctx.Run.ID, []string{"42"}); err != nil {
@@ -852,7 +860,7 @@ func TestPRStep_BitbucketCreatesNewPR(t *testing.T) {
 
 	findings := `{"findings":[],"summary":"clean","risk_level":"medium","risk_rationale":"touches critical error handling"}`
 	ag := &mockAgent{name: "test"}
-	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
+	sctx := newPRTestContext(t, ag, dir, baseSHA, headSHA, config.Commands{})
 	sctx.Env = fakeBitbucketEnv(api.server.URL)
 	sctx.Repo.UpstreamURL = "https://bitbucket.org/test/repo.git"
 	reviewStep, err := sctx.DB.InsertStepResult(sctx.Run.ID, types.StepReview)
@@ -866,11 +874,13 @@ func TestPRStep_BitbucketCreatesNewPR(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	assertNotice := capturePRProofNotice(t, sctx, "bitbucket")
 	step := &PRStep{}
 	outcome, err := step.Execute(sctx)
 	if err != nil {
 		t.Fatal(err)
 	}
+	assertNotice(bitbucketPRDescriptionForTest(t, api.lastCreateBody))
 	if outcome.NeedsApproval {
 		t.Fatal("bitbucket PR step should never need approval")
 	}
@@ -910,7 +920,7 @@ func TestPRStep_BitbucketCreatesNewPRWithoutHTMLLink(t *testing.T) {
 
 	findings := `{"findings":[],"summary":"clean","risk_level":"medium","risk_rationale":"touches critical error handling"}`
 	ag := &mockAgent{name: "test"}
-	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
+	sctx := newPRTestContext(t, ag, dir, baseSHA, headSHA, config.Commands{})
 	sctx.Env = fakeBitbucketEnv(api.server.URL)
 	sctx.Repo.UpstreamURL = "https://bitbucket.org/test/repo.git"
 	reviewStep, err := sctx.DB.InsertStepResult(sctx.Run.ID, types.StepReview)
@@ -946,11 +956,13 @@ func TestPRStep_BitbucketCreatesNewPRWithoutHTMLLink(t *testing.T) {
 		}
 	})
 
+	assertNotice := capturePRProofNotice(t, sctx, "bitbucket")
 	step := &PRStep{}
 	outcome, err := step.Execute(sctx)
 	if err != nil {
 		t.Fatal(err)
 	}
+	assertNotice(bitbucketPRDescriptionForTest(t, api.lastCreateBody))
 	if outcome.NeedsApproval {
 		t.Fatal("bitbucket PR step should never need approval")
 	}
@@ -972,7 +984,7 @@ func TestPRStep_BitbucketMissingEnvSkipsBeforeBuildingContent(t *testing.T) {
 	dir, baseSHA, headSHA := setupGitRepo(t)
 
 	ag := &mockAgent{name: "test"}
-	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
+	sctx := newPRTestContext(t, ag, dir, baseSHA, headSHA, config.Commands{})
 	sctx.Repo.UpstreamURL = "https://bitbucket.org/test/repo.git"
 
 	step := &PRStep{}
@@ -1002,14 +1014,16 @@ func TestPRStep_BitbucketUsesProcessEnvWhenStepEnvIsNil(t *testing.T) {
 			return &agent.Result{Output: payload}, nil
 		},
 	}
-	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
+	sctx := newPRTestContext(t, ag, dir, baseSHA, headSHA, config.Commands{})
 	sctx.Repo.UpstreamURL = "https://bitbucket.org/test/repo.git"
 
+	assertNotice := capturePRProofNotice(t, sctx, "bitbucket")
 	step := &PRStep{}
 	outcome, err := step.Execute(sctx)
 	if err != nil {
 		t.Fatal(err)
 	}
+	assertNotice(bitbucketPRDescriptionForTest(t, api.lastCreateBody))
 	if outcome.NeedsApproval {
 		t.Fatal("bitbucket PR step should never need approval")
 	}
@@ -1039,9 +1053,14 @@ func TestPRStep_UsesConfiguredTitleFormat(t *testing.T) {
 			return &agent.Result{Output: payload}, nil
 		},
 	}
-	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
+	sctx := newPRTestContext(t, ag, dir, baseSHA, headSHA, config.Commands{})
 	sctx.Env = env
-	sctx.Run.Branch = "refs/heads/PROJ/123"
+	branchRun, err := sctx.DB.InsertRun(sctx.Repo.ID, "refs/heads/PROJ/123", headSHA, baseSHA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sctx.Run = branchRun
+	recordPRTestPush(t, sctx)
 	sctx.Config.Commit.BranchPattern = `^PROJ/([0-9]+)$`
 	sctx.Config.Commit.BranchReplacement = "PROJ-${1}"
 	sctx.Config.PR.TitleFormat = "{{.Branch}}: {{.Title}}"
@@ -1073,7 +1092,7 @@ func TestPRStep_UsesAgentGeneratedTitleAndBody(t *testing.T) {
 			return &agent.Result{Output: payload}, nil
 		},
 	}
-	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
+	sctx := newPRTestContext(t, ag, dir, baseSHA, headSHA, config.Commands{})
 	sctx.Env = env
 	reviewStep, err := sctx.DB.InsertStepResult(sctx.Run.ID, types.StepReview)
 	if err != nil {
@@ -1129,7 +1148,7 @@ func TestPRStep_AppendsTestingSectionFromTestStep(t *testing.T) {
 			return &agent.Result{Output: payload}, nil
 		},
 	}
-	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
+	sctx := newPRTestContext(t, ag, dir, baseSHA, headSHA, config.Commands{})
 	sctx.Env = env
 
 	reviewStep, err := sctx.DB.InsertStepResult(sctx.Run.ID, types.StepReview)
@@ -1198,7 +1217,7 @@ func TestPRStep_UnwrapsNestedJSONBody(t *testing.T) {
 			return &agent.Result{Output: payload}, nil
 		},
 	}
-	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
+	sctx := newPRTestContext(t, ag, dir, baseSHA, headSHA, config.Commands{})
 	sctx.Env = env
 
 	step := &PRStep{}
@@ -1341,7 +1360,7 @@ func TestAssembleDraftPRBody_ReservesRoomForIssuesUnderALimit(t *testing.T) {
 	limit := 400
 	sctx := &pipeline.StepContext{ClosingIssueRefs: []string{"42"}}
 
-	got := assembleDraftPRBody(sctx, "## What Changed\n\n"+strings.Repeat("- change\n", 200), "low risk", "", "## Pipeline\n\n- ok", limit, scm.ProviderAzureDevOps)
+	got := assembleDraftPRBody(sctx, "## What Changed\n\n"+strings.Repeat("- change\n", 200), "low risk", "", "## Pipeline\n\n- ok", "", limit, scm.ProviderAzureDevOps)
 
 	if scm.PRBodyLen(got) > limit {
 		t.Fatalf("assembled body = %d units, want <= %d:\n%s", scm.PRBodyLen(got), limit, got)
@@ -1358,7 +1377,7 @@ func TestAssembleDraftPRBody_OmitsIssuesThatCannotFit(t *testing.T) {
 	limit := 10
 	sctx := &pipeline.StepContext{ClosingIssueRefs: []string{"42"}}
 
-	got := assembleDraftPRBody(sctx, "## What Changed\n\n- add Bar()", "low risk", "", "## Pipeline\n\n- ok", limit, scm.ProviderAzureDevOps)
+	got := assembleDraftPRBody(sctx, "## What Changed\n\n- add Bar()", "low risk", "", "## Pipeline\n\n- ok", "", limit, scm.ProviderAzureDevOps)
 
 	if strings.Contains(got, "## Issues") {
 		t.Fatalf("a section that cannot fit must be omitted, got:\n%s", got)
@@ -1740,7 +1759,7 @@ func TestAppendGeneratedSections_TrimsBodyToKeepLatestPipelineUpdate(t *testing.
 
 func TestBuildPRBody_TrimsOversizedLaterSectionWithoutDroppingSmallEssentials(t *testing.T) {
 	t.Parallel()
-	sctx := newTestContext(t, &mockAgent{name: "test"}, t.TempDir(), "", "", config.Commands{})
+	sctx := newPRTestContext(t, &mockAgent{name: "test"}, t.TempDir(), "", "", config.Commands{})
 	sctx.UserIntent = "Keep the release notes readable."
 	body := strings.Join([]string{
 		"## What Changed",
@@ -1777,11 +1796,11 @@ func TestBuildPRBody_TrimsOversizedLaterSectionWithoutDroppingSmallEssentials(t 
 
 func TestAssembleDraftPRBody_GitHubKeepsIssuesWithinTheByteBudget(t *testing.T) {
 	t.Parallel()
-	sctx := newTestContext(t, &mockAgent{name: "test"}, t.TempDir(), "", "", config.Commands{})
+	sctx := newPRTestContext(t, &mockAgent{name: "test"}, t.TempDir(), "", "", config.Commands{})
 	sctx.ClosingIssueRefs = []string{"42"}
 	body := "## What Changed\n\n- essential summary survives\n\n" + strings.Repeat("x", maxPullRequestBodyBytes)
 
-	got := assembleDraftPRBody(sctx, body, "low risk", "", "", 0, scm.ProviderGitHub)
+	got := assembleDraftPRBody(sctx, body, "low risk", "", "", "", 0, scm.ProviderGitHub)
 
 	assertGitHubBodyLimitForTest(t, got)
 	if !strings.HasSuffix(got, "## Issues\n\nCloses #42") {
@@ -1826,7 +1845,7 @@ func TestAppendGeneratedSections_TruncatesUTF8OnValidBoundary(t *testing.T) {
 
 func TestBuildPRBody_TruncatesOversizedIntentBeforeGeneratedSections(t *testing.T) {
 	t.Parallel()
-	sctx := newTestContext(t, &mockAgent{name: "test"}, t.TempDir(), "", "", config.Commands{})
+	sctx := newPRTestContext(t, &mockAgent{name: "test"}, t.TempDir(), "", "", config.Commands{})
 	sctx.UserIntent = "Keep generated sections visible.\n" + strings.Repeat("oversized intent context line\n", 2500)
 	body := "## What Changed\n\n- essential summary survives"
 	riskLine := "✅ Low: generated PR body length guard only"
@@ -1855,7 +1874,7 @@ func TestBuildPRBody_TruncatesOversizedIntentBeforeGeneratedSections(t *testing.
 func TestPRStep_CreateKeepsGeneratedSectionsAfterOversizedIntent(t *testing.T) {
 	t.Parallel()
 	dir, baseSHA, headSHA := setupGitRepo(t)
-	env, logFile := fakeGH(t, "")
+	env, _ := fakeGH(t, "")
 
 	ag := &mockAgent{
 		name: "test",
@@ -1864,7 +1883,7 @@ func TestPRStep_CreateKeepsGeneratedSectionsAfterOversizedIntent(t *testing.T) {
 			return &agent.Result{Output: payload}, nil
 		},
 	}
-	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
+	sctx := newPRTestContext(t, ag, dir, baseSHA, headSHA, config.Commands{})
 	sctx.Env = env
 	sctx.UserIntent = "Keep generated sections visible.\n" + strings.Repeat("oversized intent context line\n", 2500)
 
@@ -1899,7 +1918,7 @@ func TestPRStep_CreateKeepsGeneratedSectionsAfterOversizedIntent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	body := readFakeGHBodyArg(t, logFile)
+	body := readFakeGHBodyArg(t, envEntry(env, "FAKE_CLI_PR_BODY_FILE"))
 	assertGitHubBodyLimitForTest(t, body)
 	attestation := parsePipelineAttestationForTest(t, body)
 	if attestation.HeadSHA != headSHA {
@@ -1933,7 +1952,7 @@ func TestPRStep_BuildPRContentTruncatesGeneratedPipelineUpdates(t *testing.T) {
 			return &agent.Result{Output: payload}, nil
 		},
 	}
-	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
+	sctx := newPRTestContext(t, ag, dir, baseSHA, headSHA, config.Commands{})
 	sctx.UserIntent = "Keep PR creation postable when long validation runs accumulate many pipeline update rounds."
 
 	reviewStep, err := sctx.DB.InsertStepResult(sctx.Run.ID, types.StepReview)
@@ -1978,7 +1997,7 @@ func TestPRStep_CreateCapsBodyAfterPrependedIntent(t *testing.T) {
 	t.Parallel()
 	dir, baseSHA, headSHA := setupGitRepo(t)
 
-	env, logFile := fakeGH(t, "")
+	env, _ := fakeGH(t, "")
 
 	ag := &mockAgent{
 		name: "test",
@@ -1993,7 +2012,7 @@ func TestPRStep_CreateCapsBodyAfterPrependedIntent(t *testing.T) {
 			return &agent.Result{Output: payload}, nil
 		},
 	}
-	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
+	sctx := newPRTestContext(t, ag, dir, baseSHA, headSHA, config.Commands{})
 	sctx.Env = env
 	sctx.UserIntent = "Keep PR creation postable.\n" + strings.Repeat("intent context line stays visible\n", 900)
 
@@ -2019,7 +2038,7 @@ func TestPRStep_CreateCapsBodyAfterPrependedIntent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	body := readFakeGHBodyArg(t, logFile)
+	body := readFakeGHBodyArg(t, envEntry(env, "FAKE_CLI_PR_BODY_FILE"))
 	assertGitHubBodyLimitForTest(t, body)
 	for _, want := range []string{
 		"## Intent",
@@ -2040,7 +2059,7 @@ func TestPRStep_CreateCapsBodyAfterPrependedIntent(t *testing.T) {
 
 func TestFallbackPRContentCapsBodyAfterPrependedIntent(t *testing.T) {
 	t.Parallel()
-	sctx := newTestContext(t, &mockAgent{name: "test"}, t.TempDir(), "", "", config.Commands{})
+	sctx := newPRTestContext(t, &mockAgent{name: "test"}, t.TempDir(), "", "", config.Commands{})
 	sctx.UserIntent = "Fallback intent survives.\n" + strings.Repeat("fallback intent context line\n", 900)
 
 	rounds := make([]string, 0, 140)
@@ -2048,12 +2067,13 @@ func TestFallbackPRContentCapsBodyAfterPrependedIntent(t *testing.T) {
 		rounds = append(rounds, fmt.Sprintf("review round %03d - %s", i, strings.Repeat("x", 700)))
 	}
 
-	content, err := fallbackPRContent(
+	content, err := (&PRStep{}).fallbackPRContent(
 		sctx,
 		"A\tinternal/pipeline/steps/pr.go",
 		"✅ Low: generated PR body length guard only",
 		"## Testing\n\n- go test ./internal/pipeline/steps",
 		pipelineMarkdownForTest(rounds...),
+		"",
 		0,
 		scm.ProviderGitHub,
 	)
@@ -2143,19 +2163,13 @@ func parsePipelineAttestationForTest(t *testing.T, body string) pipelineAttestat
 	return attestation
 }
 
-func readFakeGHBodyArg(t *testing.T, logFile string) string {
+func readFakeGHBodyArg(t *testing.T, bodyFile string) string {
 	t.Helper()
-	logData, err := os.ReadFile(logFile)
+	body, err := os.ReadFile(bodyFile)
 	if err != nil {
 		t.Fatal(err)
 	}
-	const marker = " --body "
-	log := string(logData)
-	idx := strings.LastIndex(log, marker)
-	if idx < 0 {
-		t.Fatalf("expected fake gh log to include --body, got:\n%s", log)
-	}
-	return strings.TrimSuffix(log[idx+len(marker):], "\n")
+	return string(body)
 }
 
 func assertGitHubBodyLimitForTest(t *testing.T, body string) {
@@ -2197,7 +2211,7 @@ func TestPRStep_PrependsIntentSectionWhenIntentSet(t *testing.T) {
 			return &agent.Result{Output: payload}, nil
 		},
 	}
-	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
+	sctx := newPRTestContext(t, ag, dir, baseSHA, headSHA, config.Commands{})
 	sctx.Env = env
 	sctx.UserIntent = "user wanted to add a Bar() helper for foo callers"
 
@@ -2241,7 +2255,7 @@ func TestPRStep_OmitsIntentSectionWhenIntentEmpty(t *testing.T) {
 			return &agent.Result{Output: payload}, nil
 		},
 	}
-	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
+	sctx := newPRTestContext(t, ag, dir, baseSHA, headSHA, config.Commands{})
 	sctx.Env = env
 	sctx.UserIntent = ""
 
@@ -2274,7 +2288,7 @@ func TestPRStep_StripsAgentEmittedIntentBeforePrepend(t *testing.T) {
 			return &agent.Result{Output: payload}, nil
 		},
 	}
-	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
+	sctx := newPRTestContext(t, ag, dir, baseSHA, headSHA, config.Commands{})
 	sctx.Env = env
 	sctx.UserIntent = "real user intent string"
 
@@ -2306,16 +2320,17 @@ func TestPRStep_PromptUsesWhatChanged(t *testing.T) {
 
 	env, _ := fakeGH(t, "")
 
-	var capturedPrompt string
+	var capturedPrompt, capturedSchema string
 	ag := &mockAgent{
 		name: "test",
 		runFn: func(ctx context.Context, opts agent.RunOpts) (*agent.Result, error) {
 			capturedPrompt = opts.Prompt
+			capturedSchema = string(opts.JSONSchema)
 			payload := json.RawMessage(`{"title":"feat: add bar","body":"## What Changed\n\n- add Bar()"}`)
 			return &agent.Result{Output: payload}, nil
 		},
 	}
-	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
+	sctx := newPRTestContext(t, ag, dir, baseSHA, headSHA, config.Commands{})
 	sctx.Env = env
 
 	step := &PRStep{}
@@ -2325,6 +2340,15 @@ func TestPRStep_PromptUsesWhatChanged(t *testing.T) {
 
 	if !strings.Contains(capturedPrompt, "## What Changed") {
 		t.Errorf("expected prompt to instruct agent to write ## What Changed, got:\n%s", capturedPrompt)
+	}
+	var schema struct {
+		Properties map[string]json.RawMessage `json:"properties"`
+	}
+	if err := json.Unmarshal([]byte(capturedSchema), &schema); err != nil {
+		t.Fatalf("unparseable PR output schema: %v", err)
+	}
+	if _, ok := schema.Properties["intent_brief"]; ok {
+		t.Errorf("default raw mode changed the PR output schema: %s", capturedSchema)
 	}
 }
 
@@ -2340,7 +2364,7 @@ func TestPRStep_FallbackUsesWhatChangedAndIntent(t *testing.T) {
 			return nil, fmt.Errorf("simulated agent failure")
 		},
 	}
-	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
+	sctx := newPRTestContext(t, ag, dir, baseSHA, headSHA, config.Commands{})
 	sctx.Env = env
 	sctx.UserIntent = "fallback intent text"
 
@@ -2388,10 +2412,11 @@ func TestPRStep_GitLabCreatesNewMR(t *testing.T) {
 			return &agent.Result{Output: payload}, nil
 		},
 	}
-	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
+	sctx := newPRTestContext(t, ag, dir, baseSHA, headSHA, config.Commands{})
 	sctx.Env = env
 	sctx.Repo.UpstreamURL = "https://gitlab.com/test/repo.git"
 
+	assertNotice := capturePRProofNotice(t, sctx, "gitlab")
 	step := &PRStep{}
 	if _, err := step.Execute(sctx); err != nil {
 		t.Fatal(err)
@@ -2404,6 +2429,7 @@ func TestPRStep_GitLabCreatesNewMR(t *testing.T) {
 	if !strings.Contains(ghLog, "mr create") {
 		t.Fatalf("expected glab mr create to be called, got:\n%s", ghLog)
 	}
+	assertNotice(ghLog)
 	if !strings.Contains(ghLog, "--title feat: improve gitlab flow") {
 		t.Fatalf("expected generated title in glab call, got:\n%s", ghLog)
 	}
@@ -2413,7 +2439,7 @@ func TestPRStep_SkipsWhenProviderCLIUnavailable(t *testing.T) {
 	t.Parallel()
 	dir, baseSHA, headSHA := setupGitRepo(t)
 	ag := &mockAgent{name: "test"}
-	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
+	sctx := newPRTestContext(t, ag, dir, baseSHA, headSHA, config.Commands{})
 	sctx.Repo.UpstreamURL = "https://gitlab.com/test/repo.git"
 	sctx.Env = []string{"PATH=" + t.TempDir()}
 
@@ -2444,7 +2470,7 @@ func TestPRStep_SkipsBeforeBuildingContentWhenProviderCLIUnavailable(t *testing.
 			return nil, nil
 		},
 	}
-	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
+	sctx := newPRTestContext(t, ag, dir, baseSHA, headSHA, config.Commands{})
 	sctx.Repo.UpstreamURL = "https://gitlab.com/test/repo.git"
 	sctx.Env = []string{"PATH=" + t.TempDir()}
 
@@ -2486,7 +2512,7 @@ func TestPRStep_ExistingBranchFallbackUsesMergeBaseFinalDiff(t *testing.T) {
 	env, logFile := fakeGH(t, "")
 
 	ag := &mockAgent{name: "test"}
-	sctx := newTestContextWithDBRecords(t, ag, dir, oldRemoteSHA, headSHA, config.Commands{})
+	sctx := newPRTestContext(t, ag, dir, oldRemoteSHA, headSHA, config.Commands{})
 	sctx.Env = env
 
 	step := &PRStep{}
@@ -2523,7 +2549,7 @@ func TestPRStep_AgentNonConventionalTitleFallsBack(t *testing.T) {
 			return &agent.Result{Output: payload}, nil
 		},
 	}
-	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
+	sctx := newPRTestContext(t, ag, dir, baseSHA, headSHA, config.Commands{})
 	sctx.Env = env
 
 	step := &PRStep{}
@@ -2563,7 +2589,7 @@ func TestPRStep_AgentScopedBreakingTitlePassesThrough(t *testing.T) {
 			return &agent.Result{Output: payload}, nil
 		},
 	}
-	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
+	sctx := newPRTestContext(t, ag, dir, baseSHA, headSHA, config.Commands{})
 	sctx.Env = env
 
 	step := &PRStep{}
@@ -2597,7 +2623,7 @@ func TestPRStep_AgentConventionalNonReleaseTitlePassesThrough(t *testing.T) {
 			return &agent.Result{Output: payload}, nil
 		},
 	}
-	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
+	sctx := newPRTestContext(t, ag, dir, baseSHA, headSHA, config.Commands{})
 	sctx.Env = env
 
 	step := &PRStep{}
@@ -2626,7 +2652,7 @@ func TestPRStep_PromptRequiresReleaseTypesForProductImpact(t *testing.T) {
 			return &agent.Result{Output: payload}, nil
 		},
 	}
-	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
+	sctx := newPRTestContext(t, ag, dir, baseSHA, headSHA, config.Commands{})
 
 	step := &PRStep{}
 	if _, err := step.buildPRContent(sctx, "feature", "main", baseSHA, scm.ProviderGitHub, 0); err != nil {
@@ -2662,7 +2688,7 @@ func TestPRStep_PromptGuidesScopeToRealModule(t *testing.T) {
 			return &agent.Result{Output: payload}, nil
 		},
 	}
-	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
+	sctx := newPRTestContext(t, ag, dir, baseSHA, headSHA, config.Commands{})
 	sctx.Env = env
 
 	step := &PRStep{}
@@ -2694,7 +2720,7 @@ func TestPRStep_HangingAgentFallsBackAfterTimeout(t *testing.T) {
 			return &agent.Result{Output: json.RawMessage(`{"title":"feat: late title","body":"## What Changed\n\n- late"}`)}, nil
 		},
 	}
-	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
+	sctx := newPRTestContext(t, ag, dir, baseSHA, headSHA, config.Commands{})
 	sctx.Config.AgentTimeout = 20 * time.Millisecond
 
 	content, err := (&PRStep{}).buildPRContent(sctx, "feature", "main", baseSHA, scm.ProviderGitHub, 0)
@@ -2719,7 +2745,7 @@ func TestPRStep_LateSuccessAfterTimeoutDoesNotUseAgentTitle(t *testing.T) {
 			return &agent.Result{Output: json.RawMessage(`{"title":"feat: should not ship","body":"## What Changed\n\n- should not ship"}`)}, nil
 		},
 	}
-	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
+	sctx := newPRTestContext(t, ag, dir, baseSHA, headSHA, config.Commands{})
 	sctx.Config.AgentTimeout = 20 * time.Millisecond
 
 	content, err := (&PRStep{}).buildPRContent(sctx, "feature", "main", baseSHA, scm.ProviderGitHub, 0)
@@ -2752,7 +2778,7 @@ func TestPRStep_EmbeddedAttestationDoesNotShadowTheRealOne(t *testing.T) {
 			return &agent.Result{Output: payload}, nil
 		},
 	}
-	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
+	sctx := newPRTestContext(t, ag, dir, baseSHA, headSHA, config.Commands{})
 
 	foreignSHA := strings.Repeat("f", 40)
 	embedded := pipelineAttestationCommentPrefix +
@@ -2809,7 +2835,7 @@ func TestPRStep_EvidenceQuotingAnOwnedBodyStaysRestampable(t *testing.T) {
 			return &agent.Result{Output: payload}, nil
 		},
 	}
-	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
+	sctx := newPRTestContext(t, ag, dir, baseSHA, headSHA, config.Commands{})
 
 	quoted := "Author text\n\n" + wrapPRAppendix("## Issues\n\nCloses #95\n\n"+
 		pipelineAttestationCommentPrefix+`{"head_sha":"`+strings.Repeat("f", 40)+`","steps":[]}`+pipelineAttestationCommentClosingToken)
@@ -2885,7 +2911,7 @@ func TestPRStep_AgentBodyAttestationDoesNotShadowTheRealOne(t *testing.T) {
 			return &agent.Result{Output: json.RawMessage(payload)}, nil
 		},
 	}
-	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
+	sctx := newPRTestContext(t, ag, dir, baseSHA, headSHA, config.Commands{})
 	insertCompletedStep(t, sctx, types.StepTest, findingsJSON(t, types.Findings{TestingSummary: "Ran the focused suite."}), "")
 
 	content, err := (&PRStep{}).buildPRContent(sctx, "feature", "main", baseSHA, scm.ProviderGitHub, 0)
@@ -2904,7 +2930,7 @@ func TestPRStep_AgentBodyAttestationDoesNotShadowTheRealOne(t *testing.T) {
 func TestFallbackPRBodyAttestationDoesNotShadowTheRealOne(t *testing.T) {
 	t.Parallel()
 	dir, baseSHA, headSHA := setupGitRepo(t)
-	sctx := newTestContextWithDBRecords(t, &mockAgent{name: "test"}, dir, baseSHA, headSHA, config.Commands{})
+	sctx := newPRTestContext(t, &mockAgent{name: "test"}, dir, baseSHA, headSHA, config.Commands{})
 	insertCompletedStep(t, sctx, types.StepTest, findingsJSON(t, types.Findings{TestingSummary: "Ran the focused suite."}), "")
 
 	foreignSHA := strings.Repeat("d", 40)
@@ -2912,8 +2938,8 @@ func TestFallbackPRBodyAttestationDoesNotShadowTheRealOne(t *testing.T) {
 		`{"head_sha":"` + foreignSHA + `","steps":[{"step":"review","status":"completed"}]}` +
 		pipelineAttestationCommentClosingToken
 
-	pipelineMD, riskLine, testingMD := (&PRStep{}).buildPipelineSection(sctx, scm.ProviderGitHub)
-	content, err := fallbackPRContent(sctx, "A\t"+embedded, riskLine, testingMD, pipelineMD, 0, scm.ProviderGitHub)
+	pipelineMD, riskLine, testingMD, evidenceMD := (&PRStep{}).buildPipelineSection(sctx, scm.ProviderGitHub)
+	content, err := (&PRStep{}).fallbackPRContent(sctx, "A\t"+embedded, riskLine, testingMD, pipelineMD, evidenceMD, 0, scm.ProviderGitHub)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2961,7 +2987,7 @@ func TestPRStep_ForeignAttestationsInEveryComponentDoNotShadowTheRealOne(t *test
 			return &agent.Result{Output: json.RawMessage(payload)}, nil
 		},
 	}
-	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
+	sctx := newPRTestContext(t, ag, dir, baseSHA, headSHA, config.Commands{})
 	sctx.UserIntent = "Capture the generated PR body as evidence. " + foreign("b")
 
 	insertCompletedStep(t, sctx, types.StepReview, findingsJSON(t, types.Findings{

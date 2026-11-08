@@ -2,409 +2,193 @@ package steps
 
 import (
 	"context"
-	"encoding/json"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/kunchenguid/no-mistakes/internal/agent"
-	"github.com/kunchenguid/no-mistakes/internal/branchsync"
-	"github.com/kunchenguid/no-mistakes/internal/config"
-	"github.com/kunchenguid/no-mistakes/internal/db"
+	"github.com/kunchenguid/no-mistakes/internal/forgecontext"
+	"github.com/kunchenguid/no-mistakes/internal/git"
+	"github.com/kunchenguid/no-mistakes/internal/runenv"
 	"github.com/kunchenguid/no-mistakes/internal/types"
 )
 
-// commitIdentities reads the author and committer of rev the way the forge
-// reports them, so the oracle for every identity test below is the git log
-// itself rather than the code under test.
-func commitIdentities(t *testing.T, dir, rev string) (author, committer string) {
-	t.Helper()
-	out := gitCmd(t, dir, "log", "-1", "--format=%an%n%ae%n%cn%n%ce", rev)
-	parts := strings.Split(out, "\n")
-	if len(parts) != 4 {
-		t.Fatalf("identity fields for %s = %q, want four lines", rev, out)
-	}
-	return parts[0] + " <" + parts[1] + ">", parts[2] + " <" + parts[3] + ">"
-}
-
-// rogueGit runs git with the fixer agent's foreign identity from the orc
-// incident: no-mistakes <no-mistakes@local>. The identity rides the
-// environment rather than -c flags, because git reads GIT_AUTHOR_* and
-// GIT_COMMITTER_* ahead of the config file the -c flags override, which is
-// also why the test git helper's own test identity cannot stand in for it.
-func rogueGit(t *testing.T, dir string, args ...string) string {
-	t.Helper()
-	cmd := exec.Command("git", args...)
-	cmd.Dir = dir
-	cmd.Env = append(os.Environ(),
-		"GIT_AUTHOR_NAME=no-mistakes",
-		"GIT_AUTHOR_EMAIL=no-mistakes@local",
-		"GIT_COMMITTER_NAME=no-mistakes",
-		"GIT_COMMITTER_EMAIL=no-mistakes@local",
-	)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("git %v: %v: %s", args, err, out)
-	}
-	return strings.TrimSpace(string(out))
-}
-
-// rogueCommit advances dir the way the orc fixer agent did: the agent
-// committed its own repair as no-mistakes <no-mistakes@local>.
-func rogueCommit(t *testing.T, dir, name, content string) string {
-	t.Helper()
-	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	rogueGit(t, dir, "add", "-A")
-	rogueGit(t, dir, "commit", "-m", "agent repair")
-	return gitCmd(t, dir, "rev-parse", "HEAD")
-}
-func TestCIStep_CommitRepair_RestampsForeignAgentCommit(t *testing.T) {
-	t.Parallel()
-	upstream := t.TempDir()
-	gitCmd(t, upstream, "init", "--bare")
-
-	dir := t.TempDir()
-	gitCmd(t, dir, "init")
-	gitCmd(t, dir, "config", "user.name", "test")
-	gitCmd(t, dir, "config", "user.email", "test@test.com")
-	gitCmd(t, dir, "checkout", "-b", "main")
-	if err := os.WriteFile(filepath.Join(dir, "init.txt"), []byte("init"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	gitCmd(t, dir, "add", "-A")
-	gitCmd(t, dir, "commit", "-m", "initial")
-	baseSHA := gitCmd(t, dir, "rev-parse", "HEAD")
-	gitCmd(t, dir, "remote", "add", "origin", upstream)
-	gitCmd(t, dir, "push", "origin", "main")
-
-	gitCmd(t, dir, "checkout", "-b", "feature")
-	if err := os.WriteFile(filepath.Join(dir, "feature.txt"), []byte("feature"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	gitCmd(t, dir, "add", "-A")
-	gitCmd(t, dir, "commit", "-m", "feature")
-	recordedSHA := gitCmd(t, dir, "rev-parse", "HEAD")
-	gitCmd(t, dir, "push", "origin", "feature")
-
-	foreignSHA := rogueCommit(t, dir, "agentfix.txt", "agent fix")
-
-	ag := &mockAgent{name: "test"}
-	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, recordedSHA, config.Commands{})
-	sctx.Repo.UpstreamURL = upstream
-	sctx.Run.Branch = "refs/heads/feature"
-	if err := sctx.DB.UpdateRunPushBinding(sctx.Run.ID, db.PushBinding{HeadSHA: recordedSHA, TargetKind: "upstream", TargetFingerprint: branchsync.TargetFingerprint(upstream), Ref: "refs/heads/feature"}); err != nil {
-		t.Fatal(err)
-	}
-	sctx.Config.CI.RevalidateRepairs = true
-	repair, err := (&CIStep{}).commitRepair(sctx, "fix the typecheck", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !repair.HeadAdvanced {
-		t.Fatal("expected the restamped repair to advance the head")
-	}
-
-	newHead := gitCmd(t, dir, "rev-parse", "HEAD")
-	if newHead == foreignSHA {
-		t.Fatalf("adopted the foreign agent commit %s instead of restamping it", foreignSHA)
-	}
-	author, committer := commitIdentities(t, dir, newHead)
-	if author != "test <test@test.com>" || committer != "test <test@test.com>" {
-		t.Fatalf("repaired commit identity = %s / %s, want test <test@test.com>", author, committer)
-	}
-	if got := gitCmd(t, dir, "log", "-1", "--format=%s"); got != "no-mistakes(ci): fix the typecheck" {
-		t.Fatalf("repaired commit subject = %q", got)
-	}
-	if got, err := os.ReadFile(filepath.Join(dir, "agentfix.txt")); err != nil || string(got) != "agent fix" {
-		t.Fatalf("repaired tree lost the agent fix: %q, %v", got, err)
-	}
-	if sctx.Run.HeadSHA != newHead {
-		t.Fatalf("Run.HeadSHA = %s, want %s", sctx.Run.HeadSHA, newHead)
-	}
-	dbRun, err := sctx.DB.GetRun(sctx.Run.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if dbRun.HeadSHA != newHead {
-		t.Fatalf("DB HeadSHA = %s, want %s", dbRun.HeadSHA, newHead)
-	}
-	if upstreamSHA := gitCmd(t, upstream, "rev-parse", "refs/heads/feature"); upstreamSHA != recordedSHA {
-		t.Fatalf("upstream head = %s, want held head %s", upstreamSHA, recordedSHA)
+func TestCorrectionCommitIdentityAcrossProducers(t *testing.T) {
+	for _, step := range []types.StepName{types.StepReview, types.StepTest, types.StepDocument, types.StepLint, types.StepCI} {
+		t.Run(string(step), func(t *testing.T) {
+			sctx, dir, _ := agentCommitContext(t, nil)
+			identity := git.CommitIdentity{AuthorName: "Submitter", AuthorEmail: "submitter@example.test", CommitterName: "Submitter", CommitterEmail: "submitter@example.test"}
+			sctx.Ctx = git.WithCommitIdentity(context.Background(), identity)
+			t.Setenv("GIT_AUTHOR_NAME", "Daemon")
+			t.Setenv("GIT_AUTHOR_EMAIL", "daemon@example.test")
+			t.Setenv("GIT_COMMITTER_NAME", "Daemon")
+			t.Setenv("GIT_COMMITTER_EMAIL", "daemon@example.test")
+			writeAgentChange(t, dir)
+			if step == types.StepCI {
+				sctx.Config.CI.RevalidateRepairs = true
+				if _, err := (&CIStep{}).commitRepair(sctx, "repair", nil); err != nil {
+					t.Fatal(err)
+				}
+			} else if _, err := commitAgentFixesWithResult(sctx, step, "repair", "fallback", nil); err != nil {
+				t.Fatal(err)
+			}
+			if got := gitCmd(t, dir, "show", "-s", "--format=%an <%ae> | %cn <%ce>"); got != "Submitter <submitter@example.test> | Submitter <submitter@example.test>" {
+				t.Fatalf("%s correction identity = %q", step, got)
+			}
+		})
 	}
 }
 
-func TestCommitAgentFixes_RestampsForeignAgentCommit(t *testing.T) {
-	t.Parallel()
-	dir, baseSHA, headSHA := setupGitRepo(t)
-	sctx := newTestContextWithDBRecords(t, &mockAgent{name: "claude"}, dir, baseSHA, headSHA, config.Commands{})
-
-	foreignSHA := rogueCommit(t, dir, "agent-change.txt", "change")
-
-	committed, err := commitAgentFixesWithResult(sctx, types.StepReview, "fix review findings", "fallback", nil)
-	if err != nil {
+func TestAgentCommitRewritePreservesAuthorAndBindsCommitter(t *testing.T) {
+	sctx, dir, _ := agentCommitContext(t, nil)
+	identity := git.CommitIdentity{AuthorName: "Submitter", AuthorEmail: "submitter@example.test", CommitterName: "Submitter", CommitterEmail: "submitter@example.test"}
+	sctx.Ctx = git.WithCommitIdentity(context.Background(), identity)
+	if err := os.WriteFile(filepath.Join(dir, "agent-change"), []byte("repair\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if !committed {
-		t.Fatal("expected the restamped fix to commit")
-	}
-	newHead := gitCmd(t, dir, "rev-parse", "HEAD")
-	if newHead == foreignSHA {
-		t.Fatalf("adopted the foreign agent commit %s instead of restamping it", foreignSHA)
-	}
-	author, committer := commitIdentities(t, dir, newHead)
-	if author != "test <test@test.com>" || committer != "test <test@test.com>" {
-		t.Fatalf("fix commit identity = %s / %s, want test <test@test.com>", author, committer)
-	}
-	if got := lastCommitMessage(t, dir); got != "no-mistakes(review): fix review findings" {
-		t.Fatalf("fix commit subject = %q", got)
-	}
-	if got := gitCmd(t, dir, "show", newHead+":agent-change.txt"); got != "change" {
-		t.Fatalf("repaired tree lost the agent fix: %q", got)
-	}
-	if sctx.Run.HeadSHA != newHead {
-		t.Fatalf("Run.HeadSHA = %s, want %s", sctx.Run.HeadSHA, newHead)
-	}
-}
-func TestCommitPipelineCorrection_PinnedIdentityBeatsAmbientEnv(t *testing.T) {
-	dir, _, _ := setupGitRepo(t)
-	if err := os.WriteFile(filepath.Join(dir, "pinned.txt"), []byte("pinned\n"), 0o644); err != nil {
+	// The fake agent runs the same subprocess path as step commands. An explicit
+	// per-commit author is intentional attribution and survives message shaping.
+	if _, err := stepGitRun(sctx, "add", "agent-change"); err != nil {
 		t.Fatal(err)
 	}
-	gitCmd(t, dir, "add", "pinned.txt")
-
-	t.Setenv("GIT_AUTHOR_NAME", "rogue")
-	t.Setenv("GIT_AUTHOR_EMAIL", "rogue@local")
-	t.Setenv("GIT_COMMITTER_NAME", "rogue")
-	t.Setenv("GIT_COMMITTER_EMAIL", "rogue@local")
-	sctx := newTestContext(t, &mockAgent{name: "test"}, dir, "", "", config.Commands{})
-	if err := commitPipelineCorrection(sctx, dir, "no-mistakes(test): pinned", nil); err != nil {
+	if _, err := stepGitRun(sctx, "commit", "--author=Contributor <contributor@example.test>", "-m", "agent's message"); err != nil {
 		t.Fatal(err)
 	}
-	author, committer := commitIdentities(t, dir, "HEAD")
-	if author != "test <test@test.com>" || committer != "test <test@test.com>" {
-		t.Fatalf("pinned commit identity = %s / %s, want test <test@test.com>", author, committer)
+	t.Setenv("GIT_COMMITTER_NAME", "Daemon")
+	t.Setenv("GIT_COMMITTER_EMAIL", "daemon@example.test")
+	if _, err := commitAgentFixesWithResult(sctx, types.StepReview, "repair", "fallback", nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := gitCmd(t, dir, "show", "-s", "--format=%an <%ae> | %cn <%ce>"); got != "Contributor <contributor@example.test> | Submitter <submitter@example.test>" {
+		t.Fatalf("rewritten commit identity = %q", got)
 	}
 }
 
-func TestNormalizeAgentHead_AdoptsDomesticAgentCommitUnchanged(t *testing.T) {
-	t.Parallel()
-	dir, baseSHA, headSHA := setupGitRepo(t)
-	sctx := newTestContext(t, &mockAgent{name: "test"}, dir, baseSHA, headSHA, config.Commands{})
-
-	if err := os.WriteFile(filepath.Join(dir, "domestic.txt"), []byte("domestic"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	gitCmd(t, dir, "add", "-A")
-	gitCmd(t, dir, "commit", "-m", "agent fix")
-	agentSHA := gitCmd(t, dir, "rev-parse", "HEAD")
-
-	if err := normalizeAgentHead(sctx); err != nil {
-		t.Fatal(err)
-	}
-	if got := gitCmd(t, dir, "rev-parse", "HEAD"); got != agentSHA {
-		t.Fatalf("rewrote a domestic agent commit %s to %s", agentSHA, got)
-	}
-}
-
-func TestNormalizeAgentHead_RefusesForeignMergeConclusion(t *testing.T) {
-	t.Parallel()
-	dir, baseSHA, headSHA := setupGitRepo(t)
-	sctx := newTestContext(t, &mockAgent{name: "test"}, dir, baseSHA, headSHA, config.Commands{})
-	branch := gitCmd(t, dir, "rev-parse", "--abbrev-ref", "HEAD")
-
-	gitCmd(t, dir, "checkout", "-b", "side")
-	if err := os.WriteFile(filepath.Join(dir, "side.txt"), []byte("side"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	gitCmd(t, dir, "add", "-A")
-	gitCmd(t, dir, "commit", "-m", "side work")
-	gitCmd(t, dir, "checkout", branch)
-	rogueGit(t, dir, "merge", "--no-ff", "--no-edit", "side")
-	mergeSHA := gitCmd(t, dir, "rev-parse", "HEAD")
-
-	if err := normalizeAgentHead(sctx); err == nil {
-		t.Fatal("expected the gate to refuse a foreign merge conclusion")
-	} else if !strings.Contains(err.Error(), "foreign identity") {
-		t.Fatalf("refusal = %q, want it to name the foreign identity", err)
-	}
-	if got := gitCmd(t, dir, "rev-parse", "HEAD"); got != mergeSHA {
-		t.Fatalf("gate moved HEAD %s to %s while refusing", mergeSHA, got)
-	}
-}
-func TestNormalizeAgentHead_ReauthorsForeignTipReplacement(t *testing.T) {
-	t.Parallel()
-	dir, baseSHA, headSHA := setupGitRepo(t)
-	sctx := newTestContext(t, &mockAgent{name: "test"}, dir, baseSHA, headSHA, config.Commands{})
-
-	if err := os.WriteFile(filepath.Join(dir, "amended.txt"), []byte("amended"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	rogueGit(t, dir, "add", "-A")
-	rogueGit(t, dir, "commit", "--amend", "--no-edit")
-	amendedSHA := gitCmd(t, dir, "rev-parse", "HEAD")
-	amendedParent := gitCmd(t, dir, "rev-parse", "HEAD^")
-
-	if err := normalizeAgentHead(sctx); err != nil {
-		t.Fatal(err)
-	}
-	newHead := gitCmd(t, dir, "rev-parse", "HEAD")
-	if newHead == amendedSHA {
-		t.Fatalf("adopted the foreign amended head %s instead of re-authoring it", amendedSHA)
-	}
-	if got := gitCmd(t, dir, "rev-parse", newHead+"^"); got != amendedParent {
-		t.Fatalf("re-authored head has parent %s, want the rewrite's parent %s", got, amendedParent)
-	}
-	author, committer := commitIdentities(t, dir, newHead)
-	if author != "test <test@test.com>" || committer != "test <test@test.com>" {
-		t.Fatalf("re-authored head identity = %s / %s, want test <test@test.com>", author, committer)
-	}
-	if got := gitCmd(t, dir, "show", newHead+":amended.txt"); got != "amended" {
-		t.Fatalf("re-authored head lost the fix: %q", got)
+func TestCommitIdentitySubprocessesPreserveRepositoryIdentity(t *testing.T) {
+	for _, entry := range []string{"shell", "repository command", "configured test"} {
+		t.Run(entry, func(t *testing.T) {
+			sctx, dir, _ := agentCommitContext(t, nil)
+			identity := git.CommitIdentity{AuthorName: "Submitting Author", AuthorEmail: "author@example.test", CommitterName: "Submitting Committer", CommitterEmail: "committer@example.test"}
+			if err := git.CopyLocalUserIdentity(context.Background(), dir, identity); err != nil {
+				t.Fatal(err)
+			}
+			sctx.Ctx = git.WithCommitIdentity(context.Background(), identity)
+			nested := filepath.Join(dir, "fixture")
+			if err := os.Mkdir(nested, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			gitCmd(t, nested, "init")
+			gitCmd(t, nested, "config", "user.name", "Fixture")
+			gitCmd(t, nested, "config", "user.email", "fixture@example.test")
+			gitCmd(t, nested, "config", "commit.gpgsign", "false")
+			for _, role := range []string{"AUTHOR", "COMMITTER"} {
+				t.Setenv("GIT_"+role+"_NAME", "Daemon")
+				t.Setenv("GIT_"+role+"_EMAIL", "daemon@example.test")
+				t.Setenv("GIT_"+role+"_DATE", "2000-01-01T00:00:00Z")
+				sctx.Env = append(sctx.Env, "GIT_"+role+"_NAME=Step Override", "GIT_"+role+"_EMAIL=step@example.test")
+			}
+			t.Setenv("GIT_CONFIG_COUNT", "1")
+			t.Setenv("GIT_CONFIG_KEY_0", "include.path")
+			t.Setenv("GIT_CONFIG_VALUE_0", filepath.Join(dir, "daemon-config"))
+			if err := os.WriteFile(filepath.Join(dir, "daemon-config"), []byte("[author]\nname = Included Daemon\nemail = included@example.test\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			sctx.ForgeContext = &forgecontext.Context{Environment: runenv.Overlay{Set: map[string]string{
+				"GIT_AUTHOR_NAME": "Forge Override", "GIT_CONFIG_KEY_99": "author.name", "GIT_CONFIG_VALUE_99": "Orphan Forge",
+			}}}
+			for _, target := range []string{".", "fixture"} {
+				sctx.Env = append(sctx.Env,
+					"GIT_CONFIG_COUNT=2", "GIT_CONFIG_KEY_0=author.name", "GIT_CONFIG_VALUE_0=Step Config Author",
+					"GIT_CONFIG_KEY_1=author.email", "GIT_CONFIG_VALUE_1=step-config@example.test",
+					"GIT_CONFIG_PARAMETERS='committer.name=Step Config Committer' 'committer.email'='step-config@example.test'",
+				)
+				command := "git -C " + target + " commit --allow-empty -m subprocess"
+				var out string
+				var code int
+				var err error
+				if entry == "shell" {
+					out, code, err = runStepShellCommand(sctx, command)
+				} else if entry == "configured test" {
+					out, code, err = runRepositoryCommand(sctx, "test", command)
+				} else {
+					out, code, err = executeRepositoryCommand(sctx, "identity", command)
+				}
+				if err != nil || code != 0 {
+					t.Fatalf("%s: exit=%d err=%v: %s", entry, code, err, out)
+				}
+			}
+			for target, want := range map[string]string{
+				dir:    "Submitting Author <author@example.test> | Submitting Committer <committer@example.test>",
+				nested: "Fixture <fixture@example.test> | Fixture <fixture@example.test>",
+			} {
+				if got := gitCmd(t, target, "show", "-s", "--format=%an <%ae> | %cn <%ce>"); got != want {
+					t.Errorf("%s identity = %q, want %q", target, got, want)
+				}
+				if got := gitCmd(t, target, "show", "-s", "--format=%at %ct"); got == "946684800 946684800" {
+					t.Error("subprocess inherited daemon commit dates")
+				}
+			}
+		})
 	}
 }
 
-func coAuthoredReplayFixture(t *testing.T) *replayFixture {
-	t.Helper()
-	f := newReplayFixture(t, true, false)
-	writeFile(t, f.dir, "coauthor.txt", "a contributor's change\n")
-	gitCmd(t, f.dir, "add", "-A")
-	cmd := exec.Command("git", "commit", "-m", "contributor change")
-	cmd.Dir = f.dir
-	cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=Ada", "GIT_AUTHOR_EMAIL=ada@example.com",
-		"GIT_COMMITTER_NAME=GitHub", "GIT_COMMITTER_EMAIL=noreply@github.com")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("contributor commit: %v: %s", err, out)
+func TestCommandScopeGitConfigIsLimitedToPipelineOperations(t *testing.T) {
+	sctx, _, head := agentCommitContext(t, nil)
+	identity := git.CommitIdentity{AuthorName: "Submitter", AuthorEmail: "submitter@example.test", CommitterName: "Submitter", CommitterEmail: "submitter@example.test"}
+	sctx.Ctx = git.WithCommitIdentity(sctx.Ctx, identity)
+	t.Setenv("GIT_CONFIG_COUNT", "1")
+	t.Setenv("GIT_CONFIG_KEY_0", "http.extraHeader")
+	t.Setenv("GIT_CONFIG_VALUE_0", "X-Synthetic: operator")
+	t.Setenv("GIT_CONFIG_PARAMETERS", "'http.proxy=http://synthetic.invalid:3128'")
+	sctx.Env, _ = fakeGH(t, "https://example.test/owner/repo/pull/1")
+	sctx.Env = append(sctx.Env, "FAKE_CLI_MODE=git-passthrough")
+	sctx.ForgeContext = &forgecontext.Context{Environment: runenv.Overlay{Set: map[string]string{
+		"GIT_CONFIG_KEY_99": "http.extraHeader", "GIT_CONFIG_VALUE_99": "Orphan Forge",
+	}}}
+	for _, entry := range []string{"git", "git tree", "git env", "provider"} {
+		t.Run(entry, func(t *testing.T) {
+			for key, want := range map[string]string{
+				"http.extraHeader": "X-Synthetic: operator",
+				"http.proxy":       "http://synthetic.invalid:3128",
+			} {
+				var got string
+				var err error
+				switch entry {
+				case "git":
+					got, err = stepGitRun(sctx, "config", "--get", key)
+				case "git tree":
+					got, err = stepGitRunTree(sctx, "config", "--get", key)
+				case "git env":
+					got, err = stepGitRunEnv(sctx, []string{"GIT_AUTHOR_NAME=Contributor"}, "config", "--get", key)
+				case "provider":
+					out, runErr := stepCmd(sctx, "gh", "config", "--get", key).CombinedOutput()
+					got, err = strings.TrimSpace(string(out)), runErr
+				}
+				if err != nil || got != want {
+					t.Fatalf("%s config %s = %q, %v, want %q", entry, key, got, err, want)
+				}
+			}
+		})
 	}
-	reviewed := gitCmd(t, f.dir, "rev-parse", "HEAD")
-	gitCmd(t, f.dir, "push", "origin", "feature")
-	if err := f.sctx.DB.UpdateRunHeadSHA(f.sctx.Run.ID, reviewed); err != nil {
-		t.Fatal(err)
-	}
-	f.sctx.Run.HeadSHA = reviewed
-	recordReviewApproval(t, f.sctx, reviewed)
-	f.headSHA = reviewed
-	f.reviewedHead = reviewed
-	return f
-}
-
-func TestCIStep_CommitRepair_RestampsForeignRebaseReplay(t *testing.T) {
-	t.Parallel()
-	f := coAuthoredReplayFixture(t)
-	rogueGit(t, f.dir, "rebase", f.base)
-	f.record(t)
-
-	if !strings.Contains(f.log(), "rebase repair is a pure replay of reviewed head") {
-		t.Fatalf("restamping broke the pure replay proof\nlog:\n%s", f.log())
-	}
-	replayed := strings.Fields(gitCmd(t, f.dir, "rev-list", "--reverse", f.base+"..HEAD"))
-	if len(replayed) != 3 {
-		t.Fatalf("replayed %d commits, want 3", len(replayed))
-	}
-	wantAuthors := []string{"test <test@test.com>", "test <test@test.com>", "Ada <ada@example.com>"}
-	for i, sha := range replayed {
-		author, committer := commitIdentities(t, f.dir, sha)
-		if author != wantAuthors[i] || committer != "test <test@test.com>" {
-			t.Fatalf("replayed commit %d identity = %s / %s, want %s / test <test@test.com>", i, author, committer, wantAuthors[i])
-		}
-	}
-	if got := gitCmd(t, f.dir, "log", "-1", "--format=%B"); got != "contributor change" {
-		t.Fatalf("replayed tip message = %q", got)
-	}
-}
-
-func TestCIStep_CommitRepair_RestampsAgentCommitAddedDuringReplay(t *testing.T) {
-	t.Parallel()
-	f := coAuthoredReplayFixture(t)
-	rogueGit(t, f.dir, "rebase", f.base)
-	rogueCommit(t, f.dir, "agentfix.txt", "agent fix")
-	f.record(t)
-
-	for _, sha := range strings.Fields(gitCmd(t, f.dir, "rev-list", f.base+"..HEAD")) {
-		author, committer := commitIdentities(t, f.dir, sha)
-		if author == "no-mistakes <no-mistakes@local>" || committer != "test <test@test.com>" {
-			t.Fatalf("commit %s identity = %s / %s, want no foreign identity", sha, author, committer)
-		}
-	}
-	if got, err := os.ReadFile(filepath.Join(f.dir, "agentfix.txt")); err != nil || string(got) != "agent fix" {
-		t.Fatalf("restamped head lost the agent fix: %q, %v", got, err)
-	}
-}
-
-func TestCIStep_CommitRepair_ReplayRestampLeavesPublishedCommitsAlone(t *testing.T) {
-	t.Parallel()
-	f := coAuthoredReplayFixture(t)
-	forkPoint := gitCmd(t, f.dir, "merge-base", "HEAD", f.base)
-	rogueCommit(t, f.dir, "agentfix.txt", "agent fix")
-	if _, err := (&CIStep{replayBase: forkPoint}).commitRepair(f.sctx, "fix on the current base", nil); err != nil {
-		t.Fatalf("recording the repair failed: %v\nlog:\n%s", err, f.log())
-	}
-
-	head := gitCmd(t, f.dir, "rev-parse", "HEAD")
-	if got := gitCmd(t, f.dir, "rev-parse", head+"^"); got != f.reviewedHead {
-		t.Fatalf("repair parent = %s, want the published reviewed head %s", got, f.reviewedHead)
-	}
-	author, committer := commitIdentities(t, f.dir, head)
-	if author != "test <test@test.com>" || committer != "test <test@test.com>" {
-		t.Fatalf("repair identity = %s / %s, want test <test@test.com>", author, committer)
-	}
-}
-
-func TestRebaseStep_FixModeRestampsForeignConflictResolution(t *testing.T) {
-	t.Parallel()
-	upstream := t.TempDir()
-	gitCmd(t, upstream, "init", "--bare")
-	dir := t.TempDir()
-	gitCmd(t, dir, "init")
-	gitCmd(t, dir, "config", "user.name", "test")
-	gitCmd(t, dir, "config", "user.email", "test@test.com")
-	gitCmd(t, dir, "checkout", "-b", "main")
-	gitCmd(t, dir, "remote", "add", "origin", upstream)
-	writeFile(t, dir, "shared.txt", "base content\n")
-	gitCmd(t, dir, "add", "-A")
-	gitCmd(t, dir, "commit", "-m", "base commit")
-	baseSHA := gitCmd(t, dir, "rev-parse", "HEAD")
-	gitCmd(t, dir, "push", "origin", "main")
-
-	gitCmd(t, dir, "checkout", "-b", "feature")
-	writeFile(t, dir, "shared.txt", "feature change\n")
-	gitCmd(t, dir, "add", "-A")
-	gitCmd(t, dir, "commit", "-m", "feature change")
-	headSHA := gitCmd(t, dir, "rev-parse", "HEAD")
-
-	gitCmd(t, dir, "checkout", "main")
-	writeFile(t, dir, "shared.txt", "main change\n")
-	gitCmd(t, dir, "add", "-A")
-	gitCmd(t, dir, "commit", "-m", "main conflict")
-	gitCmd(t, dir, "push", "origin", "main")
-	gitCmd(t, dir, "checkout", "feature")
-
-	ag := &mockAgent{name: "test", runFn: func(ctx context.Context, opts agent.RunOpts) (*agent.Result, error) {
-		writeFile(t, dir, "shared.txt", "resolved content\n")
-		rogueGit(t, dir, "add", "shared.txt")
-		rogueGit(t, dir, "-c", "core.editor=true", "rebase", "--continue")
-		return &agent.Result{Output: json.RawMessage(`{"summary":"resolve shared.txt"}`)}, nil
-	}}
-	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
-	sctx.Run.Branch = "refs/heads/feature"
-	sctx.Repo.UpstreamURL = upstream
-	sctx.Fixing = true
-	if _, err := (&RebaseStep{}).Execute(sctx); err != nil {
-		t.Fatal(err)
-	}
-
-	head := gitCmd(t, dir, "rev-parse", "HEAD")
-	author, committer := commitIdentities(t, dir, head)
-	if author != "test <test@test.com>" || committer != "test <test@test.com>" {
-		t.Fatalf("rebased commit identity = %s / %s, want test <test@test.com>", author, committer)
-	}
-	if got := gitCmd(t, dir, "show", "HEAD:shared.txt"); got != "resolved content" {
-		t.Fatalf("restamped head lost the resolution: %q", got)
-	}
-	if sctx.Run.HeadSHA != head {
-		t.Fatalf("Run.HeadSHA = %s, want the restamped head %s", sctx.Run.HeadSHA, head)
+	for _, entry := range []string{"configured test", "shell", "base test"} {
+		t.Run(entry, func(t *testing.T) {
+			for _, key := range []string{"http.extraHeader", "http.proxy"} {
+				command := "git config --get " + key
+				var out string
+				var code int
+				var err error
+				switch entry {
+				case "configured test":
+					out, code, err = runRepositoryCommand(sctx, "test", command)
+				case "shell":
+					out, code, err = runStepShellCommand(sctx, command)
+				case "base test":
+					out, code, err = runTestCommandOnBase(sctx, command, head)
+				}
+				if err != nil || code != 1 || strings.TrimSpace(out) != "" {
+					t.Fatalf("%s inherited %s: %q, exit=%d, err=%v", entry, key, out, code, err)
+				}
+			}
+		})
 	}
 }

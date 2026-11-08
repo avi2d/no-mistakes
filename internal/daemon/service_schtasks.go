@@ -20,8 +20,9 @@ import (
 // (UAC-filtered) token with Access is denied. The XML scopes
 // the LogonTrigger to the installing user and keeps the principal on that
 // user's limited interactive token; there is no fallback to the unscoped
-// trigger. Settings mirror what schtasks /Create writes by default so the
-// task's lifecycle is unchanged apart from the trigger scope.
+// trigger. The task's battery and execution-time settings are explicitly
+// configured for a long-running daemon rather than Task Scheduler's short-job
+// defaults.
 func installWindowsTask(p *paths.Paths, exe string) error {
 	current, err := serviceCurrentUser()
 	if err != nil {
@@ -78,8 +79,9 @@ func renderWindowsTaskXML(exe, root, account string) string {
     </Principal>
   </Principals>
   <Settings>
-    <DisallowStartIfOnBatteries>true</DisallowStartIfOnBatteries>
-    <StopIfGoingOnBatteries>true</StopIfGoingOnBatteries>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
     <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
     <IdleSettings>
       <Duration>PT10M</Duration>

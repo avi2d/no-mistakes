@@ -283,11 +283,17 @@ func ReviewBotsFor(requiredReviews []string) []ReviewBot {
 }
 
 // ReviewBotForCheck authenticates the check publisher among bots. CodeRabbit
-// requires its immutable GitHub.com app identity; Greptile retains slug matching.
+// requires GitHub.com's fixed app ID or a verified required-review check carrying
+// its trusted GHES instance ID; Greptile retains slug matching.
 func ReviewBotForCheck(bots []ReviewBot, check Check) (ReviewBot, bool) {
 	for _, bot := range bots {
 		if bot.AppID != 0 {
 			if check.AppHost == "github.com" && check.AppID == bot.AppID {
+				return bot, true
+			}
+			// A required-review adapter marks its synthesized check only after
+			// validating that forge's trusted app or account identity.
+			if check.ExternalReview == bot.RequiredReview && check.AppHost != "" && (check.AppID > 0 || check.App == bot.AppSlug && check.HeadSHA != "") {
 				return bot, true
 			}
 		} else if check.App != "" && strings.EqualFold(strings.TrimSpace(check.App), bot.AppSlug) {
@@ -400,7 +406,8 @@ func CombineFailedCheckLogs(logs []FailedCheckLog) (string, error) {
 }
 
 type ReviewComment struct {
-	AuthorID int64
+	AuthorID       int64
+	VerifiedAuthor bool
 
 	ID        string
 	Author    string
@@ -481,6 +488,23 @@ type Host interface {
 type PRBaseBranchReader interface {
 	GetPRBaseBranch(ctx context.Context, pr *PR) (string, error)
 }
+
+// PRHeadVerifier proves from a fresh provider read that the exact review object
+// is open in the configured repository and has the configured source repository,
+// owner, branch and pushed head.
+type PRHeadVerifier interface {
+	VerifyPRHead(ctx context.Context, pr *PR, branch, pushedHead string) error
+}
+
+type PRHeadChangedError struct {
+	HeadSHA string
+}
+
+func (e *PRHeadChangedError) Error() string {
+	return fmt.Sprintf("%s: live head %q", ErrHeadChanged, e.HeadSHA)
+}
+
+func (e *PRHeadChangedError) Unwrap() error { return ErrHeadChanged }
 
 // PRBaseRetargeter is implemented by providers that can change an existing
 // PR's target branch. The PR step uses it when a per-run --base-branch override

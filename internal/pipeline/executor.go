@@ -83,13 +83,14 @@ type approvalResponse struct {
 
 // Executor runs pipeline steps sequentially and coordinates approval interactions.
 type Executor struct {
-	db     *db.DB
-	paths  *paths.Paths
-	config *config.Config
-	forge  *forgecontext.Context
-	agent  agent.Agent
-	steps  []Step
-	skips  map[types.StepName]bool
+	db             *db.DB
+	paths          *paths.Paths
+	config         *config.Config
+	forge          *forgecontext.Context
+	commitIdentity *git.CommitIdentity
+	agent          agent.Agent
+	steps          []Step
+	skips          map[types.StepName]bool
 	// retrySource is the failed run Execute continues instead of starting the
 	// pipeline from the beginning (SetRetrySource).
 	retrySource string
@@ -135,6 +136,7 @@ type Executor struct {
 	ciMonitorLifecycle      func(runID string, active bool)
 	ciWake                  func(runID string) <-chan struct{}
 	handoffPending          func(runID string) bool
+	gateClaimGuard          func() (release func(), ok bool)
 }
 
 // SetOnPRMerged registers a best-effort hook invoked after a merged PR state
@@ -172,6 +174,13 @@ func (e *Executor) SetCIWake(fn func(runID string) <-chan struct{}) {
 
 func (e *Executor) SetHandoffPending(fn func(runID string) bool) {
 	e.handoffPending = fn
+}
+
+// SetGateClaimGuard orders a parked gate's own resume or reconciliation
+// against the daemon: when fn refuses, the gate stays parked and is checked
+// again later; when it allows, release is called once the gate is claimed.
+func (e *Executor) SetGateClaimGuard(fn func() (release func(), ok bool)) {
+	e.gateClaimGuard = fn
 }
 
 // SetForgeContext configures the immutable provider context used by every
@@ -234,6 +243,17 @@ func (e *Executor) runEvidenceDir(runID string) string {
 	if e.paths == nil {
 		return ""
 	}
+	// A pin written at run creation wins over a since-changed evidence_dir.
+	// A run from before the column existed has no pin and keeps the
+	// local_root resolution, so setting evidence_dir does not retarget it.
+	if e.db != nil && runID != "" {
+		run, err := e.db.GetRun(runID)
+		if err != nil {
+			slog.Warn("evidence dir pin unreadable; using the configured root", "run_id", runID, "error", err)
+		} else if run != nil && run.EvidencePath() != "" {
+			return run.EvidencePath()
+		}
+	}
 	configured := ""
 	if e.config != nil {
 		configured = e.config.Test.Evidence.LocalRoot
@@ -252,6 +272,13 @@ func (e *Executor) SetGateReconcileTimings(interval, timeout time.Duration) {
 	if timeout > 0 {
 		e.gateReconcileTimeout = timeout
 	}
+}
+
+// AwaitingApproval reports whether a step is blocked at an approval gate.
+func (e *Executor) AwaitingApproval() bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.waiting
 }
 
 // Respond sends a gate response to the currently waiting step.
@@ -383,6 +410,18 @@ func (e *Executor) RespondWithOverrides(step types.StepName, action types.Approv
 		if refusal != nil {
 			e.mu.Unlock()
 			return RespondDispositions{}, refusal
+		}
+		if step == types.StepReview && e.db != nil && e.waitingStepResultID != "" {
+			limit, err := e.reviewFixRoundLimit(e.waitingStepResultID)
+			if err != nil {
+				e.mu.Unlock()
+				return RespondDispositions{}, fmt.Errorf("read Review fix-round budget: %w", err)
+			}
+			if used := reviewFixRoundCount(rounds); limit > 0 && used >= limit {
+				refusal := reviewFixRoundLimitRefusal(used, limit, e.waitingFindings)
+				e.mu.Unlock()
+				return RespondDispositions{}, refusal
+			}
 		}
 		split, err := splitFixResponse(e.waitingFindings, rounds, findingIDs, ignoreFindingIDs)
 		if err != nil {
@@ -1037,11 +1076,19 @@ func (e *Executor) Resume(ctx context.Context, run *db.Run, repo *db.Repo, workD
 	}
 }
 
+// SetCommitIdentity binds every Git call in this executor, including recovery.
+func (e *Executor) SetCommitIdentity(identity git.CommitIdentity) {
+	e.commitIdentity = &identity
+}
+
 func (e *Executor) runContext(ctx context.Context) context.Context {
-	if e.forge == nil {
-		return ctx
+	if e.forge != nil {
+		ctx = git.WithEnvironment(ctx, e.forge.Environment)
 	}
-	return git.WithEnvironment(ctx, e.forge.Environment)
+	if e.commitIdentity != nil {
+		ctx = git.WithCommitIdentity(ctx, *e.commitIdentity)
+	}
+	return ctx
 }
 
 func (e *Executor) recoveredGate(runID string) (*recoveredGate, error) {
@@ -1277,6 +1324,28 @@ func (e *Executor) executeStep(ctx context.Context, step Step, sr *db.StepResult
 	logPath := filepath.Join(logDir, string(stepName)+".log")
 	finalExitCode := 0
 	autoFixLimit := e.autoFixLimit(stepName)
+	maxReviewFixRounds, reviewFixRounds := 0, 0
+	if stepName == types.StepReview {
+		// Resolve once before any agent runs. Legacy/recovered steps retain
+		// their old unbounded contract; existing pins never change.
+		limit := 0
+		if state.roundNum == 0 && !state.fixing && e.config != nil {
+			limit = e.config.Review.MaxFixRounds
+		}
+		if err := e.db.PinReviewMaxFixRounds(sr.ID, limit); err != nil {
+			return false, "", err
+		}
+		var err error
+		maxReviewFixRounds, err = e.reviewFixRoundLimit(sr.ID)
+		if err != nil {
+			return false, "", err
+		}
+		rounds, err := e.db.GetRoundsByStep(sr.ID)
+		if err != nil {
+			return false, "", err
+		}
+		reviewFixRounds = reviewFixRoundCount(rounds)
+	}
 
 	if !state.fixing {
 		if err := e.db.StartStepWithAutoFixLimit(sr.ID, autoFixLimit); err != nil {
@@ -1429,16 +1498,15 @@ func (e *Executor) executeStep(ctx context.Context, step Step, sr *db.StepResult
 	// for, so a finding the operator selected for a fix stays outstanding until
 	// a later round positively verifies it (outcome.ReviewedPaths) or the
 	// operator resolves it at a gate. pendingVerificationIDs names the
-	// selection that later rounds may verify. The loop itself is bounded only by
-	// auto_fix.review (the automatic-round budget) and the human/agent gate,
-	// same as upstream. Repeated user selections remain operator/driver-owned,
-	// rather than receiving a separate code-level round cap. Unused by every other step.
+	// selection that later rounds may verify. auto_fix.review bounds automatic
+	// rounds; opt-in review.max_fix_rounds bounds automatic and explicit fix
+	// rounds together. Unused by every other step.
 	carryFindings := stepName == types.StepReview
 	outstandingFindings := ""
 	var pendingVerificationIDs []string
 	selectedOutstandingIDs := state.selectedOutstandingIDs
 	if carryFindings {
-		outstandingFindings = state.outstandingFindings
+		outstandingFindings = excludeFindingsJSON(state.outstandingFindings, []string{types.FindingIDReviewFixRoundsExhausted})
 		pendingVerificationIDs = append([]string(nil), state.selectedOutstandingIDs...)
 		// An answer round is a round type the append-only set was not written
 		// for, and it does NOT earn pending-verification entries. A fix round
@@ -1714,6 +1782,9 @@ rounds:
 				fixedThisRound = findingIDList(remapFindingIDsJSON(outstandingFindings, sctx.PreviousFindings))
 			}
 			outstandingFindings = dropReviewQuestionFindingsJSON(outstandingFindings)
+			// The budget notice is re-derived, never a code finding whose
+			// absent file anchor can prevent positive verification.
+			outstandingFindings = excludeFindingsJSON(outstandingFindings, []string{types.FindingIDReviewFixRoundsExhausted})
 			// An answer round retracts by naming ids, never by silence - and
 			// ONLY an answer round. A fix round is held to the coverage rule,
 			// so a retraction it claimed would clear a selected finding no
@@ -1750,6 +1821,23 @@ rounds:
 			effectiveFindings = recordWithdrawnFindingsJSON(effectiveFindings, withdrawn)
 		}
 
+		if stepName == types.StepReview && (nextTrigger == "auto_fix" || nextTrigger == "user_fix") {
+			reviewFixRounds++
+		}
+		reviewBudgetExhausted := maxReviewFixRounds > 0 && reviewFixRounds >= maxReviewFixRounds
+		// Only remaining findings carry the notice. A coverage-only park has
+		// none, and complete-coverage requires an empty findings list, so the
+		// notice there would strand a continuation that spends no fix round.
+		if reviewBudgetExhausted && findingsCount(effectiveFindings) > 0 {
+			var err error
+			effectiveFindings, err = appendReviewFixRoundLimit(effectiveFindings, reviewFixRounds, maxReviewFixRounds)
+			if err != nil {
+				return false, "", fmt.Errorf("report exhausted Review budget: %w", err)
+			}
+			outcome.NeedsApproval = true
+			writeLog(reviewFixRoundLimitMessage(reviewFixRounds, maxReviewFixRounds))
+		}
+
 		if effectiveFindings != "" {
 			if dbErr := e.db.SetStepFindings(sr.ID, effectiveFindings); dbErr != nil {
 				slog.Warn("failed to set step findings in db", "step", stepName, "error", dbErr)
@@ -1783,6 +1871,9 @@ rounds:
 			inserted, dbErr = e.db.InsertStepRoundWithRepair(sr.ID, roundNum, roundTrigger, findingsPtr, fixSummaryPtr, outcome.RepairPublished, roundDuration)
 		}
 		if dbErr != nil {
+			if maxReviewFixRounds > 0 {
+				return false, "", fmt.Errorf("persist bounded Review round: %w", dbErr)
+			}
 			currentRoundID = roundInsertID(currentRoundID, inserted, dbErr)
 			slog.Warn("failed to insert step round", "step", stepName, "round", roundNum, "error", dbErr)
 		} else {
@@ -1811,7 +1902,7 @@ rounds:
 		if stepName.IsCustomGate() {
 			autoFixable = gateAutoFixEligible(roundFindings, sctx.PreviousFindings, sctx.DeferredFindings, sctx.Fixing)
 		}
-		if autoFixable && autoFixLimit > 0 && autoFixAttempts < autoFixLimit {
+		if autoFixable && autoFixLimit > 0 && autoFixAttempts < autoFixLimit && !reviewBudgetExhausted {
 			fixableFindings := autoFixableFindingsJSON(roundFindings)
 			if carryFindings {
 				fixableFindings = remapFindingIDsJSON(effectiveFindings, fixableFindings)
@@ -2522,8 +2613,13 @@ func (e *Executor) waitForApprovalOrReconcile(ctx context.Context, step Step, sc
 			// race guard reconciliation uses: an operator response that landed
 			// first wins.
 			if action, resume, err := e.resumeApprovalGate(ctx, step, sctx, findings); resume {
-				if e.claimGateReconciliation() {
+				claimed, deferred := e.claimGateReconciliationGuarded()
+				if claimed {
 					return approvalResponse{action: action}, false, nil
+				}
+				if deferred {
+					timer.Reset(e.gateReconcileInterval)
+					continue
 				}
 				return <-e.approvalCh, false, nil
 			} else if err != nil && ctx.Err() == nil {
@@ -2535,8 +2631,13 @@ func (e *Executor) waitForApprovalOrReconcile(ctx context.Context, step Step, sc
 			}
 			resolved, err := e.reconcileApprovalGate(ctx, step, sctx, findings)
 			if resolved {
-				if e.claimGateReconciliation() {
+				claimed, deferred := e.claimGateReconciliationGuarded()
+				if claimed {
 					return approvalResponse{}, true, nil
+				}
+				if deferred {
+					timer.Reset(e.gateReconcileInterval)
+					continue
 				}
 				return <-e.approvalCh, false, nil
 			}
@@ -2553,6 +2654,19 @@ func (e *Executor) waitForApprovalOrReconcile(ctx context.Context, step Step, sc
 			timer.Reset(e.gateReconcileInterval)
 		}
 	}
+}
+
+// claimGateReconciliationGuarded claims the gate unless the gate claim guard
+// defers it, in which case the gate stays parked.
+func (e *Executor) claimGateReconciliationGuarded() (claimed, deferred bool) {
+	if e.gateClaimGuard != nil {
+		release, ok := e.gateClaimGuard()
+		if !ok {
+			return false, true
+		}
+		defer release()
+	}
+	return e.claimGateReconciliation(), false
 }
 
 func (e *Executor) claimGateReconciliation() bool {

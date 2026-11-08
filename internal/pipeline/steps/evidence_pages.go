@@ -80,7 +80,7 @@ func pagesMediaPublisher(project string) string {
 }
 
 func missingPagesCredentials(sctx *pipeline.StepContext) []string {
-	env := stepEnvironment(sctx)
+	env := pipelineCommandEnvironment(sctx)
 	if env == nil {
 		env = os.Environ()
 	}

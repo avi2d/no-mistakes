@@ -444,43 +444,73 @@ func assertPipelineHeadContinuity(sctx *pipeline.StepContext, stepName types.Ste
 // invocation. Environment entries win over ambient values where -c flags do
 // not: git reads GIT_AUTHOR_* and GIT_COMMITTER_* ahead of the config file
 // the -c flags override, so flags alone cannot pin the identity.
-func pipelineIdentityEnv(name, email string) []string {
+func pipelineIdentityEnv(id pipelineIdentity) []string {
 	return []string{
-		"GIT_AUTHOR_NAME=" + name,
-		"GIT_AUTHOR_EMAIL=" + email,
-		"GIT_COMMITTER_NAME=" + name,
-		"GIT_COMMITTER_EMAIL=" + email,
+		"GIT_AUTHOR_NAME=" + id.AuthorName,
+		"GIT_AUTHOR_EMAIL=" + id.AuthorEmail,
+		"GIT_COMMITTER_NAME=" + id.CommitterName,
+		"GIT_COMMITTER_EMAIL=" + id.CommitterEmail,
 	}
 }
 
+func pipelineIdentityConfig(id pipelineIdentity) []string {
+	return []string{"-c", "user.name=" + id.CommitterName, "-c", "user.email=" + id.CommitterEmail}
+}
+
+type pipelineIdentity struct {
+	git.CommitIdentity
+	// runBound marks the run's submission identity, which every pipeline
+	// subprocess already carries in its environment.
+	runBound bool
+}
+
+// adopts reports whether a commit with these identities is the pipeline's own.
+// Under a run-bound identity the committer alone decides: the bound environment
+// sets the author too, so a different author under the bound committer can only
+// be an explicit --author, which is intentional attribution.
+func (id pipelineIdentity) adopts(authorName, authorEmail, committerName, committerEmail string) bool {
+	if strings.TrimSpace(committerName) != id.CommitterName || strings.TrimSpace(committerEmail) != id.CommitterEmail {
+		return false
+	}
+	return id.runBound || strings.TrimSpace(authorName) == id.AuthorName && strings.TrimSpace(authorEmail) == id.AuthorEmail
+}
+
 // pipelineCommitIdentity is the author and committer the pipeline stamps on
-// its own commits: the worktree's configured identity, which the daemon copied
-// from the user's checkout at setup. A missing value fails the commit closed
+// its own commits: the run-bound submission identity, or else the worktree's
+// configured identity, which the daemon copied from the user's checkout at
+// setup. A missing value fails the commit closed
 // instead of falling back, because any invented author trips the same identity
 // gate the foreign commit tripped. The recorded head's committer is the only
 // fallback, for a worktree that configures no identity and could not commit
 // otherwise.
-func pipelineCommitIdentity(sctx *pipeline.StepContext, recordedHead string) (string, string, error) {
+func pipelineCommitIdentity(sctx *pipeline.StepContext, recordedHead string) (pipelineIdentity, error) {
+	if bound, ok := git.CommitIdentityFromContext(sctx.Ctx); ok {
+		return pipelineIdentity{CommitIdentity: bound, runBound: true}, nil
+	}
+	single := func(name, email string) pipelineIdentity {
+		name, email = strings.TrimSpace(name), strings.TrimSpace(email)
+		return pipelineIdentity{CommitIdentity: git.CommitIdentity{AuthorName: name, AuthorEmail: email, CommitterName: name, CommitterEmail: email}}
+	}
 	name, err := stepGitRun(sctx, "config", "--get", "--default", "", "user.name")
 	if err != nil {
-		return "", "", fmt.Errorf("read pipeline commit identity: %w", err)
+		return pipelineIdentity{}, fmt.Errorf("read pipeline commit identity: %w", err)
 	}
 	email, err := stepGitRun(sctx, "config", "--get", "--default", "", "user.email")
 	if err != nil {
-		return "", "", fmt.Errorf("read pipeline commit identity: %w", err)
+		return pipelineIdentity{}, fmt.Errorf("read pipeline commit identity: %w", err)
 	}
 	if strings.TrimSpace(name) != "" && strings.TrimSpace(email) != "" {
-		return strings.TrimSpace(name), strings.TrimSpace(email), nil
+		return single(name, email), nil
 	}
 	if strings.TrimSpace(recordedHead) != "" {
 		ident, err := stepGitRun(sctx, "log", "-1", "--format=%cn%x00%ce", recordedHead)
 		if err == nil {
 			if parts := strings.Split(ident, "\x00"); len(parts) == 2 && strings.TrimSpace(parts[0]) != "" && strings.TrimSpace(parts[1]) != "" {
-				return strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]), nil
+				return single(parts[0], parts[1]), nil
 			}
 		}
 	}
-	return "", "", fmt.Errorf("pipeline commit identity is not configured for %s and its recorded head names none", sctx.WorkDir)
+	return pipelineIdentity{}, fmt.Errorf("pipeline commit identity is not configured for %s and its recorded head names none", sctx.WorkDir)
 }
 
 // normalizeRewrittenHead re-authors the narrow replacement shape: a head that
@@ -504,7 +534,7 @@ func normalizeRewrittenHead(sctx *pipeline.StepContext, recorded, head string) e
 	if len(strings.Fields(parents)) != 2 {
 		return nil
 	}
-	name, email, err := pipelineCommitIdentity(sctx, recorded)
+	id, err := pipelineCommitIdentity(sctx, recorded)
 	if err != nil {
 		return err
 	}
@@ -513,11 +543,10 @@ func normalizeRewrittenHead(sctx *pipeline.StepContext, recorded, head string) e
 		return fmt.Errorf("inspect rewritten head %s: %w", shortObjectID(head), err)
 	}
 	fields := strings.Split(ident, "\x00")
-	if len(fields) == 4 && strings.TrimSpace(fields[0]) == name && strings.TrimSpace(fields[1]) == email &&
-		strings.TrimSpace(fields[2]) == name && strings.TrimSpace(fields[3]) == email {
+	if len(fields) == 4 && id.adopts(fields[0], fields[1], fields[2], fields[3]) {
 		return nil
 	}
-	if _, err := stepGitRunWithEnv(sctx, pipelineIdentityEnv(name, email), "-c", "user.name="+name, "-c", "user.email="+email, "commit", "--amend", "--no-edit", "--reset-author"); err != nil {
+	if _, err := stepGitRunWithEnv(sctx, pipelineIdentityEnv(id), append(pipelineIdentityConfig(id), "commit", "--amend", "--no-edit", "--reset-author")...); err != nil {
 		return fmt.Errorf("re-author rewritten head %s: %w", shortObjectID(head), err)
 	}
 	sctx.Log(fmt.Sprintf("re-authored rewritten head %s with the pipeline identity", shortObjectID(head)))
@@ -554,7 +583,7 @@ func normalizeAgentHead(sctx *pipeline.StepContext) error {
 	if len(commits) == 0 {
 		return nil
 	}
-	name, email, err := pipelineCommitIdentity(sctx, recorded)
+	id, err := pipelineCommitIdentity(sctx, recorded)
 	if err != nil {
 		return err
 	}
@@ -573,8 +602,7 @@ func normalizeAgentHead(sctx *pipeline.StepContext) error {
 			return fmt.Errorf("inspect agent commit %s: %w", shortObjectID(c), err)
 		}
 		fields := strings.Split(ident, "\x00")
-		if len(fields) != 4 || strings.TrimSpace(fields[0]) != name || strings.TrimSpace(fields[1]) != email ||
-			strings.TrimSpace(fields[2]) != name || strings.TrimSpace(fields[3]) != email {
+		if len(fields) != 4 || !id.adopts(fields[0], fields[1], fields[2], fields[3]) {
 			foreign = true
 		}
 	}
@@ -625,7 +653,7 @@ func normalizeProvenMergeHead(sctx *pipeline.StepContext, provenHead string) err
 	if len(commits) == 0 {
 		return nil
 	}
-	name, email, err := pipelineCommitIdentity(sctx, recorded)
+	id, err := pipelineCommitIdentity(sctx, recorded)
 	if err != nil {
 		return err
 	}
@@ -644,8 +672,7 @@ func normalizeProvenMergeHead(sctx *pipeline.StepContext, provenHead string) err
 			return fmt.Errorf("inspect agent commit %s: %w", shortObjectID(c), err)
 		}
 		idFields := strings.Split(ident, "\x00")
-		if len(idFields) != 4 || strings.TrimSpace(idFields[0]) != name || strings.TrimSpace(idFields[1]) != email ||
-			strings.TrimSpace(idFields[2]) != name || strings.TrimSpace(idFields[3]) != email {
+		if len(idFields) != 4 || !id.adopts(idFields[0], idFields[1], idFields[2], idFields[3]) {
 			foreign = true
 		}
 	}
@@ -681,7 +708,7 @@ func commitPipelineCorrectionWithCleanup(
 		return nil
 	}
 
-	name, email, err := pipelineCommitIdentity(sctx, "")
+	id, err := pipelineCommitIdentity(sctx, "")
 	if err != nil {
 		return err
 	}
@@ -689,7 +716,7 @@ func commitPipelineCorrectionWithCleanup(
 	if err != nil {
 		return fmt.Errorf("prepare hook-free commit environment: %w", err)
 	}
-	_, commitErr := stepGitRunWithEnv(sctx, pipelineIdentityEnv(name, email), "-c", "core.hooksPath="+emptyHooksDir, "-c", "user.name="+name, "-c", "user.email="+email, "commit", "--no-verify", "-m", message)
+	_, commitErr := stepGitRunWithEnv(sctx, pipelineIdentityEnv(id), append([]string{"-c", "core.hooksPath=" + emptyHooksDir}, append(pipelineIdentityConfig(id), "commit", "--no-verify", "-m", message)...)...)
 	if cleanupErr := cleanup(emptyHooksDir); cleanupErr != nil {
 		if logf != nil {
 			logf(fmt.Sprintf("warning: failed to remove temporary hook-free commit directory %s: %v", emptyHooksDir, cleanupErr))

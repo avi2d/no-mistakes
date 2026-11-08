@@ -30,17 +30,18 @@ func restampReplayedCommits(sctx *pipeline.StepContext, base string) error {
 	if err != nil {
 		return fmt.Errorf("resolve rebase target for identity gate: %w", err)
 	}
-	name, email, err := pipelineCommitIdentity(sctx, recorded)
+	id, err := pipelineCommitIdentity(sctx, recorded)
 	if err != nil {
 		return err
 	}
-	pipelineIdent := name + "\x00" + email
+	pipelineIdent := id.CommitterName + "\x00" + id.CommitterEmail
 	// An author the branch never carried made its commit during the replay.
 	known, recordedCommits, err := recordedBranch(sctx, recorded, resolvedBase)
 	if err != nil {
 		return err
 	}
 	known[pipelineIdent] = true
+	known[id.AuthorName+"\x00"+id.AuthorEmail] = true
 
 	chain, chainErr := linearChain(sctx, resolvedBase, head)
 	if chainErr != nil {
@@ -79,7 +80,7 @@ func restampReplayedCommits(sctx *pipeline.StepContext, base string) error {
 			continue
 		}
 		if !authorKnown {
-			authorName, authorEmail = name, email
+			authorName, authorEmail = id.AuthorName, id.AuthorEmail
 		}
 		message, err := commitMessage(sctx, sha)
 		if err != nil {
@@ -89,8 +90,8 @@ func restampReplayedCommits(sctx *pipeline.StepContext, base string) error {
 			"GIT_AUTHOR_NAME=" + authorName,
 			"GIT_AUTHOR_EMAIL=" + authorEmail,
 			"GIT_AUTHOR_DATE=" + authorDate,
-			"GIT_COMMITTER_NAME=" + name,
-			"GIT_COMMITTER_EMAIL=" + email,
+			"GIT_COMMITTER_NAME=" + id.CommitterName,
+			"GIT_COMMITTER_EMAIL=" + id.CommitterEmail,
 		}
 		if parent, err = commitTreeWithMessage(sctx, env, tree, parent, message); err != nil {
 			return fmt.Errorf("restamp replayed commit %s: %w", shortObjectID(sha), err)

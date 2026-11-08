@@ -23,13 +23,15 @@ type CmdFactory func(ctx context.Context, name string, args ...string) *exec.Cmd
 
 // Host talks to GitHub through the gh CLI.
 type Host struct {
-	cmd             CmdFactory
-	cliAvailable    func() bool
-	host            string // repo's GitHub hostname; scopes the auth check
-	repo            string // "owner/name" slug for --repo; empty when unknown
-	forkOwner       string // fork owner for cross-repository PR heads
-	requiredReviews []string
-	draft           bool // open created PRs as drafts (gh pr create --draft)
+	cmd                 CmdFactory
+	cliAvailable        func() bool
+	host                string // repo's GitHub hostname; scopes the auth check
+	repo                string // "owner/name" slug for --repo; empty when unknown
+	forkOwner           string // fork owner for cross-repository PR heads
+	forkRepo            string // exact source repository for live-head proof
+	requiredReviews     []string
+	requiredReviewAppID int64
+	draft               bool // open created PRs as drafts (gh pr create --draft)
 	// assetHTTP and assetUploadPrefix override the unofficial user-attachments
 	// upload transport in tests. Production leaves both nil/empty and uses
 	// http.DefaultClient against uploads.github.com (or uploads.<ghec-host>).
@@ -58,18 +60,21 @@ func New(cmd CmdFactory, cliAvailable func() bool, host, repo string) *Host {
 
 // WithRequiredReviews opts the existing check adapter into strict completion
 // semantics for the named review bots. The default does no extra discovery.
-func (h *Host) WithRequiredReviews(reviewers []string) *Host {
+func (h *Host) WithRequiredReviews(reviewers []string, appID int64) *Host {
 	h.requiredReviews = append([]string(nil), reviewers...)
+	h.requiredReviewAppID = appID
 	return h
 }
 
 // NewWithFork builds a Host that opens PRs on repo using forkRepo as the head
-// repository owner. forkRepo is an "owner/name" slug; only the owner is needed
-// because gh pr create expects --head <owner>:<branch>. host is optional; see
+// repository owner. forkRepo is an "owner/name" slug: creation uses its owner
+// for --head <owner>:<branch>, and live-head proof checks the complete slug.
+// host is optional; see
 // New for its role in scoping the auth check. draft opens created PRs as drafts.
 func NewWithFork(cmd CmdFactory, cliAvailable func() bool, host, repo, forkRepo string, draft bool) *Host {
 	h := New(cmd, cliAvailable, host, repo)
 	h.forkOwner = repoOwner(forkRepo)
+	h.forkRepo = forkRepo
 	h.draft = draft
 	return h
 }
@@ -1559,6 +1564,10 @@ func normalizeCheckBucket(bucket, state string) scm.CheckBucket {
 
 // GetReviewComments implements scm.ReviewCommentsHost.
 func (h *Host) GetReviewComments(ctx context.Context, pr *scm.PR) ([]scm.ReviewComment, error) {
+	return h.getReviewComments(ctx, pr, 0)
+}
+
+func (h *Host) getReviewComments(ctx context.Context, pr *scm.PR, verifiedBotUserID int64) ([]scm.ReviewComment, error) {
 	if pr == nil {
 		return nil, errors.New("pr is nil")
 	}
@@ -1648,7 +1657,7 @@ func (h *Host) GetReviewComments(ctx context.Context, pr *scm.PR) ([]scm.ReviewC
 				if page.Nodes == nil {
 					return nil, errors.New("PR review comments response did not contain thread comments")
 				}
-				comments = appendReviewBotComments(comments, page, h.host)
+				comments = appendReviewBotComments(comments, page, h.host, verifiedBotUserID)
 				if !page.PageInfo.HasNextPage {
 					break
 				}
@@ -1705,28 +1714,35 @@ func (h *Host) getReviewThreadComments(ctx context.Context, threadID, cursor str
 	return *response.Data.Node.Comments, nil
 }
 
-func appendReviewBotComments(comments []scm.ReviewComment, page reviewCommentConnection, host string) []scm.ReviewComment {
+func appendReviewBotComments(comments []scm.ReviewComment, page reviewCommentConnection, host string, verifiedBotUserID int64) []scm.ReviewComment {
 	for _, raw := range page.Nodes {
 		if raw.Author == nil || !scm.IsReviewBotLogin(scm.ProviderGitHub, raw.Author.Login) {
 			continue
 		}
 		bot, _ := scm.ReviewBotForLogin(scm.ProviderGitHub, raw.Author.Login)
-		if bot.AuthorID != 0 && (host != "github.com" || raw.Author.ID != bot.AuthorID) {
-			continue
+		if bot.AuthorID != 0 {
+			wantID := bot.AuthorID
+			if !strings.EqualFold(host, "github.com") {
+				wantID = verifiedBotUserID
+			}
+			if wantID <= 0 || raw.Author.ID != wantID {
+				continue
+			}
 		}
 		line := 0
 		if raw.Line != nil {
 			line = *raw.Line
 		}
 		comments = append(comments, scm.ReviewComment{
-			ID:        strconv.FormatInt(raw.ID, 10),
-			Author:    raw.Author.Login,
-			AuthorID:  raw.Author.ID,
-			Path:      raw.Path,
-			Line:      line,
-			Body:      raw.Body,
-			CreatedAt: raw.CreatedAt,
-			URL:       raw.URL,
+			VerifiedAuthor: bot.RequiredReview != "" && !strings.EqualFold(host, "github.com"),
+			ID:             strconv.FormatInt(raw.ID, 10),
+			Author:         raw.Author.Login,
+			AuthorID:       raw.Author.ID,
+			Path:           raw.Path,
+			Line:           line,
+			Body:           raw.Body,
+			CreatedAt:      raw.CreatedAt,
+			URL:            raw.URL,
 		})
 	}
 	return comments
