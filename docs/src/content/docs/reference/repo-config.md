@@ -488,6 +488,9 @@ When set, the lint step runs this exact command and checks the exit code.
 When empty, the agent-driven lint duty is folded into the document step's combined housekeeping pass: one agent invocation covers both documentation and lint, and the lint step consumes that result, reporting lint-category findings with the same gate semantics (blocking findings park for a decision).
 Neither responsibility is skipped: when the document step has nothing to run against (or its structured output cannot be trusted), the lint step runs its own agent pass as before.
 
+A CI repair published without revalidation runs this command before its push, as the [CI step](/no-mistakes/reference/pipeline-steps/#ci) describes.
+A repair that fails it is not pushed.
+
 ### commands.format
 
 Formatter command run before the push step commits agent fixes.

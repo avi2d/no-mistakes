@@ -484,6 +484,14 @@ Monitors PR health after creation and auto-fixes CI failures. Mergeability polli
   What happens next follows one rule on every CI-fix path.
   A repair is published without revalidating only when its continuity with the reviewed, published head can be proven, meaning the repaired head is the run's review-approved commit or a descendant of it.
   A provable repair is published immediately through the Push step's own guarded publication path, using that step's own remote-safety decision, and the monitor keeps watching the same run.
+  Before that push, the step runs the Lint step's configured checks in the run worktree: [`commands.lint`](/no-mistakes/reference/repo-config/#commandslint) and the machine-local additional lint checks.
+  It never runs `commands.test` there.
+  When a check fails after a fixer turn, the fixer gets the check output and up to two more turns in the same attempt.
+  The repair is pushed only once every check passes.
+  When the checks still fail, the repair is not pushed and the step parks with an `ask-user` `ci-pre-push-checks` finding that carries the check output.
+  A repair recorded without a fixer turn, such as a merge with no conflicts or a retried protected-path repair, is checked the same way and parks without the extra turns.
+  A repair that revalidates is not checked here, because the Lint step checks it before Push publishes it.
+  With no deterministic lint check configured, nothing runs here.
   On supported providers, an existing pipeline attestation is rebound to the proposed head before the branch push, and failure to settle that rewrite after retries reports the repair as unsettled without pushing.
   An unavailable SCM host skips the rewrite, while strict attestation head equality keeps any stale binding fail-closed.
   Anything else is held locally, the run's review approval is revoked, and validation restarts from Review so Push republishes it only after Review approves it.

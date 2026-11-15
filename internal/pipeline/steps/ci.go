@@ -91,6 +91,10 @@ type CIStep struct {
 	// agent-commit shaper refuses every merge, so it stands aside for exactly
 	// this commit, whose message is git's own rather than an agent's.
 	provenMergeHead string
+	// prePushChecksPassed is true only while the repair being recorded was
+	// committed from a worktree the pre-push checks already passed on, so
+	// publishRepair need not run them a second time.
+	prePushChecksPassed bool
 }
 
 // SetPollIntervalOverride is a test hook; production leaves the override unset.
@@ -435,6 +439,10 @@ func (s *CIStep) Execute(sctx *pipeline.StepContext) (outcome *pipeline.StepOutc
 			return nil, err
 		}
 		repair, err := s.retryProtectedPathRepair(sctx)
+		var failure *prePushCheckFailure
+		if errors.As(err, &failure) {
+			return prePushCheckParkOutcome(failure, Findings{}, ""), nil
+		}
 		if err != nil {
 			return nil, err
 		}
