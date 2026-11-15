@@ -287,11 +287,11 @@ type GlobalConfig struct {
 	Intent GlobalIntentRaw
 	Test   TestRaw
 	// Review carries the operator's own review guidance for every gated
-	// repository. Only path_instructions exists here: like review_agents it
-	// comes from this machine, never from a pushed branch, and it can only add
-	// requirements to a review, so it sits outside the trusted-default-branch
-	// boundary. Merge renders it alongside, never instead of, the repository's
-	// trusted rules.
+	// repository. Like review_agents it comes from this machine, never from a
+	// pushed branch, so it sits outside the trusted-default-branch boundary.
+	// Merge renders path_instructions alongside, never instead of, the
+	// repository's trusted rules, and uses max_fix_rounds only when the trusted
+	// repository config leaves review.max_fix_rounds unset.
 	Review OperatorReviewRaw
 	// Eval is resolved at load time because it is global-only: it describes
 	// this machine's local eval corpus (disk, retention, whether review rounds
@@ -412,6 +412,10 @@ type RepositoryTestRaw struct {
 // one parks the gate for a human and stays the repository's decision.
 type OperatorReviewRaw struct {
 	PathInstructions []PathInstruction `yaml:"path_instructions"`
+	// MaxFixRounds is the machine-wide default Review fix-round budget. Only
+	// the top-level global review block may set it, never a
+	// repository_overrides entry.
+	MaxFixRounds *reviewFixRoundLimit `yaml:"max_fix_rounds"`
 }
 
 // GlobalPRRaw contains machine-wide PR defaults. Template, PublishIntent, and
@@ -557,8 +561,9 @@ func (l *reviewFixRoundLimit) UnmarshalYAML(node *yaml.Node) error {
 // ReviewRaw is the YAML representation of review-step settings.
 type ReviewRaw struct {
 	// MaxFixRounds bounds all Review fix rounds, automatic and explicit.
-	// Zero preserves the unbounded default. Trusted repository config only.
-	MaxFixRounds reviewFixRoundLimit `yaml:"max_fix_rounds"`
+	// Zero means unbounded. Nil falls back to the global review.max_fix_rounds.
+	// Trusted repository config only.
+	MaxFixRounds *reviewFixRoundLimit `yaml:"max_fix_rounds"`
 	// Conversation turns the review conversation on: the reviewer may emit the
 	// larger questions it cannot settle itself, keep reviewing while they are
 	// open, and be resumed with the answers. Off (the default), the review step
@@ -3458,8 +3463,8 @@ func validatePRIntent(intent PRIntentRaw) error {
 // invalid block has to fail here, before it merges, rather than brick the
 // repository's pipeline afterwards. Do not scope this to the trusted copy.
 func validateReviewRaw(review ReviewRaw) error {
-	if review.MaxFixRounds < 0 {
-		return fmt.Errorf("review.max_fix_rounds must be non-negative (0 means unlimited)")
+	if err := validateReviewFixRoundLimit(review.MaxFixRounds); err != nil {
+		return err
 	}
 	if review.AgentTimeout != "" {
 		if _, err := parsePositiveDuration("review.agent_timeout", review.AgentTimeout); err != nil {
@@ -3509,11 +3514,21 @@ func validatePathInstructionEntries(entries []PathInstruction) error {
 	return nil
 }
 
+func validateReviewFixRoundLimit(limit *reviewFixRoundLimit) error {
+	if limit != nil && *limit < 0 {
+		return fmt.Errorf("review.max_fix_rounds must be non-negative (0 means unlimited)")
+	}
+	return nil
+}
+
 // validateOperatorReview checks the operator's global review block on its own
 // and together with every repository_overrides review block, so a global
 // config that could never fit the prompt fails when it loads rather than at
 // the first matching run.
 func validateOperatorReview(global OperatorReviewRaw, overrides RepositoryOverrides) error {
+	if err := validateReviewFixRoundLimit(global.MaxFixRounds); err != nil {
+		return err
+	}
 	if err := validatePathInstructionEntries(global.PathInstructions); err != nil {
 		return err
 	}
@@ -3522,6 +3537,9 @@ func validateOperatorReview(global OperatorReviewRaw, overrides RepositoryOverri
 		return err
 	}
 	for key, override := range overrides {
+		if override.Review.MaxFixRounds != nil {
+			return fmt.Errorf("invalid repository_overrides.%s: review.max_fix_rounds is only allowed in the top-level review block", key)
+		}
 		if err := validatePathInstructionEntries(override.Review.PathInstructions); err != nil {
 			return fmt.Errorf("invalid repository_overrides.%s: %w", key, err)
 		}
@@ -4482,7 +4500,7 @@ func merge(global *GlobalConfig, repo *RepoConfig, override *RepositoryOverride)
 		// separate sources rather than overlaid: they can only add rules, never
 		// replace or remove the repository's.
 		Review: Review{
-			MaxFixRounds:           int(repo.Review.MaxFixRounds),
+			MaxFixRounds:           resolveReviewMaxFixRounds(repo.Review.MaxFixRounds, global.Review.MaxFixRounds),
 			Conversation:           repo.Review.Conversation,
 			PathInstructions:       resolvePathInstructions(repo.Review.PathInstructions),
 			GlobalPathInstructions: resolvePathInstructions(global.Review.PathInstructions),
@@ -4548,4 +4566,16 @@ func (c *Config) EnableEvalProvenance(global *GlobalConfig, repo *RepoConfig) er
 	c.ReplayRepoYAML = repoYAML
 	c.CaptureEvalProvenance = true
 	return nil
+}
+
+// resolveReviewMaxFixRounds lets a trusted repository value, including an
+// explicit 0, win over the machine-wide default.
+func resolveReviewMaxFixRounds(repo, global *reviewFixRoundLimit) int {
+	if repo != nil {
+		return int(*repo)
+	}
+	if global != nil {
+		return int(*global)
+	}
+	return 0
 }

@@ -161,6 +161,11 @@ func (s *CIStep) repairFromFindings(sctx *pipeline.StepContext, host scm.Host, p
 		// awaiting approval.
 		return nil, err
 	}
+	var prePushFailure *prePushCheckFailure
+	if errors.As(err, &prePushFailure) {
+		sctx.Log(fmt.Sprintf("CI repair not pushed: %v", err))
+		return prePushCheckParkOutcome(prePushFailure, targets.Findings, sctx.DeferredFindings), nil
+	}
 	if err != nil && errors.Is(err, errCIAttestationUnsettled) {
 		sctx.Log(fmt.Sprintf("CI repair push is not settled: %v", err))
 		return ciRepairParkOutcome(targets.Findings, sctx.DeferredFindings, err.Error()), nil
@@ -381,7 +386,8 @@ CI logs:
 	prompt += roundHistoryPromptSection(sctx)
 	prompt += userIntentPromptSection(sctx)
 	prompt += executionContextPromptSection(sctx.WorkDir)
-	prompt = fixerPrompt(testguidance.LateRepairPrompt(string(s.Name()), prompt))
+	repairTask := testguidance.LateRepairPrompt(string(s.Name()), prompt)
+	prompt = fixerPrompt(repairTask)
 
 	sctx.Log("running agent to fix CI issues...")
 	result, err := sctx.RunAgentContext(ctx, agent.RunOpts{
@@ -426,6 +432,15 @@ CI logs:
 	// controller commits or publishes this round's work.
 	if !rebase && conclusionErr == nil && conclusion.CodeChangeNeeded != nil && !*conclusion.CodeChangeNeeded {
 		return ciRepairResult{NoCodeChangeNeeded: true, Summary: conclusion.Summary}, nil
+	}
+	// A rebase repair under rebase.strategy rebase can never prove continuity,
+	// so it always revalidates and the Lint step checks it before Push.
+	if !rebase || mergesMovedBase(sctx) {
+		defer func() { s.prePushChecksPassed = false }()
+		result, err = s.checkRepairBeforePush(sctx, repairTask, result)
+		if err != nil {
+			return ciRepairResult{}, err
+		}
 	}
 	repair, err := s.commitRepair(sctx, conclusion.Summary, result)
 	if mergeConflict && rebaseBaseResolved {
@@ -1122,6 +1137,11 @@ func assertRepairAppendsPublishedHead(sctx *pipeline.StepContext, headSHA string
 func (s *CIStep) publishRepair(sctx *pipeline.StepContext, headSHA string) (ciRepairResult, error) {
 	if err := assertRepairAppendsPublishedHead(sctx, headSHA); err != nil {
 		return ciRepairResult{}, err
+	}
+	if !s.prePushChecksPassed {
+		if err := runPrePushChecks(sctx); err != nil {
+			return ciRepairResult{}, err
+		}
 	}
 	if err := publishRunHead(sctx, headSHA, headSHA, nil); err != nil {
 		if errors.Is(err, errAttestationWriteFailed) {

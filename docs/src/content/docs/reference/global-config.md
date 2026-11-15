@@ -96,6 +96,7 @@ rebase:
 
 review:
   path_instructions: []
+  max_fix_rounds: 0
 
 commit:
   fix_message: "chore(no-mistakes-{{.Step}}): {{.Summary}}"
@@ -1274,8 +1275,31 @@ This global list together with each `repository_overrides` list is checked when 
 The repository's trusted list changes independently, so the combined set is checked again when each run starts and when a run is recovered after a daemon restart: a run whose combined rules exceed a limit fails before any step runs or resumes, with an error naming each source's entry count, rather than silently dropping a rule.
 Shorten or remove your machine-local entries to fix it.
 
-Only `path_instructions` is accepted under this block. `review.conversation` stays a repository decision, because an open question parks the gate.
+Only `path_instructions` and [`max_fix_rounds`](#reviewmax_fix_rounds) are accepted under this block.
+`review.conversation` stays a repository decision, because an open question parks the gate.
 Changes apply to the next run, and to a run recovered after a daemon restart, which re-reads this file.
+
+### review.max_fix_rounds
+
+The machine-wide default for the total number of Review fix rounds per run.
+It applies to every repository whose trusted default-branch config does not set [`review.max_fix_rounds`](/no-mistakes/reference/repo-config/#reviewmax_fix_rounds).
+
+| | |
+|---|---|
+| Type | non-negative integer |
+| Default | `0`, which means unlimited |
+
+```yaml
+review:
+  max_fix_rounds: 1
+```
+
+A value in the trusted repository config wins, including an explicit `0`, which keeps that repository unlimited.
+A pushed branch cannot override this value, because the repository value is read only from the trusted default branch.
+The repo config reference describes how the limit counts rounds and what happens when it is spent: Review parks with the remaining findings and never approves or drops them.
+Only the top-level `review` block accepts this key.
+A `repository_overrides` entry that sets it fails configuration loading, and so do negative and non-integer values.
+The budget is pinned when Review starts, so a change applies to the next run.
 
 ### commit.fix_message
 
@@ -1475,7 +1499,8 @@ repository_overrides:
 `document.instructions` is added to the document step's prompt in a labeled section before the repository's trusted [`document.instructions`](/no-mistakes/reference/repo-config/#documentinstructions), and like that field it augments the built-in placement policy and cannot weaken it.
 `test.instructions` is added to the Test step's repair and evidence prompts in a labeled section before the repository's trusted [`test.instructions`](/no-mistakes/reference/repo-config/#testinstructions) runbook.
 All three are additive only: the repository's trusted values still apply in full, and a pushed branch can supply none of them.
-Under `review` only `path_instructions` is accepted, under `document` only `instructions`, and under `test` only `instructions`; settings that could weaken a gate, such as `no_ci`, `allow_repo_commands`, or `pr.base_branch`, are not accepted here.
+Under `review` only `path_instructions` is accepted, under `document` only `instructions`, and under `test` only `instructions`.
+Settings that could weaken or loosen a gate, such as `review.max_fix_rounds`, `no_ci`, `allow_repo_commands`, or `pr.base_branch`, are not accepted here.
 Changes apply to the next run, and to a run recovered after a daemon restart, which re-reads this file.
 
 Eval replay cases store no remote URL, so a replay does not apply a matching entry's review, documentation, or test guidance.
