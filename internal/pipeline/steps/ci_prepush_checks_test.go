@@ -115,8 +115,10 @@ func TestCIStep_RepairIsPushedOnlyAfterTheFixerClearsTheLintFailure(t *testing.T
 	}
 	f.sctx.Agent = ag
 
-	if _, err := f.run(t); err != nil {
-		t.Fatalf("CI step returned error: %v\nlog:\n%s", err, f.log())
+	// A published repair keeps the monitor polling until the fixture's poll
+	// budget cancels it, so cancellation is the success path here.
+	if _, err := f.run(t); !errors.Is(err, context.Canceled) {
+		t.Fatalf("CI step error = %v, want the monitor still polling after the published repair\nlog:\n%s", err, f.log())
 	}
 	if len(ciFixCalls(ag)) != 2 {
 		t.Fatalf("CI fixer turns = %d, want the repair turn and one lint-fix turn", len(ciFixCalls(ag)))
