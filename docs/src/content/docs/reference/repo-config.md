@@ -546,7 +546,7 @@ An opt-in limit on **total Review fix rounds per run**, counting automatic fixes
 | | |
 |---|---|
 | Type | non-negative integer |
-| Default | `0` (unlimited, preserving existing behavior) |
+| Default | the global [`review.max_fix_rounds`](/no-mistakes/reference/global-config/#reviewmax_fix_rounds), else `0`, which means unlimited |
 | Source | trusted default-branch repository config only |
 
 ```yaml
@@ -558,7 +558,14 @@ review:
 
 When the final allowed rereview leaves findings, Review **parks** with every remaining finding and a `review-fix-rounds-exhausted` notice showing the used/maximum fix rounds. Further fix requests return `fix_rounds_exhausted` without releasing the gate or recording a selection. `axi --yes` and TUI yolo leave this gate for an explicit decision. Inspect the findings, then explicitly approve, skip, or abort; when the same gate also holds a [protected-path refusal](#protected_paths), approve is rejected too, so only skip or abort remain. The limit never approves, lowers severity, drops findings, or starts another fix by itself. A clean, fully covered final rereview still passes normally, and a clean one that parks only for missing coverage carries no notice, so `complete-coverage` can still continue it.
 
-The limit is pinned before Review starts and survives daemon recovery and validation restarts in that run. Editing config does not extend or reduce an active run's budget. A new run gets a fresh budget; a run already in Review before this feature remains unbounded. The pushed branch cannot set, change, or remove the limit, even with `allow_repo_commands: true`. Negative and non-integer values fail configuration loading.
+The limit is pinned before Review starts and survives daemon recovery and validation restarts in that run.
+Editing config does not extend or reduce an active run's budget.
+A new run gets a fresh budget.
+A run already in Review before this feature remains unbounded.
+The pushed branch cannot set, change, or remove the limit, even with `allow_repo_commands: true`.
+When the trusted config omits the key, the global value applies.
+A trusted value, including `0`, wins over the global value.
+Negative and non-integer values fail configuration loading.
 
 This is a round-count budget, not a cumulative time or token budget, a change to rereview scope, or a cancellation/custody mechanism. Other steps are unaffected.
 
