@@ -44,15 +44,25 @@ func TestNixWorkflowBuildsAndChecksTheFlake(t *testing.T) {
 	}
 }
 
-func TestNixWorkflowRunsOnEveryVendorHashInput(t *testing.T) {
-	pr, ok := loadWorkflowPullRequest(t, filepath.Join(".github", "workflows", "nix.yml"))
-	if !ok {
-		t.Fatal("Nix workflow has no pull_request trigger")
+func TestNixWorkflowRunsOnlyOnMainPushAndDispatch(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join(".github", "workflows", "nix.yml"))
+	if err != nil {
+		t.Fatalf("read Nix workflow: %v", err)
 	}
-	paths, _ := pr["paths"].([]any)
-	for _, want := range []string{"go.mod", "go.sum", "package.nix", "flake.nix", "flake.lock", "default.nix"} {
-		if !slices.Contains(paths, any(want)) {
-			t.Errorf("Nix workflow pull_request paths must include %q, got %v", want, paths)
-		}
+	var wf struct {
+		On map[string]any `yaml:"on"`
+	}
+	if err := yaml.Unmarshal(raw, &wf); err != nil {
+		t.Fatalf("parse Nix workflow: %v", err)
+	}
+	if _, ok := wf.On["pull_request"]; ok {
+		t.Error("Nix workflow must not start on pull_request")
+	}
+	push, _ := wf.On["push"].(map[string]any)
+	if branches, _ := push["branches"].([]any); !slices.Equal(branches, []any{"main"}) {
+		t.Errorf("Nix workflow push branches = %v, want [main]", branches)
+	}
+	if _, ok := wf.On["workflow_dispatch"]; !ok {
+		t.Error("Nix workflow must allow workflow_dispatch")
 	}
 }

@@ -31,7 +31,7 @@ import (
 // The published workflow pins an immutable upstream SHA, but these tests run
 // the action from the WORKING TREE. That asymmetry is deliberate and is what
 // makes the pin a self-certification guard: a pull request that edits the
-// action is fully tested here on its own head, while the required check that
+// action is tested here once it reaches main, while the required check that
 // judges it keeps running the published pinned copy.
 
 // requiredWorkflowTestHeadSHA is the commit the generated pipeline summary
