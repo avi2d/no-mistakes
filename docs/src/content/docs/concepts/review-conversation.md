@@ -85,7 +85,7 @@ MCP server is involved: an MCP server per run would be a process, a handshake
 and a per-adapter support matrix for a capability the agent already has.
 
 ```json
-{"id":"q1","kind":"question","question":"Should the legacy /v1 route keep answering after this change?","options":["Keep answering","Remove it","Keep behind a flag"],"weight":"major","file":"internal/api/router.go","line":88,"area":"routing","asked_at":"2026-09-15T13:04:11Z"}
+{"id":"q1","kind":"question","question":"Should the legacy /v1 route keep answering after this change?","action":"none","options":["Keep answering","Remove it","Keep behind a flag"],"weight":"major","file":"internal/api/router.go","line":88,"area":"routing","asked_at":"2026-09-15T13:04:11Z"}
 {"id":"q1","kind":"retract","reason":"answered by the migration note in docs/api.md","at":"2026-09-15T13:19:02Z"}
 ```
 
@@ -109,6 +109,9 @@ and a per-adapter support matrix for a capability the agent already has.
 - `kind` is `question` or `retract`. A retracted question is closed: it never
   blocks the step and never needs an answer. Re-asking it revives it, and it
   comes back open rather than carrying whatever answer preceded the retraction.
+- `action` is required on each question and uses the [`question_action` values for Review findings](/no-mistakes/reference/pipeline-steps/#review).
+  A missing or unrecognized value keeps the question open with action `unknown` instead of treating it as `none`.
+  The gate finding exposes the same value as `question_action`, since its `action` is `ask-user`.
 - `options` carries the multiple-choice alternatives. The reviewer is required
   to supply 2-4 of them, because a question reaches the captain in the same
   multiple-choice form he already receives - an open-ended question is a worse

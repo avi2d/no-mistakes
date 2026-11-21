@@ -484,4 +484,5 @@ COMMIT;`,
 	// retain NULL and the pre-existing default discovery paths.
 	`ALTER TABLE runs ADD COLUMN transcript_homes TEXT`,
 	`ALTER TABLE step_rounds ADD COLUMN review_follow_ups_json TEXT`,
+	`ALTER TABLE review_questions ADD COLUMN action TEXT NOT NULL DEFAULT 'unknown'`,
 }

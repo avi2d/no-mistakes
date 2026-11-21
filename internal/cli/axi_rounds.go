@@ -198,7 +198,16 @@ func decodeRoundFindings(raw string) (roundFindingsPayload, error) {
 	if err := decodeRoundJSON(raw, &payload); err != nil {
 		return payload, err
 	}
-	return payload, requireNoNullMembers(payload.Findings)
+	if err := requireNoNullMembers(payload.Findings); err != nil {
+		return payload, err
+	}
+	for _, finding := range payload.Findings {
+		if finding["action"] == types.ActionAskUser {
+			action, _ := finding["question_action"].(string)
+			finding["question_action"] = types.QuestionAction(action).OrUnknown()
+		}
+	}
+	return payload, nil
 }
 
 // A null member decodes to a zero value that would export as real data

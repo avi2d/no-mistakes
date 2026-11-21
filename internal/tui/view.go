@@ -177,7 +177,7 @@ func (m Model) View() string {
 							if item.Line > 0 {
 								ref = fmt.Sprintf("%s:%d", item.File, item.Line)
 							}
-							findingCtx = fmt.Sprintf("%s %s  %s  (%d/%d)", severityIcon(item.Severity), ref, item.Description, cur+1, len(items))
+							findingCtx = fmt.Sprintf("%s %s  %s  (%d/%d)", severityIcon(item.Severity), ref, findingDescription(item), cur+1, len(items))
 						}
 					}
 					viewHeight := m.height - 15

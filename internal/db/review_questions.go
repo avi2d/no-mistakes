@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
+
+	"github.com/kunchenguid/no-mistakes/internal/types"
 )
 
 // MaxBranchReviewAnswers bounds how many settled review questions are loaded
@@ -24,6 +26,7 @@ type ReviewAnswer struct {
 	// is a different question a human answered separately.
 	AskOrdinal int
 	Question   string
+	Action     types.QuestionAction
 	Options    []string
 	File       string
 	Line       int
@@ -81,11 +84,12 @@ func (d *DB) RecordReviewAnswer(a ReviewAnswer) error {
 	now := time.Now().Unix()
 	_, err := d.sql.Exec(
 		`INSERT INTO review_questions
-		    (repo_id, branch, question_id, run_id, ask_ordinal, question, options_json, file, line,
+		    (repo_id, branch, question_id, run_id, ask_ordinal, question, action, options_json, file, line,
 		     answer, answered_by, answered_at, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT (repo_id, branch, question_id, run_id, ask_ordinal) DO UPDATE SET
 		    question = excluded.question,
+		    action = excluded.action,
 		    options_json = excluded.options_json,
 		    file = excluded.file,
 		    line = excluded.line,
@@ -93,7 +97,7 @@ func (d *DB) RecordReviewAnswer(a ReviewAnswer) error {
 		    answered_by = excluded.answered_by,
 		    answered_at = excluded.answered_at,
 		    updated_at = excluded.updated_at`,
-		a.RepoID, a.Branch, a.QuestionID, a.RunID, a.AskOrdinal, a.Question, optionsJSON,
+		a.RepoID, a.Branch, a.QuestionID, a.RunID, a.AskOrdinal, a.Question, a.Action.OrUnknown(), optionsJSON,
 		nullableText(a.File), nullableInt(a.Line),
 		a.Answer, nullableText(a.AnsweredBy), nullableText(a.AnsweredAt), now, now,
 	)
@@ -111,7 +115,7 @@ func (d *DB) GetBranchReviewAnswers(repoID, branch string, limit int) ([]ReviewA
 		limit = MaxBranchReviewAnswers
 	}
 	rows, err := d.sql.Query(
-		`SELECT repo_id, branch, question_id, run_id, ask_ordinal, question, options_json, file, line,
+		`SELECT repo_id, branch, question_id, run_id, ask_ordinal, question, action, options_json, file, line,
 		        answer, answered_by, answered_at, updated_at
 		   FROM review_questions
 		  WHERE repo_id = ? AND branch = ?
@@ -137,7 +141,7 @@ func (d *DB) GetBranchReviewAnswers(repoID, branch string, limit int) ([]ReviewA
 		var optionsJSON, file, answeredBy, answeredAt *string
 		var line *int64
 		if err := rows.Scan(
-			&a.RepoID, &a.Branch, &a.QuestionID, &a.RunID, &a.AskOrdinal, &a.Question, &optionsJSON,
+			&a.RepoID, &a.Branch, &a.QuestionID, &a.RunID, &a.AskOrdinal, &a.Question, &a.Action, &optionsJSON,
 			&file, &line, &a.Answer, &answeredBy, &answeredAt, &a.UpdatedAt,
 		); err != nil {
 			return nil, false, fmt.Errorf("scan branch review answer: %w", err)
@@ -157,6 +161,7 @@ func (d *DB) GetBranchReviewAnswers(repoID, branch string, limit int) ([]ReviewA
 		if answeredAt != nil {
 			a.AnsweredAt = *answeredAt
 		}
+		a.Action = a.Action.OrUnknown()
 		answers = append(answers, a)
 	}
 	if err := rows.Err(); err != nil {

@@ -69,23 +69,6 @@ type stalledAgentRow struct {
 	AgentPID  string `toon:"agent_pid"`
 }
 
-type findingRow struct {
-	ID          string `toon:"id"`
-	Severity    string `toon:"severity"`
-	File        string `toon:"file"`
-	Action      string `toon:"action"`
-	Description string `toon:"description"`
-}
-
-type repeatFindingRow struct {
-	ID          string `toon:"id"`
-	Severity    string `toon:"severity"`
-	File        string `toon:"file"`
-	Action      string `toon:"action"`
-	Repeat      string `toon:"repeat"`
-	Description string `toon:"description"`
-}
-
 type runRow struct {
 	ID     string `toon:"id"`
 	Branch string `toon:"branch"`
@@ -838,87 +821,33 @@ func gateFieldsWithHelp(gate stepView, help []string) []toon.Field {
 	}
 }
 
-// A separate row type keeps the carried column off every gate that shows no
-// carried finding.
-type carriedFindingRow struct {
-	ID          string `toon:"id"`
-	Severity    string `toon:"severity"`
-	File        string `toon:"file"`
-	Action      string `toon:"action"`
-	Carried     string `toon:"carried"`
-	Description string `toon:"description"`
-}
+func findingRows(items []types.Finding, repeats map[string]int) []toon.Object {
+	hasRepeat := slices.ContainsFunc(items, func(f types.Finding) bool {
+		_, ok := repeats[f.ID]
+		return ok
+	})
+	hasCarried := slices.ContainsFunc(items, func(f types.Finding) bool { return f.Carried != "" })
+	hasQuestionAction := slices.ContainsFunc(items, func(f types.Finding) bool { return f.AskUserAction() != "" })
 
-type carriedRepeatFindingRow struct {
-	ID          string `toon:"id"`
-	Severity    string `toon:"severity"`
-	File        string `toon:"file"`
-	Action      string `toon:"action"`
-	Carried     string `toon:"carried"`
-	Repeat      string `toon:"repeat"`
-	Description string `toon:"description"`
-}
-
-func findingRows(items []types.Finding, repeats map[string]int) any {
-	hasRepeat := false
+	rows := make([]toon.Object, 0, len(items))
 	for _, f := range items {
-		if _, ok := repeats[f.ID]; ok {
-			hasRepeat = true
-			break
+		fields := []toon.Field{
+			{Key: "id", Value: f.ID},
+			{Key: "severity", Value: f.Severity},
+			{Key: "file", Value: f.File},
+			{Key: "action", Value: f.Action},
 		}
-	}
-	if slices.ContainsFunc(items, func(f types.Finding) bool { return f.Carried != "" }) {
+		if hasCarried {
+			fields = append(fields, toon.Field{Key: "carried", Value: f.Carried.Label()})
+		}
 		if hasRepeat {
-			rows := make([]carriedRepeatFindingRow, 0, len(items))
-			for _, f := range items {
-				rows = append(rows, carriedRepeatFindingRow{
-					ID:          f.ID,
-					Severity:    f.Severity,
-					File:        f.File,
-					Action:      f.Action,
-					Carried:     f.Carried.Label(),
-					Repeat:      repeatLabel(repeats[f.ID]),
-					Description: f.Description,
-				})
-			}
-			return rows
+			fields = append(fields, toon.Field{Key: "repeat", Value: repeatLabel(repeats[f.ID])})
 		}
-		rows := make([]carriedFindingRow, 0, len(items))
-		for _, f := range items {
-			rows = append(rows, carriedFindingRow{
-				ID:          f.ID,
-				Severity:    f.Severity,
-				File:        f.File,
-				Action:      f.Action,
-				Carried:     f.Carried.Label(),
-				Description: f.Description,
-			})
+		fields = append(fields, toon.Field{Key: "description", Value: f.Description})
+		if hasQuestionAction {
+			fields = append(fields, toon.Field{Key: "question_action", Value: string(f.AskUserAction())})
 		}
-		return rows
-	}
-	if hasRepeat {
-		rows := make([]repeatFindingRow, 0, len(items))
-		for _, f := range items {
-			rows = append(rows, repeatFindingRow{
-				ID:          f.ID,
-				Severity:    f.Severity,
-				File:        f.File,
-				Action:      f.Action,
-				Repeat:      repeatLabel(repeats[f.ID]),
-				Description: f.Description,
-			})
-		}
-		return rows
-	}
-	rows := make([]findingRow, 0, len(items))
-	for _, f := range items {
-		rows = append(rows, findingRow{
-			ID:          f.ID,
-			Severity:    f.Severity,
-			File:        f.File,
-			Action:      f.Action,
-			Description: f.Description,
-		})
+		rows = append(rows, toon.NewObject(fields...))
 	}
 	return rows
 }

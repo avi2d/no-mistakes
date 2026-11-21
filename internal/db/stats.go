@@ -216,6 +216,7 @@ func findingItems(raw *string) []types.Finding {
 func findingStatsKey(item types.Finding) types.Finding {
 	item.ID = ""
 	item.Action = ""
+	item.QuestionAction = ""
 	item.Source = ""
 	item.UserInstructions = ""
 	item.Carried = ""

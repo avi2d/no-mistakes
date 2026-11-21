@@ -63,7 +63,7 @@ func buildReviewConversationSection(sctx *pipeline.StepContext) string {
 			continue
 		}
 		shown++
-		fmt.Fprintf(&b, "- **Q:** %s\n", publishedConversationText(a.Question))
+		fmt.Fprintf(&b, "- **Q:** %s (action: `%s`)\n", publishedConversationText(a.Question), a.Action.OrUnknown())
 		who := publishedConversationText(a.AnsweredBy)
 		if who == "" {
 			who = "unattributed"
@@ -79,7 +79,7 @@ func buildReviewConversationSection(sctx *pipeline.StepContext) string {
 			continue
 		}
 		shown++
-		fmt.Fprintf(&b, "- **Q:** %s\n  **Unanswered:** the review gate was resolved with this question still open.\n", publishedConversationText(q.Question.Question))
+		fmt.Fprintf(&b, "- **Q:** %s (action: `%s`)\n  **Unanswered:** the review gate was resolved with this question still open.\n", publishedConversationText(q.Question.Question), q.Question.Action.OrUnknown())
 	}
 	for _, q := range withdrawn {
 		if shown >= maxPublishedConversationEntries {
@@ -87,7 +87,7 @@ func buildReviewConversationSection(sctx *pipeline.StepContext) string {
 			continue
 		}
 		shown++
-		fmt.Fprintf(&b, "- **Q:** %s\n  **Withdrawn by the reviewer:** %s\n", publishedConversationText(q.Question.Question), publishedConversationText(q.Reason))
+		fmt.Fprintf(&b, "- **Q:** %s (action: `%s`)\n  **Withdrawn by the reviewer:** %s\n", publishedConversationText(q.Question.Question), q.Question.Action.OrUnknown(), publishedConversationText(q.Reason))
 	}
 	if omitted > 0 {
 		fmt.Fprintf(&b, "\n%d further review question(s) omitted for length.\n", omitted)
