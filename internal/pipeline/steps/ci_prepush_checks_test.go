@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -21,8 +22,13 @@ const (
 // usePrePushLintFixture configures a lint command that fails exactly while
 // lint-bad.txt exists, and a test command that leaves a marker if it ever runs.
 func usePrePushLintFixture(f *ciRepairFixture) {
-	f.sctx.Config.Commands.Lint = "if [ -f " + prePushLintBadFile + " ]; then echo '" + prePushLintMessage + "'; exit 1; fi"
-	f.sctx.Config.Commands.Test = "touch " + prePushTestMarker
+	lint := "if [ -f " + prePushLintBadFile + " ]; then echo '" + prePushLintMessage + "'; exit 1; fi"
+	if runtime.GOOS == "windows" {
+		// Configured commands run through cmd.exe there, which has no [ or fi.
+		lint = "if exist " + prePushLintBadFile + " (echo " + prePushLintMessage + "& exit 1)"
+	}
+	f.sctx.Config.Commands.Lint = lint
+	f.sctx.Config.Commands.Test = "echo ran> " + prePushTestMarker
 }
 
 func writeLintBadFix(workDir string) {
