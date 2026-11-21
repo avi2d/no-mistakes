@@ -46,7 +46,7 @@ type piOutputSupport struct {
 // the provider support it, and otherwise on the prompt-inlined schema path
 // whose final text is validated against the same schema.
 func (a *piAgent) runStructured(ctx context.Context, opts RunOpts) (*Result, error) {
-	if len(opts.JSONSchema) == 0 {
+	if opts.NoTools || len(opts.JSONSchema) == 0 {
 		return a.runOnce(ctx, opts, false)
 	}
 	strict, reason := a.structuredOutputPath(ctx, opts)

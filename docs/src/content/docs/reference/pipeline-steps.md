@@ -213,7 +213,15 @@ Runs **targeted** local validation of the change and requested intent, then gath
 Local Test is never a repository-wide regression-suite substitute; broad regression is owned by remote CI and remains mandatory before a PR is ready.
 [`commands.test`](/no-mistakes/reference/repo-config/#commandstest) owns the configuration contract for any explicit baseline command.
 
-**Behavior:**
+If [`test.ci_only`](/no-mistakes/reference/global-config/#testci_only) is on, Test leaves repository tests to CI and records that in its step log and pull request summary.
+It does not run `commands.test`, machine-local test checks, Test preparation, base attribution, a repair turn, or live scenarios.
+It collects existing screenshots and videos from the run's evidence directory for the usual pull request publishers, including Cloudflare Pages.
+If media is available, Pi can choose which file to show first in a turn without tools, extensions, or MCP.
+An unavailable or unsupported agent leaves the files in order by path.
+Test does not capture new media or claim a live result in this mode.
+Other steps keep their own settings.
+
+**Default behavior:**
 
 - Before a configured test command, runs [`commands.prepare`](/no-mistakes/reference/repo-config/#commandsprepare) once for the isolated worktree if configured; later configured lint/format commands share that successful preparation. With trusted [`test.prepare: true`](/no-mistakes/reference/repo-config/#testprepare), agent-only Test also prepares before its first agent turn, including repairs. This opt-in is eager (even if Test later reports no surface); default agent-only behavior is unchanged.
 - If `commands.test` is set in repo config, runs it first as a baseline via the platform shell (`sh -c` on POSIX, `cmd.exe /c` on Windows) and captures output. Non-zero exit produces `error` findings and parks the Test step. Approving that gate records an explicit override on the step (`step_results.override_reason`) and copies it onto the PR attestation as `steps[].override_reason`; the [`require-no-mistakes`](#pipeline-step-attestation) check treats that as non-compliant unless trusted [`test.allow_approve_over_failure`](/no-mistakes/reference/repo-config/#testallow_approve_over_failure) is set. Configure a **targeted** command here (see repo-config); do not treat this field as CI-parity complete-suite configuration.

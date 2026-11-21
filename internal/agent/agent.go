@@ -35,7 +35,8 @@ type Agent interface {
 
 // RunOpts configures a single agent invocation.
 type RunOpts struct {
-	Prompt string
+	Prompt  string
+	NoTools bool
 	// RequireCompletedChildren refuses a successful native agent exit if its
 	// owned process group or job still has children after the bounded settle
 	// window, or completion cannot be verified.

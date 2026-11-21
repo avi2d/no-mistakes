@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 )
 
@@ -63,10 +64,16 @@ type steeredAgent struct {
 	preamble string
 }
 
-// Run prepends the worktree steering preamble before delegating to the
-// wrapped agent. All other RunOpts fields pass through unchanged.
+var ErrToolFreeAgentUnavailable = errors.New("agent does not support a tool-free turn")
+
 func (s steeredAgent) Run(ctx context.Context, opts RunOpts) (*Result, error) {
-	opts.Prompt = s.preamble + opts.Prompt
+	if opts.NoTools {
+		if _, ok := s.Agent.(*piAgent); !ok {
+			return nil, ErrToolFreeAgentUnavailable
+		}
+	} else {
+		opts.Prompt = s.preamble + opts.Prompt
+	}
 	return s.Agent.Run(ctx, opts)
 }
 

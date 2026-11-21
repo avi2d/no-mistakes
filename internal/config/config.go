@@ -1282,6 +1282,7 @@ func validatePathInstructionsBudget(sources []PathInstructionSource) error {
 
 // TestRaw is the YAML representation of test-step settings.
 type TestRaw struct {
+	CIOnly   bool        `yaml:"ci_only"`
 	Evidence EvidenceRaw `yaml:"evidence"`
 	// Prepare eagerly runs commands.prepare before agent-only Test, including
 	// repair turns. Repository-only and trusted-only regardless of
@@ -1377,6 +1378,7 @@ type CloudflarePagesRaw struct {
 // Instructions and AllowApproveOverFailure come from the trusted
 // default-branch repo config only (see TestRaw).
 type Test struct {
+	CIOnly                  bool
 	Prepare                 bool
 	BaseAttribution         bool
 	Evidence                Evidence
@@ -3704,6 +3706,7 @@ func EffectiveRepoConfig(pushed, trusted *RepoConfig, allowRepoCommands bool) *R
 		// The eager setup trigger is trusted-only even when executable command
 		// values may come from the pushed branch.
 		effective.Test.Prepare = trusted.Test.Prepare
+		effective.Test.CIOnly = trusted.Test.CIOnly
 		// Base attribution spends a second suite run and executes commands on
 		// another checkout, so it is trusted-only like the prepare trigger.
 		effective.Test.BaseAttribution = trusted.Test.BaseAttribution
@@ -3743,6 +3746,7 @@ func EffectiveRepoConfig(pushed, trusted *RepoConfig, allowRepoCommands bool) *R
 		effective.Test.Evidence.CloudflarePages = CloudflarePagesRaw{}
 		effective.Test.Instructions = ""
 		effective.Test.Prepare = false
+		effective.Test.CIOnly = false
 		effective.Test.BaseAttribution = false
 		effective.Test.AllowApproveOverFailure = ""
 		if !allowRepoCommands {
@@ -4363,6 +4367,7 @@ func merge(global *GlobalConfig, repo *RepoConfig, override *RepositoryOverride)
 	// evidence on this machine, and how long it keeps it, is never a
 	// repository's decision (see EvidenceRaw.LocalRoot).
 	applyEvidenceStorageOverrides(&test.Evidence, &global.Test.Evidence)
+	test.CIOnly = global.Test.CIOnly || repo.Test.CIOnly
 	// The runbook describes ONE repository's product, so it is resolved from
 	// the repository only - never from top-level global config, which has no
 	// repository to describe (a matching repository_overrides entry adds its

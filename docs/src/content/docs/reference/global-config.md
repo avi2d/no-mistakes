@@ -1554,7 +1554,8 @@ repository_overrides:
 | `nice` | `prepare`, `test`, `lint`, `format` | POSIX niceness adjustment from `0` to `19`; `0` leaves scheduling unchanged |
 
 Test runs the committed command first, then each added command in a separate shell, retaining a failure from either source even when another check succeeds.
-Test still performs its unconditional agent-driven end-user scenarios afterwards.
+By default, Test runs agent-driven end-user scenarios afterwards.
+With [`test.ci_only`](#testci_only), Test runs neither the committed test command nor the added checks.
 Lint runs additional checks after the existing lint duty, including agent-driven lint when `commands.lint` is empty.
 An added check's failure parks the step rather than silently passing; existing explicit approval rules still apply.
 Its finding names that machine-local check and its exit code, and never attributes the failure to the committed command, including when the committed command is empty.
@@ -1659,6 +1660,21 @@ If the default evidence directory also overlaps a worktree placement, run creati
 A run records its evidence directory at creation. A later change to `evidence_dir` does not retarget that run. A run recorded before this setting existed keeps resolving through `test.evidence.local_root`.
 
 For GitLab image uploads from that run directory, see [Pull request](/no-mistakes/reference/pipeline-steps/#pull-request).
+
+### test.ci_only
+
+```yaml
+test:
+  ci_only: true
+```
+
+Set `test.ci_only: true` to leave repository tests to CI for every repository on this machine.
+The default is `false`.
+A repository can [enable the same setting](/no-mistakes/reference/repo-config/#testci_only) for itself but cannot turn off a global `true`.
+
+The [Test step](/no-mistakes/reference/pipeline-steps/#test) reports that tests are left to CI and collects any preview media already in the run's evidence directory.
+The setting does not create or change a CI workflow.
+Set up CI to run the repository's tests.
 
 ### test.evidence
 

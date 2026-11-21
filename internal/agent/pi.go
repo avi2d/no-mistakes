@@ -65,6 +65,9 @@ func (a *piAgent) runOnce(ctx context.Context, opts RunOpts, strict bool) (*Resu
 		return nil, fmt.Errorf("invalid pi session identity")
 	}
 	args := a.buildArgs(opts.Session)
+	if opts.NoTools {
+		args = a.toolFreeArgs()
+	}
 	if strict {
 		extension, cleanup, err := preparePiOutput(opts.JSONSchema)
 		if err != nil {
@@ -197,6 +200,20 @@ func (p *piParser) failedResult() *Result {
 		res.ModelProvider = p.provider
 	}
 	return res
+}
+
+func (a *piAgent) toolFreeArgs() []string {
+	args := []string{
+		"--mode", "json", "--no-session", "--no-tools",
+		"--no-extensions", "--no-mcp", "--no-skills",
+		"--no-context-files", "--no-prompt-templates",
+	}
+	for _, flag := range []string{"--provider", "--model", "--thinking"} {
+		if value, found := piFlagValue(a.extraArgs, flag); found && value != "" && !strings.HasPrefix(value, "-") {
+			args = append(args, flag, value)
+		}
+	}
+	return args
 }
 
 func piStdinError(err error) error {
