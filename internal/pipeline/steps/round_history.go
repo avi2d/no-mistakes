@@ -473,9 +473,17 @@ func declinedFindingLines(r *db.StepRound, earlierFixes map[string]bool) []strin
 		if err != nil {
 			return nil
 		}
+		followUps := make(map[string]bool)
+		if r.ReviewFollowUpsJSON != nil {
+			deferred, _ := types.ParseFindingsJSON(*r.ReviewFollowUpsJSON)
+			for _, item := range deferred.Items {
+				followUps[pipeline.FindingDecisionKey(item)] = true
+			}
+		}
 		kept := findings.Items[:0]
 		for _, item := range findings.Items {
-			if !earlierFixes[pipeline.FindingDecisionKey(item)] {
+			key := pipeline.FindingDecisionKey(item)
+			if !earlierFixes[key] && !followUps[key] {
 				kept = append(kept, item)
 			}
 		}
@@ -618,6 +626,16 @@ func renderRoundHistoryEntry(r *db.StepRound, earlierFixes map[string]bool, ownS
 		if items := renderRoundFindingLines(*r.FindingsJSON); len(items) > 0 {
 			b.WriteString("\nfindings:")
 			for _, line := range items {
+				b.WriteString("\n  - ")
+				b.WriteString(line)
+			}
+		}
+	}
+
+	if r.ReviewFollowUpsJSON != nil {
+		if lines := renderRoundFindingLines(*r.ReviewFollowUpsJSON); len(lines) > 0 {
+			b.WriteString("\nreview_follow_ups:")
+			for _, line := range lines {
 				b.WriteString("\n  - ")
 				b.WriteString(line)
 			}

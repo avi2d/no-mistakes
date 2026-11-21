@@ -26,7 +26,7 @@ After refusal, run `no-mistakes axi sync --recover` from the registered working 
 :::caution[Security: gate-control fields are read from the default branch]
 `commands.*` and `gates[].command` execute arbitrary shell on the daemon host via `sh -c` / `cmd.exe /c`, and `agent` selects which process launches there (including ordered fallback lists, ACP aliases such as `cursor` and `devin`, and `acp:` targets) with the maintainer's credentials.
 To prevent a supply-chain attack where a contributor lands a hostile value on a gated branch, the daemon always reads **`commands` and `agent` from your default branch** (e.g. `origin/main`), never from the pushed SHA, and reads them at the exact commit a fresh fetch resolved (so a stale `origin/<default>` ref cannot serve a value the live default branch removed).
-The daemon also reads `document.instructions`, `review.conversation`, `review.path_instructions`, `review.agent_timeout`, `review.max_fix_rounds`, `gates`, `auto_fix.gates`, `protected_paths`, `disable_project_settings`, `no_ci`, `ci.rerun_transient`, `ci.revalidate_repairs`, `ci.required_reviews`, `ci.review_bot_comments`, `ci.rebase_behind`, `ci.carry_review_on_replay`, `ci.release_after_checks_pass`, `ci.instructions`, `rebase.strategy`, `test.prepare`, `test.base_attribution`, `test.instructions`, `test.allow_approve_over_failure`, `test.evidence.branch`, `test.evidence.cloudflare_pages.project`, `intent.check`, `pr.template`, `pr.publish_intent`, `pr.intent`, and `pr.appendix` only from that trusted copy.
+The daemon also reads `document.instructions`, `review.conversation`, `review.path_instructions`, `review.agent_timeout`, `review.max_fix_rounds`, `review.defer_non_errors`, `gates`, `auto_fix.gates`, `protected_paths`, `disable_project_settings`, `no_ci`, `ci.rerun_transient`, `ci.revalidate_repairs`, `ci.required_reviews`, `ci.review_bot_comments`, `ci.rebase_behind`, `ci.carry_review_on_replay`, `ci.release_after_checks_pass`, `ci.instructions`, `rebase.strategy`, `test.prepare`, `test.base_attribution`, `test.instructions`, `test.allow_approve_over_failure`, `test.evidence.branch`, `test.evidence.cloudflare_pages.project`, `intent.check`, `pr.template`, `pr.publish_intent`, `pr.intent`, and `pr.appendix` only from that trusted copy.
 `pr.base_branch` is trusted-default-branch-only as well, but unlike those fields it follows the same `allow_repo_commands: true` opt-in exception as `commands`/`agent` (see [`pr.base_branch`](#prbase_branch) below).
 If the default branch cannot be fetched and resolved to a readable commit, or its present `.no-mistakes.yaml` cannot be read and parsed, the run aborts before launching an agent. The pre-admission `intent.check` fetch is the exception: if that fetch fails, intent checks are unavailable/off for that launch, a warning is logged, and the same failed result is reused by trusted-config loading without retrying.
 A readable default-branch tree with no `.no-mistakes.yaml` is valid and uses defaults.
@@ -544,7 +544,10 @@ The trade-off is latency against precision. A question costs the run a park - te
 
 ### review.max_fix_rounds
 
-An opt-in limit on **total Review fix rounds per run**, counting automatic fixes and explicit `axi respond --action fix` requests together. The initial review does not spend a fix round; each allowed fix includes its full rereview. Schema retries, review-question answers, and coverage-only continuations do not spend another fix round.
+An opt-in limit on **total Review fix rounds per run**, counting automatic fixes and explicit `axi respond --action fix` requests together.
+The initial review does not spend a fix round.
+Each allowed fix includes its rereview unless [`review.defer_non_errors`](#reviewdefer_non_errors) skips it.
+Schema retries, review-question answers, and coverage-only continuations do not spend another fix round.
 
 | | |
 |---|---|
@@ -571,6 +574,38 @@ A trusted value, including `0`, wins over the global value.
 Negative and non-integer values fail configuration loading.
 
 This is a round-count budget, not a cumulative time or token budget, a change to rereview scope, or a cancellation/custody mechanism. Other steps are unaffected.
+
+### review.defer_non_errors
+
+Defers selected Review warnings and info findings starting with the gate after the second Review round.
+
+| | |
+|---|---|
+| Type | boolean |
+| Default | the global [`review.defer_non_errors`](/no-mistakes/reference/global-config/#reviewdefer_non_errors), else `false` |
+| Source | trusted default-branch repository config only |
+
+```yaml
+review:
+  defer_non_errors: true
+```
+
+On the first Review gate, a fix response can still send findings of any severity to the fixer.
+From the second round on, a fix response sends only selected `error` findings to the fixer.
+Selected `warning` and `info` findings, including ones you add to the response, go in **Review follow-ups** in the PR description instead.
+`axi respond` lists their IDs under `recorded.follow_ups`, not `recorded.fixed`.
+Findings you explicitly ignore do not become follow-ups.
+
+If no selected finding is an error, Review approves the gate without another fix round.
+This does not bypass a protected-path refusal, an open or unreadable review conversation, a coverage-only gate, or an earlier selected error that remains unresolved.
+The option does not change the automatic fix budget or the response validation rules.
+
+With this option on, if a fixer leaves the reviewed commit unchanged and the worktree clean, Review skips the rereview.
+The gate stays parked with the unresolved findings and a no-diff notice.
+The skipped turn does not add coverage or verify any fixes.
+
+A trusted repository value wins over the global default, including `false`.
+The pushed branch cannot change the setting, even with `allow_repo_commands: true`.
 
 ### review.agent_timeout
 
