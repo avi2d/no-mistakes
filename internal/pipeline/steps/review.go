@@ -132,6 +132,7 @@ func (s *ReviewStep) Execute(sctx *pipeline.StepContext) (*pipeline.StepOutcome,
 	// unresolved.
 	var fixSummary string
 	if sctx.Fixing && !sctx.SkipFixExecution {
+		fixStartHead := sctx.Run.HeadSHA
 		previousFindings := sanitizedPreviousFindingsForPrompt(sctx.PreviousFindings)
 		historySection := executionContextPromptSection(sctx.WorkDir) + roundHistoryPromptSection(sctx) + userIntentPromptSection(sctx) + planSection + testguidance.Rule
 		fixPrompt := fmt.Sprintf(
@@ -193,6 +194,29 @@ Previous review findings to address:
 			return nil, err
 		}
 		fixSummary = summary
+		if sctx.Config.Review.DeferNonErrors && fixStartHead == sctx.PriorReviewedHeadSHA && sctx.Run.HeadSHA == fixStartHead {
+			status, err := git.Run(ctx, sctx.WorkDir, "status", "--porcelain")
+			if err != nil {
+				return nil, fmt.Errorf("check worktree after unchanged Review fix: %w", err)
+			}
+			if status == "" {
+				conversation, err := loadReviewConversation(sctx, convDir)
+				if err != nil {
+					return nil, err
+				}
+				findings, err := types.MarshalFindingsJSON(types.Findings{Items: openReviewQuestionFindings(conversation)})
+				if err != nil {
+					return nil, err
+				}
+				sctx.Log("skipping re-review: the fix left HEAD and the worktree unchanged")
+				return &pipeline.StepOutcome{
+					NeedsApproval:      true,
+					Findings:           findings,
+					FixSummary:         fixSummary,
+					ReviewFixUnchanged: true,
+				}, nil
+			}
+		}
 	}
 	reviewTargetSHA := sctx.Run.HeadSHA
 
@@ -568,14 +592,15 @@ Risk assessment (after listing all findings):
 	findingsJSON, _ := json.Marshal(findings)
 
 	return approvedReviewOutcome(reviewTargetSHA, &pipeline.StepOutcome{
-		NeedsApproval:     needsApproval,
-		AutoFixable:       len(findings.Items) > 0,
-		Findings:          string(findingsJSON),
-		ReviewedPaths:     findings.ReviewedPaths,
-		WithdrawnFindings: withdrawnFindings(findings),
-		ReviewablePaths:   reviewable,
-		ReviewBaseSHA:     baseSHA,
-		FixSummary:        fixSummary,
+		NeedsApproval:          needsApproval,
+		AutoFixable:            len(findings.Items) > 0,
+		Findings:               string(findingsJSON),
+		ReviewedPaths:          findings.ReviewedPaths,
+		ReviewCoverageComplete: reviewedPathsCoverReviewable(findings.ReviewedPaths, reviewable),
+		WithdrawnFindings:      withdrawnFindings(findings),
+		ReviewablePaths:        reviewable,
+		ReviewBaseSHA:          baseSHA,
+		FixSummary:             fixSummary,
 	})
 }
 

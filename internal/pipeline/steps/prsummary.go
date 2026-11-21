@@ -15,6 +15,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/kunchenguid/no-mistakes/internal/db"
+	"github.com/kunchenguid/no-mistakes/internal/pipeline"
 	"github.com/kunchenguid/no-mistakes/internal/scm"
 	"github.com/kunchenguid/no-mistakes/internal/types"
 )
@@ -152,6 +153,11 @@ func buildPipelineSummaryFor(steps []*db.StepResult, rounds map[string][]*db.Ste
 			// and is what the regression asserts. The real attestation is
 			// emitted separately by buildPipelineAttestation and is untouched.
 			detailBlocks = append(detailBlocks, neutralizeAttestationMarkers(provider, detail))
+		}
+		if sr.StepName == types.StepReview {
+			if followUps := renderReviewFollowUps(sr, stepRounds, flavor); followUps != "" {
+				detailBlocks = append(detailBlocks, neutralizeAttestationMarkers(provider, followUps))
+			}
 		}
 	}
 
@@ -1583,9 +1589,35 @@ func fixRoundLine(r *db.StepRound) string {
 	}
 }
 
-// writeFindingItems renders each finding as a `file:line - description` bullet,
-// marking a review finding its round's reviewer did not report, followed by
-// any test command details for the test step.
+func renderReviewFollowUps(sr *db.StepResult, rounds []*db.StepRound, flavor prBodyFlavor) string {
+	seen := make(map[string]bool)
+	var followUps types.Findings
+	for _, round := range rounds {
+		if round.ReviewFollowUpsJSON == nil {
+			continue
+		}
+		findings, err := types.ParseFindingsJSON(*round.ReviewFollowUpsJSON)
+		if err != nil {
+			continue
+		}
+		for _, finding := range findings.Items {
+			key := pipeline.FindingDecisionKey(finding)
+			if !seen[key] {
+				seen[key] = true
+				finding.Carried = ""
+				followUps.Items = append(followUps.Items, finding)
+			}
+		}
+	}
+	if len(followUps.Items) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("### Review follow-ups\n\n")
+	writeFindingItems(&b, sr, &followUps, flavor)
+	return b.String()
+}
+
 func writeFindingItems(b *strings.Builder, sr *db.StepResult, findings *types.Findings, flavor prBodyFlavor) {
 	for _, f := range findings.Items {
 		emoji := severityEmoji(f.Severity)
