@@ -112,6 +112,13 @@ func loadReviewConversation(sctx *pipeline.StepContext, dir string) (reviewqa.Co
 	return conv, nil
 }
 
+const questionActionOptions = `  - "delete": discard unlanded work, not a routine source edit.
+  - "merge": merge a change into its target branch.
+  - "release": publish a release.
+  - "login": authenticate or change the authenticated account.
+  - "push": push commits or refs to a remote.
+  - "none": make a routine choice the agent may make. Do not use "none" when the choice would authorize any of the other actions.`
+
 // reviewQuestionProtocolSection tells the reviewer how to ask while it works.
 //
 // The channel is two append-only files rather than a tool, because the agent
@@ -140,7 +147,8 @@ func reviewQuestionProtocolSection(dir string, conv reviewqa.Conversation) strin
 	fmt.Fprintf(&b, "- You have a question channel: %s/%s (you append) and %s/%s (the operator appends). Create the directory if it does not exist.\n", dir, reviewqa.QuestionsFile, dir, reviewqa.AnswersFile)
 	fmt.Fprintf(&b, "- Creating %s and appending to those two files is an EXPLICIT exception to the workspace boundary stated above, and it is required by this protocol rather than optional. That directory is this run's own managed area, not the project's, so the boundary's out-of-worktree rule does not apply to it. Do not resolve the two instructions the other way: a reviewer that creates nothing produces a conversation indistinguishable from having had no question at all, and every question you were going to ask is lost silently.\n", dir)
 	b.WriteString("- Emit a question the MOMENT you have substantiated it. Do not hold questions to the end of the turn.\n")
-	b.WriteString("- Append one JSON object per line to " + reviewqa.QuestionsFile + `, e.g. {"id":"q1","kind":"question","question":"<the question>","options":["<option>","<option>"],"weight":"major","file":"<path>","line":<n>,"area":"<what you were reviewing>"}` + "\n")
+	b.WriteString("- Append one JSON object per line to " + reviewqa.QuestionsFile + `, e.g. {"id":"q1","kind":"question","question":"<the question>","action":"none","options":["<option>","<option>"],"weight":"major","file":"<path>","line":<n>,"area":"<what you were reviewing>"}` + "\n")
+	b.WriteString("- Every question needs an action. Use the same values as question_action for an ask-user finding.\n")
 	b.WriteString("- Ask ONLY the larger questions - the ones you would otherwise raise as an \"ask-user\" finding: product behavior, the author's deliberate intent, access policy, or a remedy that would extend the change. Decide minor questions yourself and report them as ordinary findings or as a pass. Never emit a question with weight \"minor\"; it is dropped, not escalated.\n")
 	b.WriteString("- Every question needs 2-4 concrete `options`. The answer comes back as a multiple choice, so an open-ended question is a worse question, not a shorter one.\n")
 	b.WriteString("- KEEP REVIEWING while a question is open. Move to the next area; do not wait, do not sleep, do not poll in a loop.\n")
@@ -155,7 +163,7 @@ func reviewQuestionProtocolSection(dir string, conv reviewqa.Conversation) strin
 				fmt.Fprintf(&b, "  - (%d more still unanswered; do not re-ask any of them)\n", len(open)-i)
 				break
 			}
-			fmt.Fprintf(&b, "  - %s: %s\n", sanitizePromptText(e.ID), boundReviewQuestionText(sanitizePromptText(e.Question.Question), maxReviewQuestionPromptChars))
+			fmt.Fprintf(&b, "  - %s (action: %s): %s\n", sanitizePromptText(e.ID), e.Question.Action.OrUnknown(), boundReviewQuestionText(sanitizePromptText(e.Question.Question), maxReviewQuestionPromptChars))
 		}
 	}
 	return b.String()
@@ -193,7 +201,7 @@ func reviewAnswersPromptSection(conv reviewqa.Conversation) string {
 				fmt.Fprintf(&b, "  - (%d more withdrawn)\n", len(withdrawn)-i)
 				break
 			}
-			fmt.Fprintf(&b, "  - %s: %s\n", sanitizePromptText(e.ID), boundReviewQuestionText(sanitizePromptText(e.Question.Question), maxReviewQuestionPromptChars))
+			fmt.Fprintf(&b, "  - %s (action: %s): %s\n", sanitizePromptText(e.ID), e.Question.Action.OrUnknown(), boundReviewQuestionText(sanitizePromptText(e.Question.Question), maxReviewQuestionPromptChars))
 		}
 	}
 	return b.String()
@@ -358,6 +366,7 @@ func recordAnsweredQuestions(sctx *pipeline.StepContext, conv reviewqa.Conversat
 			RunID:      sctx.Run.ID,
 			AskOrdinal: ask.Ordinal,
 			Question:   ask.Question.Question,
+			Action:     ask.Question.Action,
 			Options:    ask.Question.Options,
 			File:       ask.Question.File,
 			Line:       ask.Question.Line,
@@ -497,13 +506,14 @@ func openReviewQuestionFindings(conv reviewqa.Conversation) []types.Finding {
 		b.WriteString(e.ID)
 		b.WriteString(" --answer \"<one of the options>\"")
 		findings = append(findings, types.Finding{
-			ID:          reviewQuestionFindingID(e.ID),
-			Severity:    types.FindingSeverityWarning,
-			File:        e.File,
-			Line:        e.Line,
-			Description: boundReviewQuestionText(b.String(), maxReviewQuestionDescription),
-			Action:      types.ActionAskUser,
-			Category:    types.FindingCategoryReviewQuestion,
+			ID:             reviewQuestionFindingID(e.ID),
+			Severity:       types.FindingSeverityWarning,
+			File:           e.File,
+			Line:           e.Line,
+			Description:    boundReviewQuestionText(b.String(), maxReviewQuestionDescription),
+			Action:         types.ActionAskUser,
+			Category:       types.FindingCategoryReviewQuestion,
+			QuestionAction: e.Question.Action,
 		})
 	}
 	if len(omittedIDs) > 0 {
@@ -537,6 +547,7 @@ func openReviewQuestionFindings(conv reviewqa.Conversation) []types.Finding {
 func marshalSanitizedQuestionLine(e reviewqa.Entry) string {
 	parts := []string{
 		fmt.Sprintf("id=%s", sanitizePromptText(e.ID)),
+		fmt.Sprintf("action=%s", e.Question.Action.OrUnknown()),
 		fmt.Sprintf("question=%q", sanitizePromptText(e.Question.Question)),
 		fmt.Sprintf("answer=%q", sanitizePromptText(e.Answer.Answer)),
 	}
@@ -551,6 +562,7 @@ func marshalSanitizedQuestionLine(e reviewqa.Entry) string {
 
 func marshalSanitizedAnswerLine(a db.ReviewAnswer) string {
 	parts := []string{
+		fmt.Sprintf("action=%s", a.Action.OrUnknown()),
 		fmt.Sprintf("question=%q", sanitizePromptText(a.Question)),
 		fmt.Sprintf("answer=%q", sanitizePromptText(a.Answer)),
 	}

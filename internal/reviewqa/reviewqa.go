@@ -32,6 +32,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/kunchenguid/no-mistakes/internal/types"
 )
 
 // Kinds a questions.ndjson line can carry.
@@ -80,15 +82,16 @@ const (
 // a clock the reviewer controls. Unknown fields decode away, so a line that
 // carries them still parses.
 type Question struct {
-	ID       string   `json:"id"`
-	Kind     string   `json:"kind"`
-	Question string   `json:"question,omitempty"`
-	Options  []string `json:"options,omitempty"`
-	Weight   string   `json:"weight,omitempty"`
-	File     string   `json:"file,omitempty"`
-	Line     int      `json:"line,omitempty"`
-	Area     string   `json:"area,omitempty"`
-	Reason   string   `json:"reason,omitempty"`
+	ID       string               `json:"id"`
+	Kind     string               `json:"kind"`
+	Question string               `json:"question,omitempty"`
+	Action   types.QuestionAction `json:"action,omitempty"`
+	Options  []string             `json:"options,omitempty"`
+	Weight   string               `json:"weight,omitempty"`
+	File     string               `json:"file,omitempty"`
+	Line     int                  `json:"line,omitempty"`
+	Area     string               `json:"area,omitempty"`
+	Reason   string               `json:"reason,omitempty"`
 }
 
 // Answer is one line of answers.ndjson.
@@ -433,6 +436,7 @@ func classifyQuestionLine(line string) (Question, string, bool) {
 	if strings.EqualFold(strings.TrimSpace(q.Weight), WeightMinor) {
 		return q, fmt.Sprintf("dropped minor-weight question %q; the reviewer decides minor questions itself", q.ID), false
 	}
+	q.Action = q.Action.OrUnknown()
 	return q, "", true
 }
 

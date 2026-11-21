@@ -67,6 +67,7 @@ func marshalFindingIDs(ids []string) string {
 func findingKey(item types.Finding) types.Finding {
 	item.ID = ""
 	item.Action = ""
+	item.QuestionAction = ""
 	item.Source = ""
 	item.UserInstructions = ""
 	item.Carried = ""

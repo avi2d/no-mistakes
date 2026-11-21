@@ -374,6 +374,8 @@ Rules:
   - "auto-fix": the finding is a non-functional, non user-visible issue (correctness, error handling, security, performance, mechanical code quality) that can be safely fixed without any discussion about the author's intent.
   - "no-op": the finding is informational and does not require any action (e.g. noting a pattern, acknowledging a tradeoff).
 - Classify by the remedy, not only by the topic. If the smallest honest remedy for a finding would add new durable state, a schema change, new background, retry, or persistence machinery, a new subsystem, or otherwise EXTEND the change beyond its stated intent rather than CORRECT what it already does, the action must be "ask-user" even when the defect itself looks mechanical. Say in the description that the remedy, not the defect, is what needs authorization.
+- For every "ask-user" finding, set question_action to the action the decision would authorize. Do not set it for other findings.
+%s
 - For each finding, set review_scope to exactly one of:
   - "source": every source-verifiable finding, including any finding that mixes a source defect with a delivery claim.
   - "pipeline-owned-delivery": only a finding whose sole claim is that this run's remote branch, push, PR, or CI output is not present yet.
@@ -399,6 +401,7 @@ Risk assessment (after listing all findings):
 		baseBranch,
 		ignorePatterns,
 		reviewCoverageSection(reviewable),
+		questionActionOptions,
 		historySection,
 		pathInstructions,
 		agent.MemoryFilesRule,

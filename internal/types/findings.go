@@ -202,14 +202,15 @@ func KnownTestVerdicts() []string { return slices.Clone(knownTestVerdicts) }
 
 // Finding represents a single review, test, lint, or PR comment finding.
 type Finding struct {
-	ID               string `json:"id,omitempty"`
-	Severity         string `json:"severity"`
-	File             string `json:"file,omitempty"`
-	Line             int    `json:"line,omitempty"`
-	Description      string `json:"description"`
-	Action           string `json:"action"`
-	Source           string `json:"source,omitempty"`
-	UserInstructions string `json:"user_instructions,omitempty"`
+	ID               string         `json:"id,omitempty"`
+	Severity         string         `json:"severity"`
+	File             string         `json:"file,omitempty"`
+	Line             int            `json:"line,omitempty"`
+	Description      string         `json:"description"`
+	Action           string         `json:"action"`
+	QuestionAction   QuestionAction `json:"question_action,omitempty"`
+	Source           string         `json:"source,omitempty"`
+	UserInstructions string         `json:"user_instructions,omitempty"`
 	// DriverInstructions is fix guidance from an agent driving the run through
 	// `no-mistakes axi`. It is kept apart from UserInstructions because it
 	// scopes one fix round and is not a decision the user made.
@@ -320,21 +321,22 @@ type TestArtifact struct {
 }
 
 type findingWire struct {
-	ID                  string `json:"id,omitempty"`
-	Severity            string `json:"severity"`
-	File                string `json:"file,omitempty"`
-	Line                int    `json:"line,omitempty"`
-	Description         string `json:"description"`
-	Action              string `json:"action"`
-	Source              string `json:"source,omitempty"`
-	UserInstructions    string `json:"user_instructions,omitempty"`
-	DriverInstructions  string `json:"driver_instructions,omitempty"`
-	ReviewScope         string `json:"review_scope,omitempty"`
-	Category            string `json:"category,omitempty"`
-	Check               string `json:"check,omitempty"`
-	CheckID             string `json:"check_id,omitempty"`
-	Carried             string `json:"carried,omitempty"`
-	RequiresHumanReview *bool  `json:"requires_human_review,omitempty"`
+	ID                  string         `json:"id,omitempty"`
+	Severity            string         `json:"severity"`
+	File                string         `json:"file,omitempty"`
+	Line                int            `json:"line,omitempty"`
+	Description         string         `json:"description"`
+	Action              string         `json:"action"`
+	QuestionAction      QuestionAction `json:"question_action,omitempty"`
+	Source              string         `json:"source,omitempty"`
+	UserInstructions    string         `json:"user_instructions,omitempty"`
+	DriverInstructions  string         `json:"driver_instructions,omitempty"`
+	ReviewScope         string         `json:"review_scope,omitempty"`
+	Category            string         `json:"category,omitempty"`
+	Check               string         `json:"check,omitempty"`
+	CheckID             string         `json:"check_id,omitempty"`
+	Carried             string         `json:"carried,omitempty"`
+	RequiresHumanReview *bool          `json:"requires_human_review,omitempty"`
 }
 
 // WithdrawnFinding is one carried finding an answer round retracted, naming
@@ -704,6 +706,12 @@ func itoa(v int) string {
 	return string(buf[i:])
 }
 
+func (f Finding) MarshalJSON() ([]byte, error) {
+	type wire Finding
+	f.QuestionAction = f.AskUserAction()
+	return json.Marshal(wire(f))
+}
+
 func (f *Finding) UnmarshalJSON(data []byte) error {
 	var wire findingWire
 	if err := json.Unmarshal(data, &wire); err != nil {
@@ -715,6 +723,7 @@ func (f *Finding) UnmarshalJSON(data []byte) error {
 	f.Line = wire.Line
 	f.Description = wire.Description
 	f.Action = wire.Action
+	f.QuestionAction = wire.QuestionAction
 	f.Source = wire.Source
 	f.UserInstructions = wire.UserInstructions
 	f.DriverInstructions = wire.DriverInstructions
@@ -730,7 +739,15 @@ func (f *Finding) UnmarshalJSON(data []byte) error {
 			f.Action = ActionAutoFix
 		}
 	}
+	f.QuestionAction = f.AskUserAction()
 	return nil
+}
+
+func (f Finding) AskUserAction() QuestionAction {
+	if f.ActionOrDefault() != ActionAskUser {
+		return ""
+	}
+	return f.QuestionAction.OrUnknown()
 }
 
 // ActionOrDefault resolves a finding's effective action, defaulting an

@@ -407,8 +407,8 @@ func TestWriteGateShape(t *testing.T) {
 		"  step: review\n",
 		"  status: awaiting_approval\n",
 		"  summary: 1 blocking issue\n",
-		"  findings[1]{id,severity,file,action,description}:\n",
-		`    review-1,warning,main.go,ask-user,"calls os.Exit, leaks fd"`,
+		"  findings[1]{id,severity,file,action,description,question_action}:\n",
+		`    review-1,warning,main.go,ask-user,"calls os.Exit, leaks fd",unknown`,
 		"no-mistakes axi respond --action approve",
 		"to have the pipeline fix the selected findings (do not edit files yourself)",
 		// Review gate carries the auto-fix-disabled note and the keep-driving
@@ -435,10 +435,10 @@ func TestWriteGateShape_MarksWhatTheReviewerDidNotReport(t *testing.T) {
 	}
 	out := axiDoc(gateFields(gate)...)
 	for _, want := range []string{
-		"  findings[3]{id,severity,file,action,carried,description}:\n",
-		`    R1,error,style.ts,ask-user,"not selected earlier, not re-reported",hues`,
-		`    R2,warning,style.ts,auto-fix,"fixed earlier, not re-reported, awaiting verification",prefixes`,
-		`    review-3,warning,style.ts,auto-fix,"",redirects`,
+		"  findings[3]{id,severity,file,action,carried,description,question_action}:\n",
+		`    R1,error,style.ts,ask-user,"not selected earlier, not re-reported",hues,unknown`,
+		`    R2,warning,style.ts,auto-fix,"fixed earlier, not re-reported, awaiting verification",prefixes,""`,
+		`    review-3,warning,style.ts,auto-fix,"",redirects,""`,
 		"A finding with a `carried` note is one this round's reviewer did not report",
 	} {
 		if !strings.Contains(out, want) {

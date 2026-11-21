@@ -26,6 +26,13 @@ func parseFindings(raw string) (*findings, error) {
 	return &f, nil
 }
 
+func findingDescription(item finding) string {
+	if action := item.AskUserAction(); action != "" {
+		return fmt.Sprintf("[question action: %s] %s", action, item.Description)
+	}
+	return item.Description
+}
+
 // severityIcon returns the visual indicator for a finding severity.
 func severityIcon(severity string) string {
 	switch severity {
@@ -323,7 +330,7 @@ func renderFindingsRange(f *findings, width int, cursor int, selected map[string
 
 		// Description indented. Unfocused descriptions are dim to create contrast.
 		// Gutter width: cursor(1) + sp(1) + checkbox(3) + sp(1) + icon(1) + sp(1) = 8
-		desc := wrapIndentedText(item.Description, width, 8)
+		desc := wrapIndentedText(findingDescription(item), width, 8)
 		if idx != cursor {
 			desc = dimStyle.Render(desc)
 		}

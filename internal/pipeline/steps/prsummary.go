@@ -1601,7 +1601,11 @@ func writeFindingItems(b *strings.Builder, sr *db.StepResult, findings *types.Fi
 		if label := f.Carried.Label(); label != "" {
 			carried = "(carried: " + label + ") "
 		}
-		b.WriteString(fmt.Sprintf("- %s %s%s%s\n", emoji, loc, carried, escapePRText(f.Description, flavor)))
+		action := ""
+		if questionAction := f.AskUserAction(); questionAction != "" {
+			action = fmt.Sprintf("(question action: %s) ", questionAction)
+		}
+		b.WriteString(fmt.Sprintf("- %s %s%s%s%s\n", emoji, loc, carried, action, escapePRText(f.Description, flavor)))
 	}
 	writeTestedDetails(b, sr, findings, flavor)
 }

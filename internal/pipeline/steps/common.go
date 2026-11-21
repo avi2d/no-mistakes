@@ -312,6 +312,7 @@ var reviewFindingsSchema = json.RawMessage(`{
 					"line": {"type": "integer"},
 					"description": {"type": "string"},
 					"action": {"type": "string", "enum": ["no-op", "auto-fix", "ask-user"]},
+					"question_action": {"type": "string", "enum": ["delete", "merge", "release", "login", "push", "none"], "description": "Required for ask-user findings"},
 					"review_scope": {"type": "string", "enum": ["source", "pipeline-owned-delivery", "external-delivery"]}
 				},
 				"required": ["severity", "description", "action", "review_scope"]
