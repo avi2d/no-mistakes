@@ -10,9 +10,12 @@ on:
     paths-ignore:
       - .release-please-manifest.json
       - CHANGELOG.md
-  # The full matrix runs only on manual dispatch, so pull requests run only
-  # the static check. The trigger carries no docs-only filter: branch
-  # protection requires that check, so docs-only changes run it too.
+  push:
+    branches:
+      - main
+  # The full matrix runs on pushes to main and on manual dispatch, so pull
+  # requests run only the static check. The trigger carries no docs-only
+  # filter: branch protection requires that check, so docs-only changes run it too.
   workflow_dispatch:
 
 # One run per branch: a newer push cancels the older run on the same branch.
