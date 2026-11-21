@@ -26,13 +26,13 @@ After refusal, run `no-mistakes axi sync --recover` from the registered working 
 :::caution[Security: gate-control fields are read from the default branch]
 `commands.*` and `gates[].command` execute arbitrary shell on the daemon host via `sh -c` / `cmd.exe /c`, and `agent` selects which process launches there (including ordered fallback lists, ACP aliases such as `cursor` and `devin`, and `acp:` targets) with the maintainer's credentials.
 To prevent a supply-chain attack where a contributor lands a hostile value on a gated branch, the daemon always reads **`commands` and `agent` from your default branch** (e.g. `origin/main`), never from the pushed SHA, and reads them at the exact commit a fresh fetch resolved (so a stale `origin/<default>` ref cannot serve a value the live default branch removed).
-The daemon also reads `document.instructions`, `review.conversation`, `review.path_instructions`, `review.agent_timeout`, `review.max_fix_rounds`, `review.defer_non_errors`, `gates`, `auto_fix.gates`, `protected_paths`, `disable_project_settings`, `no_ci`, `ci.rerun_transient`, `ci.revalidate_repairs`, `ci.required_reviews`, `ci.review_bot_comments`, `ci.rebase_behind`, `ci.carry_review_on_replay`, `ci.release_after_checks_pass`, `ci.instructions`, `rebase.strategy`, `test.prepare`, `test.base_attribution`, `test.instructions`, `test.allow_approve_over_failure`, `test.evidence.branch`, `test.evidence.cloudflare_pages.project`, `intent.check`, `pr.template`, `pr.publish_intent`, `pr.intent`, and `pr.appendix` only from that trusted copy.
+The daemon also reads `document.instructions`, `review.conversation`, `review.path_instructions`, `review.agent_timeout`, `review.max_fix_rounds`, `review.defer_non_errors`, `gates`, `auto_fix.gates`, `protected_paths`, `disable_project_settings`, `no_ci`, `ci.rerun_transient`, `ci.revalidate_repairs`, `ci.required_reviews`, `ci.review_bot_comments`, `ci.rebase_behind`, `ci.carry_review_on_replay`, `ci.release_after_checks_pass`, `ci.instructions`, `rebase.strategy`, `test.ci_only`, `test.prepare`, `test.base_attribution`, `test.instructions`, `test.allow_approve_over_failure`, `test.evidence.branch`, `test.evidence.cloudflare_pages.project`, `intent.check`, `pr.template`, `pr.publish_intent`, `pr.intent`, and `pr.appendix` only from that trusted copy.
 `pr.base_branch` is trusted-default-branch-only as well, but unlike those fields it follows the same `allow_repo_commands: true` opt-in exception as `commands`/`agent` (see [`pr.base_branch`](#prbase_branch) below).
 If the default branch cannot be fetched and resolved to a readable commit, or its present `.no-mistakes.yaml` cannot be read and parsed, the run aborts before launching an agent. The pre-admission `intent.check` fetch is the exception: if that fetch fails, intent checks are unavailable/off for that launch, a warning is logged, and the same failed result is reused by trusted-config loading without retrying.
 A readable default-branch tree with no `.no-mistakes.yaml` is valid and uses defaults.
 [`push.external_publisher`](#pushexternal_publisher) is also trusted-only, regardless of `allow_repo_commands`.
 Commit the gate-control settings you want to your default branch.
-Still read from the pushed branch are the non-executing fields `ignore_patterns`, core-step `auto_fix`, `commit`, intent extraction settings, `test`, `pr.title_format`, `pr.title_max_length`, and `providers`, except `intent.check`, `pr.intent`, `test.prepare`, `test.base_attribution`, `test.instructions`, `test.allow_approve_over_failure`, `test.evidence.branch`, and `test.evidence.cloudflare_pages.project`.
+Still read from the pushed branch are the non-executing fields `ignore_patterns`, core-step `auto_fix`, `commit`, intent extraction settings, `test`, `pr.title_format`, `pr.title_max_length`, and `providers`, except `intent.check`, `pr.intent`, `test.ci_only`, `test.prepare`, `test.base_attribution`, `test.instructions`, `test.allow_approve_over_failure`, `test.evidence.branch`, and `test.evidence.cloudflare_pages.project`.
 
 If you genuinely want per-branch `commands` and `agent` (for example, a single-developer repo where you trust your own feature branches), opt in with [`allow_repo_commands: true`](#allow_repo_commands) in this same file on your default branch. This re-enables the previous behavior with eyes open. The switch is read only from the trusted default-branch copy, so a contributor cannot self-enable it from a pushed branch.
 :::
@@ -1320,6 +1320,20 @@ intent:
 `off` performs no checks. `warn` records a private local warning and continues. `reject` stops the run before it can supersede another run or launch an agent. The same policy checks intent inferred later from a transcript before the summary is stored. `--skip intent` does not bypass the check. Warnings, errors, and logs name only rule indexes, never the matched text; warnings are not published as findings.
 
 Each config layer accepts at most 32 terms and patterns combined, at most 256 bytes per rule, and at most 8 KiB of rule text. Invalid modes, empty or oversized rules, over-limit policies, and invalid RE2 expressions fail config loading.
+
+### test.ci_only
+
+```yaml
+test:
+  ci_only: true
+```
+
+Set `test.ci_only: true` in the trusted default-branch copy of `.no-mistakes.yaml` to leave this repository's tests to CI.
+The daemon ignores this key on a pushed branch even if `allow_repo_commands` is enabled.
+If the [global setting](/no-mistakes/reference/global-config/#testci_only) is `true`, Test uses the same mode even if the repository sets `false`.
+
+The [Test step](/no-mistakes/reference/pipeline-steps/#test) runs no test commands or local live validation in this mode.
+It can still collect available preview media for the pull request.
 
 ### test.prepare
 
