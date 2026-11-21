@@ -246,7 +246,7 @@ func (m *RunManager) prepareRecoveredRun(ctx context.Context, run *db.Run) (*rec
 	}
 	// The daemon that held this run's variables has exited, so its run-token
 	// entries are skipped.
-	ag, _, err := newPipelineAgent(ctx, cfg, pipelineEvidenceRoot(m.paths, cfg, run), exec.LookPath, forgeEnvironment(forgeCtx), nil, quotaRecord)
+	ag, _, err := newPipelineAgent(ctx, cfg, pipelineEvidenceRoot(m.paths, cfg, run), exec.LookPath, forgeEnvironment(forgeCtx), nil, quotaRecord, run.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -369,7 +369,7 @@ func (m *RunManager) pinnedRunGates(runID string) ([]config.Gate, error) {
 	return gates, nil
 }
 
-func newPipelineAgent(ctx context.Context, cfg *config.Config, evidenceRoot string, lookPath func(string) (string, error), environment runenv.Overlay, runVars map[string]string, quota *quotarouting.Record) (agent.Agent, *quotarouting.Record, error) {
+func newPipelineAgent(ctx context.Context, cfg *config.Config, evidenceRoot string, lookPath func(string) (string, error), environment runenv.Overlay, runVars map[string]string, quota *quotarouting.Record, runID string) (agent.Agent, *quotarouting.Record, error) {
 	if steps.IsDemoMode() {
 		return agent.NewNoop(), nil, nil
 	}
@@ -378,8 +378,9 @@ func newPipelineAgent(ctx context.Context, cfg *config.Config, evidenceRoot stri
 		return nil, nil, err
 	}
 	roles := make(map[string]agent.Agent, len(cfg.ReviewAgents))
+	var trialModel string
 	for _, role := range config.ReviewAgentRoles {
-		entry, ok := cfg.ReviewAgents[role]
+		entry, ok := cfg.ReviewAgentForRun(role, runID)
 		if !ok {
 			continue
 		}
@@ -392,6 +393,9 @@ func newPipelineAgent(ctx context.Context, cfg *config.Config, evidenceRoot stri
 			return nil, nil, fmt.Errorf("create review_agents.%s: %w", role, err)
 		}
 		roles[role] = next
+		if role == config.RoleFixerAfterRound && entry.Alternate != nil {
+			trialModel = strings.TrimSpace(entry.Model)
+		}
 	}
 	candidates := make([]agent.ReviewerCandidate, 0, len(cfg.ReviewerChain))
 	for i, entry := range cfg.ReviewerChain {
@@ -425,9 +429,10 @@ func newPipelineAgent(ctx context.Context, cfg *config.Config, evidenceRoot stri
 	return agent.WithReviewRoles(primary, agent.ReviewRoles{
 		Reviewer: reviewer,
 		Fixer: agent.RoundedRole{
-			Agent:    roles[config.RoleFixer],
-			Late:     roles[config.RoleFixerAfterRound],
-			LateFrom: cfg.ReviewAgentTakeoverRound(config.RoleFixerAfterRound),
+			Agent:      roles[config.RoleFixer],
+			Late:       roles[config.RoleFixerAfterRound],
+			LateFrom:   cfg.ReviewAgentTakeoverRound(config.RoleFixerAfterRound),
+			TrialModel: trialModel,
 		},
 	}), record, nil
 }
@@ -2309,7 +2314,7 @@ func (m *RunManager) startRunWithIntentSourceLocked(ctx context.Context, repo *d
 	// wires review-role routing plus the trusted-opt-out gate-neutralization
 	// fail-closed check. The quota-aware record is fresh-read here (a nil
 	// input) and persisted beside the gates pin below.
-	ag, quotaRecord, err := newPipelineAgent(ctx, cfg, pipelineEvidenceRoot(m.paths, cfg, run), exec.LookPath, forgeEnvironment(forgeCtx), runVars, nil)
+	ag, quotaRecord, err := newPipelineAgent(ctx, cfg, pipelineEvidenceRoot(m.paths, cfg, run), exec.LookPath, forgeEnvironment(forgeCtx), runVars, nil, run.ID)
 	if err != nil {
 		m.db.UpdateRunError(run.ID, err.Error())
 		trackStartFailure("create_agent")

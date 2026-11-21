@@ -453,7 +453,7 @@ func configsForInvocation(cfg *config.Config, inv db.AgentInvocation) []*config.
 	default:
 		return []*config.Config{cfg}
 	}
-	if late, ok := cfg.ReviewAgents[lateRole]; ok {
+	if late, ok := cfg.ReviewAgentForRun(lateRole, inv.RunID); ok {
 		if from := cfg.ReviewAgentTakeoverRound(lateRole); from > 0 && inv.Round >= from {
 			return reviewCandidateConfigs(cfg, late)
 		}

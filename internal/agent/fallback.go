@@ -272,6 +272,9 @@ func isAgentUnavailableError(err error) bool {
 	if err == nil || IsStructuredOutputRejected(err) {
 		return false
 	}
+	if errors.Is(err, ErrToolFreeAgentUnavailable) {
+		return true
+	}
 	var incompatibility *codexSchemaIncompatibility
 	if errors.As(err, &incompatibility) {
 		return true

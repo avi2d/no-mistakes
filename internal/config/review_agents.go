@@ -1,6 +1,7 @@
 package config
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"maps"
 	"math"
@@ -56,7 +57,14 @@ type ReviewAgent struct {
 	AfterRound *int `yaml:"after_round"`
 	// Fallback is an explicit, ordered set of independent reviewer profiles.
 	// Only reviewer roles accept it, and only quota exhaustion advances it.
-	Fallback []ReviewAgent `yaml:"fallback"`
+	Fallback  []ReviewAgent      `yaml:"fallback"`
+	Alternate *FixerTrialProfile `yaml:"alternate,omitempty"`
+}
+
+type FixerTrialProfile struct {
+	Agent  types.AgentName `yaml:"agent"`
+	Model  string          `yaml:"model"`
+	Effort agentcfg.Effort `yaml:"effort"`
 }
 
 type ReviewerFloor struct {
@@ -86,6 +94,21 @@ func validateReviewAgents(roles map[string]ReviewAgent) error {
 		}
 		if len(entry.Env) > 0 || entry.Floor != nil || entry.Name != "" || len(entry.RunEnv) > 0 {
 			return fmt.Errorf("review_agents.%s does not accept env, floor, name or run_env", role)
+		}
+		if alt := entry.Alternate; alt != nil {
+			if role != RoleFixerAfterRound {
+				return fmt.Errorf("review_agents.%s does not accept alternate; only %s does", role, RoleFixerAfterRound)
+			}
+			if !agentcfg.Known(alt.Agent) {
+				return fmt.Errorf("review_agents.%s.alternate.agent must name an explicit harness, got %q", role, alt.Agent)
+			}
+			model, altModel := strings.TrimSpace(entry.Model), strings.TrimSpace(alt.Model)
+			if model == "" || altModel == "" || (entry.Agent == alt.Agent && model == altModel) {
+				return fmt.Errorf("review_agents.%s trial needs two distinct explicit agent/model pairs", role)
+			}
+			if err := agentcfg.Validate(alt.Agent, agentcfg.Profile{Model: altModel, Effort: alt.Effort}); err != nil {
+				return fmt.Errorf("invalid review_agents.%s.alternate: %w", role, err)
+			}
 		}
 		if len(entry.Fallback) > 0 && role != RoleReviewer && role != RoleReviewerAfterRound {
 			return fmt.Errorf("review_agents.%s does not accept fallback; only reviewer roles do", role)
@@ -117,6 +140,9 @@ func validateReviewAgents(roles map[string]ReviewAgent) error {
 }
 
 func validateReviewerEntry(entry ReviewAgent) error {
+	if entry.Alternate != nil {
+		return fmt.Errorf("alternate is only valid in review_agents.%s", RoleFixerAfterRound)
+	}
 	for key, value := range entry.Env {
 		if strings.TrimSpace(key) == "" || strings.ContainsAny(key, "=\x00") || strings.ContainsRune(value, '\x00') {
 			return fmt.Errorf("invalid environment entry %q", key)
@@ -156,6 +182,14 @@ func (c *Config) ReviewAgentTakeoverRound(role string) int {
 		return 0
 	}
 	return entry.TakesOverFromRound()
+}
+
+func (c *Config) ReviewAgentForRun(role, runID string) (ReviewAgent, bool) {
+	entry, ok := c.ReviewAgents[role]
+	if alt := entry.Alternate; alt != nil && runID != "" && sha256.Sum256([]byte(runID))[0]%2 == 1 {
+		entry.Agent, entry.Model, entry.Effort = alt.Agent, alt.Model, alt.Effort
+	}
+	return entry, ok
 }
 
 // ForReviewAgent returns an isolated configuration for a role without mutating

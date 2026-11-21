@@ -44,7 +44,7 @@ func (d *DB) GetBranchDecisionRounds(repoID, branch, excludeRunID string, limit 
 	rows, err := d.sql.Query(
 		`SELECT sr.id, sr.step_result_id, sr.round, sr.trigger_type, sr.findings_json,
 		        sr.reviewed_head_sha, sr.starting_head_sha, sr.trusted_config_sha,
-		        sr.global_config_yaml, sr.repo_config_yaml, sr.user_findings_json,
+		        sr.global_config_yaml, sr.repo_config_yaml, sr.user_findings_json, sr.review_follow_ups_json,
 		        sr.selected_finding_ids, sr.selection_source, sr.fix_summary,
 		        sr.duration_ms, sr.created_at, sr.response_origin,
 		        res.step_name, res.run_id
@@ -72,7 +72,7 @@ func (d *DB) GetBranchDecisionRounds(repoID, branch, excludeRunID string, limit 
 		if err := rows.Scan(
 			&r.ID, &r.StepResultID, &r.Round, &r.Trigger, &r.FindingsJSON,
 			&r.ReviewedHeadSHA, &r.StartingHeadSHA, &r.TrustedConfigSHA,
-			&r.GlobalConfigYAML, &r.RepoConfigYAML, &r.UserFindingsJSON,
+			&r.GlobalConfigYAML, &r.RepoConfigYAML, &r.UserFindingsJSON, &r.ReviewFollowUpsJSON,
 			&r.SelectedFindingIDs, &r.SelectionSource, &r.FixSummary,
 			&r.DurationMS, &r.CreatedAt, &r.ResponseOrigin,
 			&entry.StepName, &entry.RunID,

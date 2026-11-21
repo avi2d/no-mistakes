@@ -96,6 +96,7 @@ CREATE TABLE IF NOT EXISTS step_rounds (
     global_config_yaml   BLOB,
     repo_config_yaml     BLOB,
     user_findings_json   TEXT,
+    review_follow_ups_json TEXT,
     selected_finding_ids TEXT,
     selection_source     TEXT,
     response_origin      TEXT NOT NULL DEFAULT 'unknown',
@@ -482,4 +483,5 @@ COMMIT;`,
 	// Caller transcript roots are immutable launch context. Historical runs
 	// retain NULL and the pre-existing default discovery paths.
 	`ALTER TABLE runs ADD COLUMN transcript_homes TEXT`,
+	`ALTER TABLE step_rounds ADD COLUMN review_follow_ups_json TEXT`,
 }

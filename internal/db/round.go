@@ -51,7 +51,8 @@ type StepRound struct {
 	// instructions or added their own findings. It includes both the
 	// selected agent-produced findings (with any attached user
 	// instructions) and the user-authored findings.
-	UserFindingsJSON *string
+	UserFindingsJSON    *string
+	ReviewFollowUpsJSON *string
 	// SelectedFindingIDs, when non-nil, is a JSON array of finding IDs that
 	// were chosen (by the user or auto-fix filter) to be fixed AFTER this
 	// round. It is populated on the round whose findings triggered the next
@@ -69,10 +70,10 @@ type StepRound struct {
 	CreatedAt          int64
 }
 
-const roundReadColumns = "id, step_result_id, round, trigger_type, findings_json, reviewed_head_sha, starting_head_sha, trusted_config_sha, global_config_yaml, repo_config_yaml, user_findings_json, selected_finding_ids, selection_source, fix_summary, reviewer_agent, reviewer_chain_trace, repair_published, duration_ms, created_at, response_origin"
+const roundReadColumns = "id, step_result_id, round, trigger_type, findings_json, reviewed_head_sha, starting_head_sha, trusted_config_sha, global_config_yaml, repo_config_yaml, user_findings_json, selected_finding_ids, selection_source, fix_summary, reviewer_agent, reviewer_chain_trace, repair_published, duration_ms, created_at, response_origin, review_follow_ups_json"
 
 func roundScanTargets(r *StepRound) []any {
-	return []any{&r.ID, &r.StepResultID, &r.Round, &r.Trigger, &r.FindingsJSON, &r.ReviewedHeadSHA, &r.StartingHeadSHA, &r.TrustedConfigSHA, &r.GlobalConfigYAML, &r.RepoConfigYAML, &r.UserFindingsJSON, &r.SelectedFindingIDs, &r.SelectionSource, &r.FixSummary, &r.ReviewerAgent, &r.ReviewerChainTrace, &r.RepairPublished, &r.DurationMS, &r.CreatedAt, &r.ResponseOrigin}
+	return []any{&r.ID, &r.StepResultID, &r.Round, &r.Trigger, &r.FindingsJSON, &r.ReviewedHeadSHA, &r.StartingHeadSHA, &r.TrustedConfigSHA, &r.GlobalConfigYAML, &r.RepoConfigYAML, &r.UserFindingsJSON, &r.SelectedFindingIDs, &r.SelectionSource, &r.FixSummary, &r.ReviewerAgent, &r.ReviewerChainTrace, &r.RepairPublished, &r.DurationMS, &r.CreatedAt, &r.ResponseOrigin, &r.ReviewFollowUpsJSON}
 }
 
 // StepRoundStats summarizes execution rounds for a step. It lets status
@@ -282,13 +283,25 @@ func (d *DB) SetStepRoundUserDecision(id string, selectedFindingIDs *string, sou
 	if len(origins) > 0 {
 		origin = origins[0].OrUnknown()
 	}
+	return d.setStepRoundDecision(id, selectedFindingIDs, source, userFindingsJSON, nil, origin)
+}
+
+func (d *DB) SetStepRoundReviewDecision(id, selectedIDs, userFindingsJSON, followUpsJSON string, origin types.ResponseOrigin) error {
+	if selectedIDs == "" {
+		selectedIDs = DeclinedSelectionJSON
+	}
+	return d.setStepRoundDecision(id, &selectedIDs, RoundSelectionSourceUser, &userFindingsJSON, &followUpsJSON, origin)
+}
+
+func (d *DB) setStepRoundDecision(id string, selectedFindingIDs *string, source string, userFindingsJSON, followUpsJSON *string, origin types.ResponseOrigin) error {
 	var selectionSource *string
 	if selectedFindingIDs != nil && *selectedFindingIDs != "" && source != "" {
 		selectionSource = &source
 	}
 	if _, err := d.sql.Exec(
-		`UPDATE step_rounds SET selected_finding_ids = ?, selection_source = ?, user_findings_json = ?, response_origin = ? WHERE id = ?`,
-		selectedFindingIDs, selectionSource, userFindingsJSON, origin, id,
+		`UPDATE step_rounds SET selected_finding_ids = ?, selection_source = ?, user_findings_json = ?,
+		    response_origin = ?, review_follow_ups_json = COALESCE(?, review_follow_ups_json) WHERE id = ?`,
+		selectedFindingIDs, selectionSource, userFindingsJSON, origin, followUpsJSON, id,
 	); err != nil {
 		return fmt.Errorf("set step round user decision: %w", err)
 	}

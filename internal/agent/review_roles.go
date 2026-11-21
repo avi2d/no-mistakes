@@ -26,6 +26,7 @@ type RoundedRole struct {
 	Fallback       []Agent
 	AgentLabel     string
 	LateLabel      string
+	TrialModel     string
 	FallbackLabels []string
 	Candidates     []ReviewerCandidate
 }
@@ -60,7 +61,7 @@ func (r RoundedRole) agents() []Agent {
 // invocation the pipeline did not number keeps the primary selection rather
 // than guessing.
 func (r RoundedRole) pick(round int, fallback Agent) Agent {
-	if r.Late != nil && r.LateFrom > 0 && round >= r.LateFrom {
+	if r.usesLate(round) {
 		return r.Late
 	}
 	if r.Agent != nil {
@@ -69,8 +70,12 @@ func (r RoundedRole) pick(round int, fallback Agent) Agent {
 	return fallback
 }
 
+func (r RoundedRole) usesLate(round int) bool {
+	return r.Late != nil && r.LateFrom > 0 && round >= r.LateFrom
+}
+
 func (r RoundedRole) label(round int) string {
-	if r.Late != nil && r.LateFrom > 0 && round >= r.LateFrom {
+	if r.usesLate(round) {
 		return r.LateLabel
 	}
 	return r.AgentLabel
@@ -118,7 +123,11 @@ func (a *reviewAgents) Name() string { return a.primary.Name() }
 // a later-round fixer that cannot resume must not inherit an earlier one's
 // capability, because the session it would be handed is not resumable.
 func (a *reviewAgents) fixAgents() []Agent {
-	candidates := a.fixer.agents()
+	fixer := a.fixer
+	if fixer.TrialModel != "" {
+		fixer.Late = nil
+	}
+	candidates := fixer.agents()
 	if len(candidates) == 0 {
 		return []Agent{a.primary}
 	}
@@ -163,6 +172,7 @@ func (a *reviewAgents) NeutralizesGateInstructions() bool {
 
 func (a *reviewAgents) Run(ctx context.Context, opts RunOpts) (*Result, error) {
 	selected := a.primary
+	var droppedResume bool
 	switch opts.Purpose {
 	case "review", "review-coverage":
 		// "review-coverage" is the review step's focused coverage completion
@@ -172,6 +182,13 @@ func (a *reviewAgents) Run(ctx context.Context, opts RunOpts) (*Result, error) {
 		opts.Session = nil
 	case "review-fix":
 		selected = a.fixer.pick(opts.Round, a.primary)
+		if a.fixer.TrialModel != "" && a.fixer.usesLate(opts.Round) {
+			opts.ConfiguredModel = a.fixer.TrialModel
+			// A same-harness session can carry a different fixer's model and history.
+			droppedResume = opts.Session != nil && opts.Session.ID != ""
+			opts.Session = nil
+			opts.SessionFallback = false
+		}
 	}
 	var label string
 	isReview := opts.Purpose == "review" || opts.Purpose == "review-coverage"
@@ -204,6 +221,13 @@ func (a *reviewAgents) Run(ctx context.Context, opts RunOpts) (*Result, error) {
 	}
 	if !ReportsAgentAttempts(selected) {
 		emitAgentAttempt(opts, selected.Name(), result, err, started, time.Now())
+	}
+	if err != nil && droppedResume {
+		if result == nil {
+			result = &Result{}
+		}
+		retryable := false
+		result.ResumeRetryable = &retryable
 	}
 	if result != nil {
 		if label != "" {
