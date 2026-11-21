@@ -1577,7 +1577,7 @@ func (e *respondRefusalError) helpLines(runID string) []string {
 // empty for actions that record no finding-level decision, so only a fix
 // response is echoed.
 func respondDispositionFields(result ipc.RespondResult) []toon.Field {
-	if !result.OK || (result.Fixed == nil && result.Ignored == nil && result.Kept == nil) {
+	if !result.OK || (result.Fixed == nil && result.Ignored == nil && result.Kept == nil && result.FollowUps == nil) {
 		return nil
 	}
 	fixed, ignored, kept := result.Fixed, result.Ignored, result.Kept
@@ -1590,11 +1590,15 @@ func respondDispositionFields(result ipc.RespondResult) []toon.Field {
 	if kept == nil {
 		kept = []string{}
 	}
-	return []toon.Field{{Key: "recorded", Value: toon.NewObject(
-		toon.Field{Key: "fixed", Value: fixed},
-		toon.Field{Key: "ignored", Value: ignored},
-		toon.Field{Key: "kept", Value: kept},
-	)}}
+	fields := []toon.Field{
+		{Key: "fixed", Value: fixed},
+		{Key: "ignored", Value: ignored},
+		{Key: "kept", Value: kept},
+	}
+	if len(result.FollowUps) > 0 {
+		fields = append(fields, toon.Field{Key: "follow_ups", Value: result.FollowUps})
+	}
+	return []toon.Field{{Key: "recorded", Value: toon.NewObject(fields...)}}
 }
 
 // renderDriveResult prints the run snapshot plus one of: the active gate (exit

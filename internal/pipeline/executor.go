@@ -71,6 +71,7 @@ type approvalResponse struct {
 	addedFindings      []types.Finding
 	approvalReason     string
 	coverageRound      *db.StepRound
+	reviewFollowUps    *string
 	// approvalOverride is the unresolved condition an accepted approval
 	// records, verified while the gate was still parked.
 	approvalOverride string
@@ -462,6 +463,13 @@ func (e *Executor) RespondWithOverrides(step types.StepName, action types.Approv
 		// under fixed and not also under kept.
 		var restoredGateIDs []string
 		response, restoredGateIDs = restorePendingDecision(response, previous, e.waitingFindings)
+		if step == types.StepReview {
+			dispositions.FollowUps, err = e.normalizeLaterReviewFix(&response, rounds)
+			if err != nil {
+				e.mu.Unlock()
+				return RespondDispositions{}, err
+			}
+		}
 		if err := e.persistResponseDecision(step, response, previous); err != nil {
 			e.mu.Unlock()
 			return RespondDispositions{}, err
@@ -740,6 +748,7 @@ type stepExecutionState struct {
 	autoFixAttempts        int
 	executionMS            int64
 	currentRoundID         string
+	priorReviewedHeadSHA   string
 	selectedOutstandingIDs []string
 	// outstandingFindings is the review step's append-only set of findings that
 	// are not yet positively resolved or explicitly decided. It is persisted as
@@ -991,10 +1000,11 @@ func (e *Executor) Resume(ctx context.Context, run *db.Run, repo *db.Repo, workD
 	// leaving one would read as the human declining the round's findings.
 	case types.ActionFix, types.ActionAnswer, types.ActionCompleteCoverage:
 		state := stepExecutionState{
-			roundNum:        gate.round,
-			autoFixAttempts: gate.autoFixes,
-			executionMS:     duration,
-			currentRoundID:  gate.lastRoundID,
+			roundNum:             gate.round,
+			autoFixAttempts:      gate.autoFixes,
+			executionMS:          duration,
+			currentRoundID:       gate.lastRoundID,
+			priorReviewedHeadSHA: gate.reviewedHeadSHA,
 		}
 		if response.action == types.ActionCompleteCoverage {
 			state.completingCoverage = true
@@ -1054,6 +1064,9 @@ func (e *Executor) Resume(ctx context.Context, run *db.Run, repo *db.Repo, workD
 			state.fixing = true
 			state.previousFindings = merged
 			state.deferredFindings = excludeFindingsJSON(gate.findings, findingIDList(selected))
+			followUps := make(reviewFollowUpKeys)
+			followUps.addJSON(response.reviewFollowUps)
+			state.deferredFindings = followUps.excludeJSON(state.deferredFindings)
 			state.outstandingFindings = outstandingFindings
 			state.selectedOutstandingIDs = selectedOutstandingIDs
 		}
@@ -1326,6 +1339,7 @@ func (e *Executor) executeStep(ctx context.Context, step Step, sr *db.StepResult
 	finalExitCode := 0
 	autoFixLimit := e.autoFixLimit(stepName)
 	maxReviewFixRounds, reviewFixRounds := 0, 0
+	followUps := make(reviewFollowUpKeys)
 	if stepName == types.StepReview {
 		// Resolve once before any agent runs. Legacy/recovered steps retain
 		// their old unbounded contract; existing pins never change.
@@ -1346,6 +1360,9 @@ func (e *Executor) executeStep(ctx context.Context, step Step, sr *db.StepResult
 			return false, "", err
 		}
 		reviewFixRounds = reviewFixRoundCount(rounds)
+		for _, round := range rounds {
+			followUps.addJSON(round.ReviewFollowUpsJSON)
+		}
 	}
 
 	if !state.fixing {
@@ -1693,7 +1710,7 @@ func (e *Executor) executeStep(ctx context.Context, step Step, sr *db.StepResult
 	stepSkipped := false
 	var skipReason string
 	currentRoundID := state.currentRoundID
-	var reviewApprovedHeadSHA string
+	reviewApprovedHeadSHA := state.priorReviewedHeadSHA
 	var ciReadyNoCIOnCompletion *bool
 	var restartFrom types.StepName
 
@@ -1711,6 +1728,7 @@ rounds:
 		}
 		reviewStartingHeadSHA := run.HeadSHA
 		sctx.ReviewStartingHeadSHA = reviewStartingHeadSHA
+		sctx.PriorReviewedHeadSHA = reviewApprovedHeadSHA
 		outcome, err := e.executeWithCrashRetry(step, sctx, &crashRetriesRemaining)
 		if stepName == types.StepCI && e.ciMonitorLifecycle != nil {
 			e.ciMonitorLifecycle(run.ID, false)
@@ -1754,7 +1772,9 @@ rounds:
 		restartFrom = outcome.RestartFrom
 
 		if stepName == types.StepReview {
-			reviewApprovedHeadSHA = outcome.ReviewApprovedHeadSHA
+			if !outcome.ReviewFixUnchanged || reviewApprovedHeadSHA != reviewStartingHeadSHA {
+				reviewApprovedHeadSHA = outcome.ReviewApprovedHeadSHA
+			}
 		}
 		outcome.Findings = normalizeFindingsJSON(outcome.Findings, string(stepName))
 		finalExitCode = outcome.ExitCode
@@ -1823,6 +1843,8 @@ rounds:
 			selectedOutstandingIDs = retainFindingIDs(outstandingFindings, selectedOutstandingIDs)
 			effectiveFindings = mergeOutstandingFindingsJSON(outstandingFindings, roundFindings, outcome.ReviewedPaths)
 			effectiveFindings = tagCarriedFindingsJSON(effectiveFindings, outstandingFindings, roundFindings, pendingVerificationIDs)
+			effectiveFindings = followUps.excludeJSON(effectiveFindings)
+			roundFindings = followUps.excludeJSON(roundFindings)
 			outstandingFindings = effectiveFindings
 			effectiveFindings = recordWithdrawnFindingsJSON(effectiveFindings, withdrawn)
 		}
@@ -1849,13 +1871,17 @@ rounds:
 		// This runs before the NeedsApproval check so that all severity
 		// levels (including "info") get a chance at automatic fixing.
 		autoFixable := outcome.AutoFixable
+		if stepName == types.StepReview && len(followUps) > 0 && findingsCount(effectiveFindings) == 0 &&
+			outcome.ReviewCoverageComplete {
+			outcome.NeedsApproval = false
+		}
 		if stepName.IsCustomGate() {
 			autoFixable = gateAutoFixEligible(roundFindings, sctx.PreviousFindings, sctx.DeferredFindings, sctx.Fixing)
 		}
 		autoFixAllowed := autoFixable && autoFixLimit > 0 && autoFixAttempts < autoFixLimit && !reviewBudgetExhausted
 		// The next automatic round would hand the same findings to a fixer that
 		// just changed nothing for them.
-		if autoFixAllowed && autoFixableFindingsJSON(roundFindings) != "" && !outcome.FixAttemptFailed && fixRoundLandedNoDiff(sctx, reviewStartingHeadSHA) {
+		if outcome.ReviewFixUnchanged || (autoFixAllowed && autoFixableFindingsJSON(roundFindings) != "" && !outcome.FixAttemptFailed && fixRoundLandedNoDiff(sctx, reviewStartingHeadSHA)) {
 			var err error
 			effectiveFindings, err = appendFixRoundNoDiff(effectiveFindings, stepName, roundNum)
 			if err != nil {
@@ -2098,7 +2124,8 @@ rounds:
 				sctx.SkipFixExecution = false
 				selectedFindings, mergedFindings, normalizedOutstanding, selectedForPersistence := normalizeFixSelection(effectiveFindings, response, carryFindings)
 				sctx.PreviousFindings = mergedFindings
-				sctx.DeferredFindings = excludeFindingsJSON(effectiveFindings, findingIDList(selectedFindings))
+				followUps.addJSON(response.reviewFollowUps)
+				sctx.DeferredFindings = followUps.excludeJSON(excludeFindingsJSON(effectiveFindings, findingIDList(selectedFindings)))
 				if carryFindings {
 					// APPEND-ONLY: the selection is additionally handed to the fixer
 					// but is NOT subtracted from the outstanding set. It leaves only
@@ -2290,6 +2317,13 @@ func (e *Executor) persistResponseDecision(step types.StepName, response approva
 		return fmt.Errorf("record the response's decision: no round is in flight for step %s", step)
 	}
 	_, _, _, persisted := normalizeFixSelection(e.waitingFindings, response, step == types.StepReview)
+	if response.reviewFollowUps != nil {
+		selection := marshalFindingIDs(combineSelectedFindingIDs(response.findingIDs, persisted))
+		if err := e.db.SetStepRoundReviewDecision(e.waitingRoundID, selection, persisted, *response.reviewFollowUps, response.origin); err != nil {
+			return fmt.Errorf("record the Review response: %w", err)
+		}
+		return nil
+	}
 	if previous != "" {
 		current, _ := types.ParseFindingsJSON(persisted)
 		prior, _ := types.ParseFindingsJSON(previous)

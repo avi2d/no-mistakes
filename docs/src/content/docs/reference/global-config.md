@@ -567,6 +567,57 @@ for independent reviewer selection and its precedence over both mechanisms.
 Eval capture strips these profiles so replay candidates remain
 authoritative.
 
+##### Trial two later-round fixers
+
+Add `alternate` under `review_agents.fixer_after_round` to split runs between two fixer profiles.
+Set it in the machine's `config.yaml` or in its `repository_overrides`.
+Repository config cannot assign a profile.
+Both profiles need explicit and distinct `agent` and `model` pairs.
+The `alternate` accepts only `agent`, `model`, and `effort`.
+Both profiles use the same `after_round`.
+
+```yaml
+review_agents:
+  fixer_after_round:
+    after_round: 1
+    agent: pi
+    model: claude-bridge/claude-opus-5-5
+    effort: high
+    alternate:
+      agent: pi
+      model: openai/gpt-6.1-sol
+      effort: high
+```
+
+No-mistakes takes the SHA-256 of the run ID as UTF-8.
+An even first byte selects the main `fixer_after_round` profile, and an odd first byte selects `alternate`.
+For example, `alpha` starts with hex `8e` and selects the main profile, while `delta` starts with `4f` and selects `alternate`.
+All later fixer turns for that run use the same profile as long as the configuration stays the same.
+Keep the trial configuration unchanged on both machines until the trial ends because daemon recovery reloads it.
+Trial turns start without a session so they cannot inherit another fixer's session.
+The initial fixer, reviewer, and other steps keep their own settings.
+Omit `alternate` to keep the ordinary single-profile behavior.
+
+Keep `eval.capture_provenance` enabled and remove any native model or effort selectors in `agent_args_override` for the trial harnesses.
+No-mistakes records the configured model and the model reported by the harness in its local invocation records for each trial fix turn.
+Run the report from the source checkout on each machine while it still has the trial's Git objects:
+
+```sh
+python3 scripts/fixer-trial-report.py --since 2026-11-21T18:00:00Z \
+  --arm pi/claude-bridge/claude-opus-5-5 --arm pi/openai/gpt-6.1-sol \
+  "${NM_HOME:-$HOME/.no-mistakes}/state.sqlite"
+```
+
+Replace `--since` with the UTC trial start.
+Count only runs that reached a trial fixer.
+The report lists Review rounds, rounds numbered 2 or later, and wall time for recorded fix rounds, including the rereview but not time parked at a gate.
+It counts errors remaining when Review is parked, completes, or is skipped.
+It counts a finding on a fixer-written line when the immediate rereview first reports that file and description and the fix's Git diff added or replaced the named line.
+That count is a line match, not proof that the fix introduced the defect.
+The report keeps missing Git evidence, missing round records, and reported model mismatches separate from zeros.
+Pass multiple databases only if their corresponding Git repositories are available locally.
+Check each machine's results before comparing the pooled numbers.
+
 ### agent_args_override
 
 Extra CLI flags to pass to each native agent.
@@ -1275,7 +1326,7 @@ This global list together with each `repository_overrides` list is checked when 
 The repository's trusted list changes independently, so the combined set is checked again when each run starts and when a run is recovered after a daemon restart: a run whose combined rules exceed a limit fails before any step runs or resumes, with an error naming each source's entry count, rather than silently dropping a rule.
 Shorten or remove your machine-local entries to fix it.
 
-Only `path_instructions` and [`max_fix_rounds`](#reviewmax_fix_rounds) are accepted under this block.
+Only `path_instructions`, [`max_fix_rounds`](#reviewmax_fix_rounds), and [`defer_non_errors`](#reviewdefer_non_errors) are accepted under this block.
 `review.conversation` stays a repository decision, because an open question parks the gate.
 Changes apply to the next run, and to a run recovered after a daemon restart, which re-reads this file.
 
@@ -1300,6 +1351,18 @@ The repo config reference describes how the limit counts rounds and what happens
 Only the top-level `review` block accepts this key.
 A `repository_overrides` entry that sets it fails configuration loading, and so do negative and non-integer values.
 The budget is pinned when Review starts, so a change applies to the next run.
+
+### review.defer_non_errors
+
+The machine-wide default for [deferring selected non-error Review findings](/no-mistakes/reference/repo-config/#reviewdefer_non_errors).
+
+| | |
+|---|---|
+| Type | boolean |
+| Default | `false` |
+
+Only the top-level `review` block accepts this key.
+A value in the trusted default-branch repository config wins, including `false`.
 
 ### commit.fix_message
 
@@ -1554,7 +1617,8 @@ repository_overrides:
 | `nice` | `prepare`, `test`, `lint`, `format` | POSIX niceness adjustment from `0` to `19`; `0` leaves scheduling unchanged |
 
 Test runs the committed command first, then each added command in a separate shell, retaining a failure from either source even when another check succeeds.
-Test still performs its unconditional agent-driven end-user scenarios afterwards.
+By default, Test runs agent-driven end-user scenarios afterwards.
+With [`test.ci_only`](#testci_only), Test runs neither the committed test command nor the added checks.
 Lint runs additional checks after the existing lint duty, including agent-driven lint when `commands.lint` is empty.
 An added check's failure parks the step rather than silently passing; existing explicit approval rules still apply.
 Its finding names that machine-local check and its exit code, and never attributes the failure to the committed command, including when the committed command is empty.
@@ -1659,6 +1723,21 @@ If the default evidence directory also overlaps a worktree placement, run creati
 A run records its evidence directory at creation. A later change to `evidence_dir` does not retarget that run. A run recorded before this setting existed keeps resolving through `test.evidence.local_root`.
 
 For GitLab image uploads from that run directory, see [Pull request](/no-mistakes/reference/pipeline-steps/#pull-request).
+
+### test.ci_only
+
+```yaml
+test:
+  ci_only: true
+```
+
+Set `test.ci_only: true` to leave repository tests to CI for every repository on this machine.
+The default is `false`.
+A repository can [enable the same setting](/no-mistakes/reference/repo-config/#testci_only) for itself but cannot turn off a global `true`.
+
+The [Test step](/no-mistakes/reference/pipeline-steps/#test) reports that tests are left to CI and collects any preview media already in the run's evidence directory.
+The setting does not create or change a CI workflow.
+Set up CI to run the repository's tests.
 
 ### test.evidence
 

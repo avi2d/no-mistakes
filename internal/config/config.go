@@ -2,6 +2,7 @@ package config
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -415,7 +416,8 @@ type OperatorReviewRaw struct {
 	// MaxFixRounds is the machine-wide default Review fix-round budget. Only
 	// the top-level global review block may set it, never a
 	// repository_overrides entry.
-	MaxFixRounds *reviewFixRoundLimit `yaml:"max_fix_rounds"`
+	MaxFixRounds   *reviewFixRoundLimit `yaml:"max_fix_rounds"`
+	DeferNonErrors *bool                `yaml:"defer_non_errors"`
 }
 
 // GlobalPRRaw contains machine-wide PR defaults. Template, PublishIntent, and
@@ -563,7 +565,8 @@ type ReviewRaw struct {
 	// MaxFixRounds bounds all Review fix rounds, automatic and explicit.
 	// Zero means unbounded. Nil falls back to the global review.max_fix_rounds.
 	// Trusted repository config only.
-	MaxFixRounds *reviewFixRoundLimit `yaml:"max_fix_rounds"`
+	MaxFixRounds   *reviewFixRoundLimit `yaml:"max_fix_rounds"`
+	DeferNonErrors *bool                `yaml:"defer_non_errors"`
 	// Conversation turns the review conversation on: the reviewer may emit the
 	// larger questions it cannot settle itself, keep reviewing while they are
 	// open, and be resumed with the answers. Off (the default), the review step
@@ -1190,7 +1193,8 @@ type Document struct {
 // operator lists come from the global config and only ever add rules.
 type Review struct {
 	// MaxFixRounds is the opt-in total Review fix-round budget (0 = unlimited).
-	MaxFixRounds int
+	MaxFixRounds   int
+	DeferNonErrors bool
 	// Conversation is true when the reviewer may ask the operator questions
 	// mid-pass. It gates the whole protocol: the prompt section, the
 	// conversation files, the question findings that park the gate, the
@@ -1282,6 +1286,7 @@ func validatePathInstructionsBudget(sources []PathInstructionSource) error {
 
 // TestRaw is the YAML representation of test-step settings.
 type TestRaw struct {
+	CIOnly   bool        `yaml:"ci_only"`
 	Evidence EvidenceRaw `yaml:"evidence"`
 	// Prepare eagerly runs commands.prepare before agent-only Test, including
 	// repair turns. Repository-only and trusted-only regardless of
@@ -1377,6 +1382,7 @@ type CloudflarePagesRaw struct {
 // Instructions and AllowApproveOverFailure come from the trusted
 // default-branch repo config only (see TestRaw).
 type Test struct {
+	CIOnly                  bool
 	Prepare                 bool
 	BaseAttribution         bool
 	Evidence                Evidence
@@ -3537,6 +3543,9 @@ func validateOperatorReview(global OperatorReviewRaw, overrides RepositoryOverri
 		return err
 	}
 	for key, override := range overrides {
+		if override.Review.DeferNonErrors != nil {
+			return fmt.Errorf("invalid repository_overrides.%s: review.defer_non_errors is only allowed in the top-level review block", key)
+		}
 		if override.Review.MaxFixRounds != nil {
 			return fmt.Errorf("invalid repository_overrides.%s: review.max_fix_rounds is only allowed in the top-level review block", key)
 		}
@@ -3704,6 +3713,7 @@ func EffectiveRepoConfig(pushed, trusted *RepoConfig, allowRepoCommands bool) *R
 		// The eager setup trigger is trusted-only even when executable command
 		// values may come from the pushed branch.
 		effective.Test.Prepare = trusted.Test.Prepare
+		effective.Test.CIOnly = trusted.Test.CIOnly
 		// Base attribution spends a second suite run and executes commands on
 		// another checkout, so it is trusted-only like the prepare trigger.
 		effective.Test.BaseAttribution = trusted.Test.BaseAttribution
@@ -3743,6 +3753,7 @@ func EffectiveRepoConfig(pushed, trusted *RepoConfig, allowRepoCommands bool) *R
 		effective.Test.Evidence.CloudflarePages = CloudflarePagesRaw{}
 		effective.Test.Instructions = ""
 		effective.Test.Prepare = false
+		effective.Test.CIOnly = false
 		effective.Test.BaseAttribution = false
 		effective.Test.AllowApproveOverFailure = ""
 		if !allowRepoCommands {
@@ -4363,6 +4374,7 @@ func merge(global *GlobalConfig, repo *RepoConfig, override *RepositoryOverride)
 	// evidence on this machine, and how long it keeps it, is never a
 	// repository's decision (see EvidenceRaw.LocalRoot).
 	applyEvidenceStorageOverrides(&test.Evidence, &global.Test.Evidence)
+	test.CIOnly = global.Test.CIOnly || repo.Test.CIOnly
 	// The runbook describes ONE repository's product, so it is resolved from
 	// the repository only - never from top-level global config, which has no
 	// repository to describe (a matching repository_overrides entry adds its
@@ -4451,6 +4463,7 @@ func merge(global *GlobalConfig, repo *RepoConfig, override *RepositoryOverride)
 		pr.TitleMaxLength = *global.PR.TitleMaxLength
 	}
 
+	reviewDeferNonErrors := cmp.Or(repo.Review.DeferNonErrors, global.Review.DeferNonErrors)
 	cfg := &Config{
 		Agent:                     global.Agent,
 		Agents:                    copyAgents(global.Agents),
@@ -4501,6 +4514,7 @@ func merge(global *GlobalConfig, repo *RepoConfig, override *RepositoryOverride)
 		// replace or remove the repository's.
 		Review: Review{
 			MaxFixRounds:           resolveReviewMaxFixRounds(repo.Review.MaxFixRounds, global.Review.MaxFixRounds),
+			DeferNonErrors:         reviewDeferNonErrors != nil && *reviewDeferNonErrors,
 			Conversation:           repo.Review.Conversation,
 			PathInstructions:       resolvePathInstructions(repo.Review.PathInstructions),
 			GlobalPathInstructions: resolvePathInstructions(global.Review.PathInstructions),

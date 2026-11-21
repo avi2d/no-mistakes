@@ -232,7 +232,13 @@ Run the pipeline and decide on its findings as they come up:
    it in ` + "`--findings`" + ` to fix it again or leave it out to keep it. Every
    successful ` + "`fix`" + ` response echoes what it recorded in a ` + "`recorded:`" + ` object
    (` + "`fixed`" + `, ` + "`ignored`" + `, ` + "`kept`" + `), so read it to confirm the decision
-   you actually made.
+   you actually made. If trusted ` + "`review.defer_non_errors`" + ` is on, from Review
+   round 2 on, select the errors that need a fix and the warnings or info
+   findings you want listed as PR follow-ups. A fix response sends only
+   selected errors to the fixer. If it contains only follow-ups, the gate
+   can approve without another fix round. Read ` + "`recorded.follow_ups`" + ` for the
+   deferred IDs. A no-diff notice means no rereview ran and the findings are
+   still unresolved. Do not report them as fixed.
    While a run is active, never fix findings by editing the code yourself -
    the pipeline owns both the findings and the fixes. Your job at a gate is to
    decide and respond; ` + "`--action fix`" + ` has the pipeline apply the fix and
