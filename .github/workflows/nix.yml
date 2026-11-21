@@ -1,20 +1,8 @@
 name: Nix flake
 
-# A path-filtered PR run is safe here: this workflow backs no required check,
-# and the filter omits every release-please output, so release PRs create no
-# run. The push trigger covers what the filter misses after merge.
+# Runs on pushes to main and on manual dispatch only: pull requests run no
+# Nix build, so a stale vendorHash fails the main run instead of the PR.
 on:
-  pull_request:
-    branches:
-      - main
-    paths:
-      - flake.nix
-      - flake.lock
-      - package.nix
-      - default.nix
-      - go.mod
-      - go.sum
-      - .github/workflows/nix.yml
   push:
     branches:
       - main
@@ -24,7 +12,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: nix-${{ github.event.pull_request.number || github.ref }}
+  group: nix-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -45,7 +33,7 @@ jobs:
         run: nix flake check --all-systems --no-build
 
       # vendorHash is fixed-output: a go.mod/go.sum change that does not
-      # recompute it fails here, and the error names the hash to commit.
+      # recompute it fails the main run, and the error names the hash to commit.
       - name: Build flake
         run: |
           set -o pipefail

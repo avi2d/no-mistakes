@@ -57,9 +57,9 @@ jobs:
     steps:
       # Pinned to the immutable commit that published the action, never @main:
       # main is editable by the very pull request this gate is judging. A pull
-      # request that changes the action is still TESTED here (the repository's
-      # own Go tests execute verify.py from the PR head), but it cannot certify
-      # itself through the required check.
+      # request that changes the action is tested by the repository's Go tests
+      # only once it reaches main, and it cannot certify itself through the
+      # required check.
       - name: Verify no-mistakes signature and pipeline attestation
         uses: kunchenguid/no-mistakes/.github/actions/require-no-mistakes@f6441c96c352a18b9cadcaef6b6c7017e9ac3970 # v1.80.1
         with:
