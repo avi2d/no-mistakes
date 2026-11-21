@@ -567,6 +567,57 @@ for independent reviewer selection and its precedence over both mechanisms.
 Eval capture strips these profiles so replay candidates remain
 authoritative.
 
+##### Trial two later-round fixers
+
+Add `alternate` under `review_agents.fixer_after_round` to split runs between two fixer profiles.
+Set it in the machine's `config.yaml` or in its `repository_overrides`.
+Repository config cannot assign a profile.
+Both profiles need explicit and distinct `agent` and `model` pairs.
+The `alternate` accepts only `agent`, `model`, and `effort`.
+Both profiles use the same `after_round`.
+
+```yaml
+review_agents:
+  fixer_after_round:
+    after_round: 1
+    agent: pi
+    model: claude-bridge/claude-opus-5-5
+    effort: high
+    alternate:
+      agent: pi
+      model: openai/gpt-6.1-sol
+      effort: high
+```
+
+No-mistakes takes the SHA-256 of the run ID as UTF-8.
+An even first byte selects the main `fixer_after_round` profile, and an odd first byte selects `alternate`.
+For example, `alpha` starts with hex `8e` and selects the main profile, while `delta` starts with `4f` and selects `alternate`.
+All later fixer turns for that run use the same profile as long as the configuration stays the same.
+Keep the trial configuration unchanged on both machines until the trial ends because daemon recovery reloads it.
+Trial turns start without a session so they cannot inherit another fixer's session.
+The initial fixer, reviewer, and other steps keep their own settings.
+Omit `alternate` to keep the ordinary single-profile behavior.
+
+Keep `eval.capture_provenance` enabled and remove any native model or effort selectors in `agent_args_override` for the trial harnesses.
+No-mistakes records the configured model and the model reported by the harness in its local invocation records for each trial fix turn.
+Run the report from the source checkout on each machine while it still has the trial's Git objects:
+
+```sh
+python3 scripts/fixer-trial-report.py --since 2026-11-21T18:00:00Z \
+  --arm pi/claude-bridge/claude-opus-5-5 --arm pi/openai/gpt-6.1-sol \
+  "${NM_HOME:-$HOME/.no-mistakes}/state.sqlite"
+```
+
+Replace `--since` with the UTC trial start.
+Count only runs that reached a trial fixer.
+The report lists Review rounds, rounds numbered 2 or later, and wall time for recorded fix rounds, including the rereview but not time parked at a gate.
+It counts errors remaining when Review is parked, completes, or is skipped.
+It counts a finding on a fixer-written line when the immediate rereview first reports that file and description and the fix's Git diff added or replaced the named line.
+That count is a line match, not proof that the fix introduced the defect.
+The report keeps missing Git evidence, missing round records, and reported model mismatches separate from zeros.
+Pass multiple databases only if their corresponding Git repositories are available locally.
+Check each machine's results before comparing the pooled numbers.
+
 ### agent_args_override
 
 Extra CLI flags to pass to each native agent.
