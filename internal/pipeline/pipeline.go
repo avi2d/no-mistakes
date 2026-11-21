@@ -69,6 +69,7 @@ type StepContext struct {
 	// combination is reachable - not to forbid it.
 	FinalizingAnswers     bool
 	ReviewStartingHeadSHA string
+	PriorReviewedHeadSHA  string
 	// CoverageContinuation names the exact stored round accepted at the gate.
 	// The real review consumer re-reads and validates its scope before reuse.
 	CoverageContinuation *db.StepRound
@@ -203,7 +204,9 @@ type StepOutcome struct {
 	ReviewablePaths []string
 	// ReviewBaseSHA is the commit this review round diffed against to compute
 	// ReviewablePaths. Empty proves no file was reverted to the base.
-	ReviewBaseSHA string
+	ReviewBaseSHA          string
+	ReviewFixUnchanged     bool
+	ReviewCoverageComplete bool
 	// WithdrawnFindings is an answer round's explicit retraction list: the
 	// carried findings the turn says no longer hold, each with the reason it
 	// gave. It is the ONLY way a carried finding leaves the outstanding set on

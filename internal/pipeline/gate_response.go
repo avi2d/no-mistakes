@@ -18,7 +18,8 @@ import (
 // under the normalized IDs used for dispatch and persistence.
 type RespondDispositions struct {
 	// Fixed names the findings the response selected to fix.
-	Fixed []string
+	Fixed     []string
+	FollowUps []string
 	// Ignored names the findings the response explicitly declined.
 	Ignored []string
 	// Kept names the findings the response omitted that an earlier round of
@@ -83,7 +84,7 @@ func decodeRoundDecision(round *db.StepRound) error {
 	for _, field := range []struct {
 		name string
 		raw  *string
-	}{{"findings", round.FindingsJSON}, {"user findings", round.UserFindingsJSON}} {
+	}{{"findings", round.FindingsJSON}, {"user findings", round.UserFindingsJSON}, {"review follow-ups", round.ReviewFollowUpsJSON}} {
 		if field.raw == nil || strings.TrimSpace(*field.raw) == "" {
 			continue
 		}

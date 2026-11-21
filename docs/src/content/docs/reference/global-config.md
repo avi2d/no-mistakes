@@ -1275,7 +1275,7 @@ This global list together with each `repository_overrides` list is checked when 
 The repository's trusted list changes independently, so the combined set is checked again when each run starts and when a run is recovered after a daemon restart: a run whose combined rules exceed a limit fails before any step runs or resumes, with an error naming each source's entry count, rather than silently dropping a rule.
 Shorten or remove your machine-local entries to fix it.
 
-Only `path_instructions` and [`max_fix_rounds`](#reviewmax_fix_rounds) are accepted under this block.
+Only `path_instructions`, [`max_fix_rounds`](#reviewmax_fix_rounds), and [`defer_non_errors`](#reviewdefer_non_errors) are accepted under this block.
 `review.conversation` stays a repository decision, because an open question parks the gate.
 Changes apply to the next run, and to a run recovered after a daemon restart, which re-reads this file.
 
@@ -1300,6 +1300,18 @@ The repo config reference describes how the limit counts rounds and what happens
 Only the top-level `review` block accepts this key.
 A `repository_overrides` entry that sets it fails configuration loading, and so do negative and non-integer values.
 The budget is pinned when Review starts, so a change applies to the next run.
+
+### review.defer_non_errors
+
+The machine-wide default for [deferring selected non-error Review findings](/no-mistakes/reference/repo-config/#reviewdefer_non_errors).
+
+| | |
+|---|---|
+| Type | boolean |
+| Default | `false` |
+
+Only the top-level `review` block accepts this key.
+A value in the trusted default-branch repository config wins, including `false`.
 
 ### commit.fix_message
 

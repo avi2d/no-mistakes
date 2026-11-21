@@ -2,6 +2,7 @@ package config
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -415,7 +416,8 @@ type OperatorReviewRaw struct {
 	// MaxFixRounds is the machine-wide default Review fix-round budget. Only
 	// the top-level global review block may set it, never a
 	// repository_overrides entry.
-	MaxFixRounds *reviewFixRoundLimit `yaml:"max_fix_rounds"`
+	MaxFixRounds   *reviewFixRoundLimit `yaml:"max_fix_rounds"`
+	DeferNonErrors *bool                `yaml:"defer_non_errors"`
 }
 
 // GlobalPRRaw contains machine-wide PR defaults. Template, PublishIntent, and
@@ -563,7 +565,8 @@ type ReviewRaw struct {
 	// MaxFixRounds bounds all Review fix rounds, automatic and explicit.
 	// Zero means unbounded. Nil falls back to the global review.max_fix_rounds.
 	// Trusted repository config only.
-	MaxFixRounds *reviewFixRoundLimit `yaml:"max_fix_rounds"`
+	MaxFixRounds   *reviewFixRoundLimit `yaml:"max_fix_rounds"`
+	DeferNonErrors *bool                `yaml:"defer_non_errors"`
 	// Conversation turns the review conversation on: the reviewer may emit the
 	// larger questions it cannot settle itself, keep reviewing while they are
 	// open, and be resumed with the answers. Off (the default), the review step
@@ -1190,7 +1193,8 @@ type Document struct {
 // operator lists come from the global config and only ever add rules.
 type Review struct {
 	// MaxFixRounds is the opt-in total Review fix-round budget (0 = unlimited).
-	MaxFixRounds int
+	MaxFixRounds   int
+	DeferNonErrors bool
 	// Conversation is true when the reviewer may ask the operator questions
 	// mid-pass. It gates the whole protocol: the prompt section, the
 	// conversation files, the question findings that park the gate, the
@@ -3539,6 +3543,9 @@ func validateOperatorReview(global OperatorReviewRaw, overrides RepositoryOverri
 		return err
 	}
 	for key, override := range overrides {
+		if override.Review.DeferNonErrors != nil {
+			return fmt.Errorf("invalid repository_overrides.%s: review.defer_non_errors is only allowed in the top-level review block", key)
+		}
 		if override.Review.MaxFixRounds != nil {
 			return fmt.Errorf("invalid repository_overrides.%s: review.max_fix_rounds is only allowed in the top-level review block", key)
 		}
@@ -4456,6 +4463,7 @@ func merge(global *GlobalConfig, repo *RepoConfig, override *RepositoryOverride)
 		pr.TitleMaxLength = *global.PR.TitleMaxLength
 	}
 
+	reviewDeferNonErrors := cmp.Or(repo.Review.DeferNonErrors, global.Review.DeferNonErrors)
 	cfg := &Config{
 		Agent:                     global.Agent,
 		Agents:                    copyAgents(global.Agents),
@@ -4506,6 +4514,7 @@ func merge(global *GlobalConfig, repo *RepoConfig, override *RepositoryOverride)
 		// replace or remove the repository's.
 		Review: Review{
 			MaxFixRounds:           resolveReviewMaxFixRounds(repo.Review.MaxFixRounds, global.Review.MaxFixRounds),
+			DeferNonErrors:         reviewDeferNonErrors != nil && *reviewDeferNonErrors,
 			Conversation:           repo.Review.Conversation,
 			PathInstructions:       resolvePathInstructions(repo.Review.PathInstructions),
 			GlobalPathInstructions: resolvePathInstructions(global.Review.PathInstructions),
