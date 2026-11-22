@@ -104,6 +104,28 @@ func TestMergeResolverDoesNotStageScratchLater(t *testing.T) {
 	}
 }
 
+func TestMergeResolverRejectsCommittedScratchWithoutLosingIt(t *testing.T) {
+	f := newMergeFixture(t, true)
+	ag := &mockAgent{name: "test", runFn: func(_ context.Context, _ agent.RunOpts) (*agent.Result, error) {
+		writeFixtureFile(t, f.dir, "shared.txt", "main line\nfeature line\n")
+		writeFixtureFile(t, f.dir, "scratch.sh", "scratch\n")
+		fixtureGit(t, f.dir, "add", "shared.txt", "scratch.sh")
+		fixtureGit(t, f.dir, "commit", "--no-edit")
+		return &agent.Result{Output: json.RawMessage(`{"summary":"resolve","edited_paths":["shared.txt"]}`)}, nil
+	}}
+	sctx := f.context(t, ag, config.RebaseStrategyMerge)
+	if err := mergeWithAgent(context.Background(), sctx, f.mainSHA); err == nil {
+		t.Fatal("accepted committed scratch")
+	}
+	if head := gitCmd(t, f.dir, "rev-parse", "HEAD"); head != f.headSHA {
+		t.Fatalf("head = %s, want %s", head, f.headSHA)
+	}
+	data, err := os.ReadFile(filepath.Join(f.dir, "scratch.sh"))
+	if err != nil || string(data) != "scratch\n" {
+		t.Fatalf("scratch = %q, %v", data, err)
+	}
+}
+
 func assertScratchExcludedFromCommit(t *testing.T, dir string) {
 	t.Helper()
 	files := gitCmd(t, dir, "diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD")
