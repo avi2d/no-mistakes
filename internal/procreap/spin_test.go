@@ -1,6 +1,7 @@
 package procreap
 
 import (
+	"errors"
 	"testing"
 	"time"
 )
@@ -100,31 +101,65 @@ func TestRootAgeMatches(t *testing.T) {
 
 func TestKillSpinningLeaf_UnknownRootKillsNothing(t *testing.T) {
 	t.Parallel()
-	old := listCPUStatesFunc
-	listCPUStatesFunc = func() ([]cpuState, error) {
+	processes := spinProcesses{list: func() ([]cpuState, error) {
 		return []cpuState{{PID: 7, PPID: 1, Stat: "S", Elapsed: time.Minute}}, nil
-	}
-	defer func() { listCPUStatesFunc = old }()
-	if victim, err := KillSpinningLeaf(999999, 0.5, time.Millisecond, time.Millisecond, time.Time{}); err != nil || victim != nil {
+	}}
+	if victim, err := killSpinningLeaf(999999, 0.5, time.Millisecond, time.Millisecond, time.Time{}, processes); err != nil || victim != nil {
 		t.Fatalf("unknown root: victim=%+v err=%v, want nothing killed", victim, err)
 	}
 }
 
 func TestKillSpinningLeaf_StaleRootKillsNothing(t *testing.T) {
 	t.Parallel()
-	oldList, oldSignal := listCPUStatesFunc, signalProcessFunc
 	calls := 0
-	listCPUStatesFunc = func() ([]cpuState, error) {
-		calls++
-		leaf := cpuState{PID: 101, PPID: 100, PGID: 7, Stat: "R", Elapsed: time.Minute, Total: time.Duration(calls) * time.Hour, Command: "spin"}
-		return []cpuState{{PID: 100, PPID: 1, PGID: 7, Stat: "S", Elapsed: 5 * time.Second}, leaf}, nil
+	processes := spinProcesses{
+		list: func() ([]cpuState, error) {
+			calls++
+			leaf := cpuState{PID: 101, PPID: 100, PGID: 7, Stat: "R", Elapsed: time.Minute, Total: time.Duration(calls) * time.Hour, Command: "spin"}
+			return []cpuState{{PID: 100, PPID: 1, PGID: 7, Stat: "S", Elapsed: 5 * time.Second}, leaf}, nil
+		},
+		signal: func(pid int, sig procSignal) error {
+			t.Errorf("reused PID %d must never be signalled", pid)
+			return nil
+		},
 	}
-	signalProcessFunc = func(pid int, sig procSignal) error {
-		t.Errorf("reused PID %d must never be signalled", pid)
-		return nil
-	}
-	defer func() { listCPUStatesFunc, signalProcessFunc = oldList, oldSignal }()
-	if victim, err := KillSpinningLeaf(100, 0.5, time.Millisecond, time.Millisecond, time.Now().Add(-time.Hour)); err != nil || victim != nil {
+	if victim, err := killSpinningLeaf(100, 0.5, time.Millisecond, time.Millisecond, time.Now().Add(-time.Hour), processes); err != nil || victim != nil {
 		t.Fatalf("reused PID: victim=%+v err=%v, want nothing killed", victim, err)
+	}
+}
+
+func TestKillSpinningLeaf_ParallelProbeMustNotSeeAnotherTestsHook(t *testing.T) {
+	t.Parallel()
+	firstReady := make(chan struct{})
+	secondReady := make(chan struct{})
+	results := make(chan bool, 2)
+	firstErr := errors.New("first probe")
+	secondErr := errors.New("second probe")
+	go func() {
+		processes := spinProcesses{list: func() ([]cpuState, error) { return nil, firstErr }}
+		close(firstReady)
+		<-secondReady
+		_, err := killSpinningLeaf(100, 0.5, time.Millisecond, time.Millisecond, time.Time{}, processes)
+		if !errors.Is(err, firstErr) {
+			results <- false
+			return
+		}
+		results <- true
+	}()
+	go func() {
+		<-firstReady
+		processes := spinProcesses{list: func() ([]cpuState, error) { return nil, secondErr }}
+		close(secondReady)
+		_, err := killSpinningLeaf(100, 0.5, time.Millisecond, time.Millisecond, time.Time{}, processes)
+		if !errors.Is(err, secondErr) {
+			results <- false
+			return
+		}
+		results <- true
+	}()
+	for range 2 {
+		if ok := <-results; !ok {
+			t.Error("probe received another hook's result")
+		}
 	}
 }
