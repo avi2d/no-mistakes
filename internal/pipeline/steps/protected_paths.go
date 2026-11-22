@@ -65,7 +65,23 @@ func stagePipelineChanges(sctx *pipeline.StepContext) error {
 			}
 		}
 	}
-	if _, err := stepGitRun(sctx, "add", "-A"); err != nil {
+	args := []string{"add", "-A", "--", "."}
+	if sctx.DB != nil && sctx.Run != nil {
+		scratch, err := sctx.DB.RunScratchFiles(sctx.Run.ID)
+		if err != nil {
+			return err
+		}
+		if len(scratch) > 0 {
+			reset := append([]string{"--literal-pathspecs", "reset", "-q", "HEAD", "--"}, scratch...)
+			if _, err := stepGitRun(sctx, reset...); err != nil {
+				return err
+			}
+		}
+		for _, path := range scratch {
+			args = append(args, ":(top,exclude,literal)"+path)
+		}
+	}
+	if _, err := stepGitRun(sctx, args...); err != nil {
 		return err
 	}
 	return unstageSubmodulePointerMoves(sctx)

@@ -138,6 +138,16 @@ func (s *DocumentStep) Execute(sctx *pipeline.StepContext) (*pipeline.StepOutcom
 		purpose = "housekeeping"
 	}
 
+	beforeFiles, err := scratchFileSnapshot(sctx)
+	if err != nil {
+		return nil, err
+	}
+	schema, err = schemaWithEditedPaths(schema)
+	if err != nil {
+		return nil, fmt.Errorf("prepare document output schema: %w", err)
+	}
+	prompt += "\n\nPut scratch scripts in a temporary directory outside the worktree. In edited_paths, list every repository-relative file you intentionally created or edited for the change, excluding scratch files."
+
 	// The head before the agent runs. The agent may commit its own edits
 	// instead of leaving them in the worktree; commitAgentFixesWithResult
 	// keeps sctx.Run.HeadSHA in sync with the worktree head either way, so
@@ -153,6 +163,13 @@ func (s *DocumentStep) Execute(sctx *pipeline.StepContext) (*pipeline.StepOutcom
 	})
 	if err != nil {
 		return nil, fmt.Errorf("agent document: %w", err)
+	}
+
+	if err := recordAgentScratchFiles(sctx, beforeFiles, result.Output); err != nil {
+		return nil, err
+	}
+	if err := refuseCommittedScratchFiles(sctx, headBefore); err != nil {
+		return nil, err
 	}
 
 	// Commit whatever the agent edited, regardless of how trustworthy its

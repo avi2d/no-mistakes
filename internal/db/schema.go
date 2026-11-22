@@ -68,6 +68,12 @@ CREATE TABLE IF NOT EXISTS runs (
     updated_at           INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS run_scratch_files (
+    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+    path TEXT NOT NULL,
+    PRIMARY KEY (run_id, path)
+);
+
 CREATE TABLE IF NOT EXISTS run_commit_identities (
     run_id TEXT PRIMARY KEY REFERENCES runs(id) ON DELETE CASCADE,
     identity_json TEXT NOT NULL
