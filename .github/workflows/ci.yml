@@ -75,12 +75,25 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Run whole, each of steps, daemon and cli nears go test's 10-minute
+          # default timeout on a slow macOS runner.
           - shard: macos-1
-            packages: ./internal/pipeline/steps/... ./internal/scm/gitlab ./internal/db
+            packages: ./internal/pipeline/steps/... ./internal/daemon
+            run: '^Test([A-C]|[S-Z])'
           - shard: macos-2
-            exclude: '/internal/(pipeline/steps(/.*)?|cli|scm/forgejo|scm/gitlab|db)$'
+            packages: ./internal/pipeline/steps/... ./internal/daemon
+            run: '^Test[D-P]'
           - shard: macos-3
+            packages: ./internal/pipeline/steps/... ./internal/daemon
+            skip: '^Test([A-P]|[S-Z])'
+          - shard: macos-4
             packages: ./internal/cli ./internal/scm/forgejo
+            run: '^Test[A-M]'
+          - shard: macos-5
+            packages: ./internal/cli ./internal/scm/forgejo
+            skip: '^Test[A-M]'
+          - shard: macos-6
+            exclude: '/internal/(pipeline/steps(/.*)?|daemon|cli|scm/forgejo)$'
     runs-on: macos-latest
     timeout-minutes: 40
     steps:
@@ -94,13 +107,18 @@ jobs:
         env:
           NM_CI_PACKAGES: ${{ matrix.packages }}
           NM_CI_EXCLUDE: ${{ matrix.exclude }}
+          NM_CI_RUN: ${{ matrix.run }}
+          NM_CI_SKIP: ${{ matrix.skip }}
         run: |
           if [ -n "$NM_CI_EXCLUDE" ]; then
             pkgs=$(go list ./... | grep -Ev "$NM_CI_EXCLUDE")
           else
             pkgs=$NM_CI_PACKAGES
           fi
-          go test -race $pkgs
+          filters=()
+          if [ -n "$NM_CI_RUN" ]; then filters+=("-run=$NM_CI_RUN"); fi
+          if [ -n "$NM_CI_SKIP" ]; then filters+=("-skip=$NM_CI_SKIP"); fi
+          go test -race "${filters[@]}" $pkgs
 
       - name: Build
         run: go build ./cmd/no-mistakes
