@@ -432,6 +432,10 @@ func rebaseWithAgent(ctx context.Context, sctx *pipeline.StepContext, targetRef 
 		return nil
 	}
 
+	preRebaseHead, err := git.HeadSHA(ctx, sctx.WorkDir)
+	if err != nil {
+		return err
+	}
 	sctx.Log(fmt.Sprintf("rebasing onto %s...", targetRef))
 	if _, err := git.Run(ctx, sctx.WorkDir, "-c", "rerere.enabled=false", "rebase", targetRef); err == nil {
 		return nil
@@ -479,8 +483,14 @@ Instructions:
 		return sctx.RunAgentContext(ctx, opts)
 	}, sctx.Run.HeadSHA, targetRef)
 	if err != nil {
-		_, _ = git.Run(ctx, sctx.WorkDir, "rebase", "--abort")
-		return fmt.Errorf("agent resolve conflicts: %w", err)
+		cause := fmt.Errorf("agent resolve conflicts: %w", err)
+		if preserveErr := untrackScratchBeforeRestore(sctx, preRebaseHead); preserveErr != nil {
+			return errors.Join(cause, fmt.Errorf("preserve scratch files: %w", preserveErr))
+		}
+		if rebaseInProgress(ctx, sctx.WorkDir) {
+			_, _ = git.Run(ctx, sctx.WorkDir, "rebase", "--abort")
+		}
+		return restorePreMergeHead(ctx, sctx, preRebaseHead, cause)
 	}
 
 	// Verify rebase completed (no rebase still in progress)
@@ -658,8 +668,12 @@ Instructions:
 		return sctx.RunAgentContext(ctx, opts)
 	}, sctx.Run.HeadSHA, targetRef)
 	if err != nil {
+		cause := fmt.Errorf("agent resolve conflicts: %w", err)
+		if preserveErr := untrackScratchBeforeRestore(sctx, merge.preMergeHead); preserveErr != nil {
+			return errors.Join(cause, fmt.Errorf("preserve scratch files: %w", preserveErr))
+		}
 		merge.abandon(ctx, sctx)
-		return fmt.Errorf("agent resolve conflicts: %w", err)
+		return restorePreMergeHead(ctx, sctx, merge.preMergeHead, cause)
 	}
 	return merge.prove(ctx, sctx)
 }

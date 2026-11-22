@@ -95,6 +95,32 @@ func recordAgentScratchFiles(sctx *pipeline.StepContext, before map[string]bool,
 	return nil
 }
 
+func untrackScratchBeforeRestore(sctx *pipeline.StepContext, restoreHead string) error {
+	scratch, err := sctx.DB.RunScratchFiles(sctx.Run.ID)
+	if err != nil {
+		return err
+	}
+	raw, err := stepGitRunRaw(sctx, "ls-tree", "-r", "--name-only", "-z", restoreHead)
+	if err != nil {
+		return err
+	}
+	tracked := make(map[string]bool)
+	for _, path := range strings.Split(raw, "\x00") {
+		tracked[path] = true
+	}
+	args := []string{"--literal-pathspecs", "rm", "--cached", "-f", "--ignore-unmatch", "--"}
+	for _, path := range scratch {
+		if !tracked[path] {
+			args = append(args, path)
+		}
+	}
+	if len(args) == 6 {
+		return nil
+	}
+	_, err = stepGitRun(sctx, args...)
+	return err
+}
+
 func refuseCommittedScratchFiles(sctx *pipeline.StepContext, beforeHead string) error {
 	raw, err := stepGitRunRaw(sctx, "diff", "--name-only", "--diff-filter=A", "-z", beforeHead+"..HEAD")
 	if err != nil {

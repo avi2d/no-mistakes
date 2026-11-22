@@ -406,10 +406,15 @@ CI logs:
 		if !errors.Is(err, context.Canceled) && !errors.Is(err, pipeline.ErrAgentTimeout) {
 			err = fmt.Errorf("%w: %w", errCIFixAgentCrash, err)
 		}
+		cause := fmt.Errorf("agent CI fix: %w", err)
 		if merge != nil {
+			if preserveErr := untrackScratchBeforeRestore(sctx, merge.preMergeHead); preserveErr != nil {
+				return ciRepairResult{}, errors.Join(cause, fmt.Errorf("preserve scratch files: %w", preserveErr))
+			}
 			merge.abandon(ctx, sctx)
+			cause = restorePreMergeHead(ctx, sctx, merge.preMergeHead, cause)
 		}
-		return ciRepairResult{}, fmt.Errorf("agent CI fix: %w", err)
+		return ciRepairResult{}, cause
 	}
 	if merge != nil {
 		if err := merge.prove(ctx, sctx); err != nil {

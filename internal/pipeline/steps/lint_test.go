@@ -88,7 +88,7 @@ func TestLintStep_FixMode_UsesFallbackSummaryWhenStructuredSummaryMalformed(t *t
 	ag := &mockAgent{
 		name: "test",
 		runFn: func(ctx context.Context, opts agent.RunOpts) (*agent.Result, error) {
-			os.WriteFile(filepath.Join(dir, "lint-fix.txt"), []byte("fixed"), 0o644)
+			os.WriteFile(filepath.Join(dir, "README.md"), []byte("fixed"), 0o644)
 			return &agent.Result{Output: json.RawMessage(`not json`)}, nil
 		},
 	}
