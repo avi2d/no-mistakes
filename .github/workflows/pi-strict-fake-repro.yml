@@ -1,0 +1,29 @@
+name: pi strict fake repro
+
+on:
+  push:
+    branches:
+      - fm/no-mistakes-32-flaky-testpistrictdecl-ci
+
+permissions:
+  contents: read
+
+jobs:
+  stress:
+    name: pi strict fake under parallel forks (attempt ${{ matrix.attempt }})
+    strategy:
+      fail-fast: false
+      matrix:
+        attempt: [1, 2, 3]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Run the strict Pi fake tests in parallel
+        run: go test -race -count=20 -parallel=16 -run '^(TestStrictPiFakeIsNotTextFileBusyWhileSiblingsFork|TestPiStrictDeclarationLeavesSummaryLengthToPostValidation|TestPiStrictDeclarationSatisfiesTheStrictFunctionContract)$' ./internal/pipeline/steps/ 2>&1 | tee "$RUNNER_TEMP/out.log"; status=${PIPESTATUS[0]}; echo "fails=$(grep -c -- '--- FAIL' "$RUNNER_TEMP/out.log" || true) busy=$(grep -c 'text file busy' "$RUNNER_TEMP/out.log" || true)"; exit "$status"
+        shell: bash
