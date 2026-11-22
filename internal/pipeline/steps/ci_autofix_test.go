@@ -1503,16 +1503,17 @@ func TestCIStep_FixAfterATimedOutRepairRevalidatesTheRecordedCommit(t *testing.T
 
 	calls := 0
 	ag := &mockAgent{
-		name: "slow-repair",
+		name:                "slow-repair",
+		skipAutoEditedPaths: true,
 		runFn: func(ctx context.Context, _ agent.RunOpts) (*agent.Result, error) {
 			calls++
 			if calls > 1 {
 				return &agent.Result{Output: json.RawMessage(`{"summary":"the recorded repair already fixes it","code_change_needed":true}`)}, nil
 			}
-			if err := os.WriteFile(filepath.Join(dir, "repair.txt"), []byte("fixed"), 0o644); err != nil {
+			if err := os.WriteFile(filepath.Join(dir, "feature.txt"), []byte("fixed"), 0o644); err != nil {
 				return nil, err
 			}
-			gitCmd(t, dir, "add", "repair.txt")
+			gitCmd(t, dir, "add", "feature.txt")
 			gitCmd(t, dir, "commit", "-m", "timed-out CI repair")
 			<-ctx.Done()
 			return nil, ctx.Err()
@@ -1539,6 +1540,7 @@ func TestCIStep_FixAfterATimedOutRepairRevalidatesTheRecordedCommit(t *testing.T
 		t.Fatal("timed-out repair was not recorded")
 	}
 
+	sctx.Config.AgentTimeout = 5 * time.Second
 	sctx.Fixing = true
 	sctx.PreviousFindings = parked.Findings
 	outcome, err := step.Execute(sctx)

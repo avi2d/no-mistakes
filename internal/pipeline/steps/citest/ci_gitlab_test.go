@@ -234,12 +234,12 @@ func TestCIStep_GitLabAutoFixIncludesJobTrace(t *testing.T) {
 		RunFn: func(ctx context.Context, opts agent.RunOpts) (*agent.Result, error) {
 			capturedPrompt = opts.Prompt
 			os.WriteFile(filepath.Join(opts.CWD, "gitlab-fix.txt"), []byte("fixed"), 0o644)
-			return &agent.Result{}, nil
+			return &agent.Result{Output: json.RawMessage(`{"edited_paths":["gitlab-fix.txt"]}`)}, nil
 		},
 	}
 
 	prURL := "https://gitlab.com/test/repo/-/merge_requests/42"
-	sctx := stepstest.NewTestContext(t, ag, dir, baseSHA, headSHA, config.Commands{})
+	sctx := stepstest.NewTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
 	sctx.Env = env
 	sctx.Run.PRURL = &prURL
 	sctx.Repo.UpstreamURL = upstream

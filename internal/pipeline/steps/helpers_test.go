@@ -28,9 +28,10 @@ import (
 var testGitExecutable, testGitErr = testgit.RealGit()
 
 type mockAgent struct {
-	name  string
-	runFn func(ctx context.Context, opts agent.RunOpts) (*agent.Result, error)
-	calls []agent.RunOpts
+	skipAutoEditedPaths bool
+	name                string
+	runFn               func(ctx context.Context, opts agent.RunOpts) (*agent.Result, error)
+	calls               []agent.RunOpts
 }
 
 func (m *mockAgent) Name() string { return m.name }
@@ -40,7 +41,7 @@ func (m *mockAgent) Run(ctx context.Context, opts agent.RunOpts) (*agent.Result,
 	if m.runFn == nil {
 		return &agent.Result{}, nil
 	}
-	if !strings.Contains(string(opts.JSONSchema), `"edited_paths"`) || opts.Purpose == "document" || opts.Purpose == "housekeeping" {
+	if m.skipAutoEditedPaths || !strings.Contains(string(opts.JSONSchema), `"edited_paths"`) || opts.Purpose == "document" || opts.Purpose == "housekeeping" {
 		return m.runFn(ctx, opts)
 	}
 	before := mockAgentFiles(opts.CWD)
