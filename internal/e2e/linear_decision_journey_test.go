@@ -59,6 +59,7 @@ func TestSelectedFixFollowedByDocumentEditDoesNotRestartReview(t *testing.T) {
         new: "lint clean\n"
     structured:
       summary: "create lint sentinel"
+      edited_paths: ["lint.ok"]
   - text: "no issues found"
     structured:
       findings: []
