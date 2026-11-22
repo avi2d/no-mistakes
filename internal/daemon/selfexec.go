@@ -24,6 +24,7 @@ var daemonProcessRunning = processRunning
 var daemonProcessStartTime = processStartTime
 var daemonKillPID = killPID
 var daemonEndpointUsesRegularFile = func() bool { return runtime.GOOS == "windows" }
+var errDaemonPIDGone = errors.New("daemon pid is gone")
 
 func daemonStartTimeout() time.Duration {
 	// Unix readiness covers the missing-shell retry window, the final
@@ -699,6 +700,10 @@ func stopDetachedDaemonByPID(p *paths.Paths) error {
 		return err
 	}
 	if err := validateDaemonPIDFallback(p, pid); err != nil {
+		if errors.Is(err, errDaemonPIDGone) {
+			cleanupDaemonArtifacts(p)
+			return nil
+		}
 		return err
 	}
 	if err := daemonKillPID(pid); err != nil {
@@ -742,6 +747,9 @@ func validateDaemonPIDFallback(p *paths.Paths, pid int) error {
 	}
 	startTime, err := daemonProcessStartTime(pid)
 	if err != nil {
+		if running, checkErr := daemonProcessRunning(pid); checkErr == nil && !running {
+			return errDaemonPIDGone
+		}
 		return fmt.Errorf("inspect daemon pid %d: %w", pid, err)
 	}
 	matches, err := daemonPIDRecordMatchesProcess(p, record, startTime)
@@ -843,6 +851,10 @@ func waitForDaemonStop(p *paths.Paths, instance daemonInstance) error {
 	switch {
 	case err == nil:
 		if err := validateDaemonPIDFallback(p, pid); err != nil {
+			if errors.Is(err, errDaemonPIDGone) {
+				cleanupDaemonArtifacts(p)
+				return nil
+			}
 			return err
 		}
 	default:
