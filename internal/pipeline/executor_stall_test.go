@@ -29,10 +29,12 @@ func (a *scriptedAgent) Run(_ context.Context, opts agent.RunOpts) (*agent.Resul
 	return &agent.Result{Text: "done"}, nil
 }
 
-// A loaded runner delays a scripted step past 200ms. The silence guard ends a
-// turn one quiet period after the stall, and a silent agent stalls again one
-// quiet period after it speaks, so each step must land inside that period.
+// A silent agent stalls again one quiet period after it speaks, and a loaded
+// runner delays the read of the cleared stall past 200ms.
 const stallTestQuiet = time.Second
+
+// The silence guard would end the turn before a delayed script acts.
+func outlastTheSilenceGuard(exec *Executor) { exec.silenceNoProgressAfter = time.Hour }
 
 func waitForStall(t *testing.T, database *db.DB, stepID string, want bool) *db.StepResult {
 	t.Helper()
@@ -131,6 +133,7 @@ func TestExecutor_SilentAgentIsRecordedAsStalledUntilItSpeaks(t *testing.T) {
 	}
 
 	exec := NewExecutor(database, p, cfg, silentAgent, []Step{step}, announcements.handler)
+	outlastTheSilenceGuard(exec)
 	if err := exec.Execute(context.Background(), run, repo, t.TempDir()); err != nil {
 		t.Fatalf("execute: %v", err)
 	}
@@ -155,7 +158,7 @@ func TestExecutor_SilentAgentIsRecordedAsStalledUntilItSpeaks(t *testing.T) {
 
 func TestExecutor_StallClearsWhenTheTurnEndsSilent(t *testing.T) {
 	database, p, run, repo := setupTest(t)
-	cfg := &config.Config{StepQuietWarning: stallTestQuiet}
+	cfg := &config.Config{StepQuietWarning: 50 * time.Millisecond}
 
 	var stepID string
 	silentAgent := &scriptedAgent{script: func(opts agent.RunOpts) {
@@ -177,6 +180,7 @@ func TestExecutor_StallClearsWhenTheTurnEndsSilent(t *testing.T) {
 	}
 
 	exec := NewExecutor(database, p, cfg, silentAgent, []Step{step}, nil)
+	outlastTheSilenceGuard(exec)
 	if err := exec.Execute(context.Background(), run, repo, t.TempDir()); err != nil {
 		t.Fatalf("execute: %v", err)
 	}

@@ -128,9 +128,10 @@ type Executor struct {
 	// recorded, so an echo never claims a decision that is not durable.
 	waitingRoundID string
 
-	gateReconcileInterval time.Duration
-	gateReconcileTimeout  time.Duration
-	onPRMerged            func(context.Context, string)
+	gateReconcileInterval  time.Duration
+	gateReconcileTimeout   time.Duration
+	silenceNoProgressAfter time.Duration
+	onPRMerged             func(context.Context, string)
 	// ciObservationTransition wraps CI readiness and PR-state writes at a
 	// daemon-owned synchronization boundary. It is nil in standalone executor
 	// embeddings.
@@ -1463,6 +1464,10 @@ func (e *Executor) executeStep(ctx context.Context, step Step, sr *db.StepResult
 		e.onEvent(ipc.Event{Type: ipc.EventRunUpdated, RunID: run.ID, RepoID: repo.ID})
 	}
 	quiet := stepQuietWarning(e.config)
+	noProgressAfter := 2 * quiet
+	if e.silenceNoProgressAfter > 0 {
+		noProgressAfter = e.silenceNoProgressAfter
+	}
 	onAgentLifecycle := func(event agent.LifecycleEvent) {
 		text := event.Message
 		if text == "" {
@@ -1552,7 +1557,7 @@ func (e *Executor) executeStep(ctx context.Context, step Step, sr *db.StepResult
 			inner:       stepAgent,
 			onLifecycle: onAgentLifecycle,
 			watchStall: func(agentName string) *agentStallWatch {
-				w := watchAgentStall(agentName, quiet, reportStall, clearStall)
+				w := watchAgentStall(agentName, quiet, noProgressAfter, reportStall, clearStall)
 				w.onSpinKill = func(victim procreap.SpinVictim) {
 					appendLog(fmt.Sprintf("killed spinning pid=%d using %.0f%% of one core while %s was silent: %s", victim.PID, victim.CPUFraction*100, agentName, truncateCommand(victim.Command, 300)))
 				}
