@@ -109,11 +109,13 @@ func (s *CIStep) checkRepairBeforePush(sctx *pipeline.StepContext, repairPrompt 
 			return result, checkErr
 		}
 		sctx.Log(fmt.Sprintf("pre-push checks failed, asking the CI fixer to fix them (turn %d of %d)...", turn+1, ciPrePushFixTurns))
-		next, err := sctx.RunAgentContext(sctx.Ctx, agent.RunOpts{
+		next, err := runScratchAwareAgent(sctx, agent.RunOpts{
 			Prompt:     ciPrePushFixPrompt(repairPrompt, failure),
 			CWD:        sctx.WorkDir,
 			JSONSchema: ciFixConclusionSchema,
 			OnChunk:    sctx.LogChunk,
+		}, func(opts agent.RunOpts) (*agent.Result, error) {
+			return sctx.RunAgentContext(sctx.Ctx, opts)
 		})
 		if err != nil {
 			if !errors.Is(err, context.Canceled) && !errors.Is(err, pipeline.ErrAgentTimeout) {

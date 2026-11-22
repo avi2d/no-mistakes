@@ -470,12 +470,14 @@ Instructions:
 	prompt += executionContextPromptSection(sctx.WorkDir)
 	prompt = testguidance.LateRepairPrompt(string(types.StepRebase), prompt)
 
-	_, err = sctx.RunAgentContext(ctx, agent.RunOpts{
+	_, err = runScratchAwareAgent(sctx, agent.RunOpts{
 		Prompt:     prompt,
 		CWD:        sctx.WorkDir,
 		JSONSchema: commitSummarySchema,
 		OnChunk:    sctx.LogChunk,
-	})
+	}, func(opts agent.RunOpts) (*agent.Result, error) {
+		return sctx.RunAgentContext(ctx, opts)
+	}, sctx.Run.HeadSHA, targetRef)
 	if err != nil {
 		_, _ = git.Run(ctx, sctx.WorkDir, "rebase", "--abort")
 		return fmt.Errorf("agent resolve conflicts: %w", err)
@@ -647,12 +649,14 @@ Instructions:
 	prompt += executionContextPromptSection(sctx.WorkDir)
 	prompt = testguidance.LateRepairPrompt(string(types.StepRebase), prompt)
 
-	_, err = sctx.RunAgentContext(ctx, agent.RunOpts{
+	_, err = runScratchAwareAgent(sctx, agent.RunOpts{
 		Prompt:     prompt,
 		CWD:        sctx.WorkDir,
 		JSONSchema: commitSummarySchema,
 		OnChunk:    sctx.LogChunk,
-	})
+	}, func(opts agent.RunOpts) (*agent.Result, error) {
+		return sctx.RunAgentContext(ctx, opts)
+	}, sctx.Run.HeadSHA, targetRef)
 	if err != nil {
 		merge.abandon(ctx, sctx)
 		return fmt.Errorf("agent resolve conflicts: %w", err)

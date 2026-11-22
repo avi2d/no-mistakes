@@ -390,12 +390,18 @@ CI logs:
 	prompt = fixerPrompt(repairTask)
 
 	sctx.Log("running agent to fix CI issues...")
-	result, err := sctx.RunAgentContext(ctx, agent.RunOpts{
+	var preservedRefs []string
+	if rebase {
+		preservedRefs = []string{sctx.Run.HeadSHA, rebaseBaseSHA}
+	}
+	result, err := runScratchAwareAgent(sctx, agent.RunOpts{
 		Prompt:     prompt,
 		CWD:        sctx.WorkDir,
 		JSONSchema: ciFixConclusionSchema,
 		OnChunk:    sctx.LogChunk,
-	})
+	}, func(opts agent.RunOpts) (*agent.Result, error) {
+		return sctx.RunAgentContext(ctx, opts)
+	}, preservedRefs...)
 	if err != nil {
 		if !errors.Is(err, context.Canceled) && !errors.Is(err, pipeline.ErrAgentTimeout) {
 			err = fmt.Errorf("%w: %w", errCIFixAgentCrash, err)

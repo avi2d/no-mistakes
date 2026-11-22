@@ -120,12 +120,14 @@ Rules:
 Previous lint findings to address:
 ` + sanitizedPreviousFindingsForPrompt(sctx.PreviousFindings)
 		}
-		result, err := sctx.RunAgentContext(ctx, agent.RunOpts{
+		result, err := runScratchAwareAgent(sctx, agent.RunOpts{
 			Prompt:     fixerPrompt(prompt),
 			CWD:        sctx.WorkDir,
 			JSONSchema: findingsSchema,
 			OnChunk:    sctx.LogChunk,
 			Purpose:    "lint",
+		}, func(opts agent.RunOpts) (*agent.Result, error) {
+			return sctx.RunAgentContext(ctx, opts)
 		})
 		if err != nil {
 			return nil, fmt.Errorf("agent lint: %w", err)
