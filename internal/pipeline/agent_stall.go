@@ -28,11 +28,12 @@ func stepQuietWarning(cfg *config.Config) time.Duration {
 // descendant leaf is killed, and a turn still silent after a second bound
 // ends with that reason.
 type agentStallWatch struct {
-	quiet        time.Duration
-	onStall      func(agentName string, pid int, silentSince time.Time)
-	onResume     func()
-	onSpinKill   func(procreap.SpinVictim)
-	onNoProgress func(reason string)
+	quiet           time.Duration
+	noProgressAfter time.Duration
+	onStall         func(agentName string, pid int, silentSince time.Time)
+	onResume        func()
+	onSpinKill      func(procreap.SpinVictim)
+	onNoProgress    func(reason string)
 
 	mu         sync.Mutex
 	agent      string
@@ -47,8 +48,8 @@ type agentStallWatch struct {
 	victim     *procreap.SpinVictim
 }
 
-func watchAgentStall(agentName string, quiet time.Duration, onStall func(string, int, time.Time), onResume func()) *agentStallWatch {
-	w := &agentStallWatch{quiet: quiet, onStall: onStall, onResume: onResume, agent: agentName, heardAt: time.Now()}
+func watchAgentStall(agentName string, quiet, noProgressAfter time.Duration, onStall func(string, int, time.Time), onResume func()) *agentStallWatch {
+	w := &agentStallWatch{quiet: quiet, noProgressAfter: noProgressAfter, onStall: onStall, onResume: onResume, agent: agentName, heardAt: time.Now()}
 	w.mu.Lock()
 	w.timer = time.AfterFunc(quiet, w.check)
 	w.mu.Unlock()
@@ -120,17 +121,17 @@ func (w *agentStallWatch) check() {
 	}
 	w.stalled = true
 	w.gen++
-	agent, pid, launchedAt, exited, stallStart, quiet := w.agent, w.pid, w.launchedAt, w.exited, w.heardAt, w.quiet
+	agent, pid, launchedAt, exited, stallStart, noProgressAfter := w.agent, w.pid, w.launchedAt, w.exited, w.heardAt, w.noProgressAfter
 	gen := w.gen
 	w.mu.Unlock()
 	w.onStall(agent, pid, stallStart)
-	go w.guard(gen, agent, pid, launchedAt, exited, stallStart, quiet)
+	go w.guard(gen, agent, pid, launchedAt, exited, stallStart, noProgressAfter)
 }
 
 // guard inspects the silent agent's process tree once, then ends a turn that
 // still makes no progress after a second bound. An inspection that fails
 // only logs: it must never fail the turn it was diagnosing.
-func (w *agentStallWatch) guard(gen int, agent string, pid int, launchedAt time.Time, exited bool, stallStart time.Time, quiet time.Duration) {
+func (w *agentStallWatch) guard(gen int, agent string, pid int, launchedAt time.Time, exited bool, stallStart time.Time, noProgressAfter time.Duration) {
 	if pid > 1 && !exited {
 		victim, err := procreap.KillSpinningLeaf(pid, silenceSpinMinCPU, silenceSpinSampleWindow, silenceSpinKillGrace, launchedAt)
 		if err != nil {
@@ -147,7 +148,7 @@ func (w *agentStallWatch) guard(gen int, agent string, pid int, launchedAt time.
 			}
 		}
 	}
-	deadline := stallStart.Add(2 * quiet)
+	deadline := stallStart.Add(noProgressAfter)
 	for {
 		w.mu.Lock()
 		settled := gen != w.gen || !w.stalled
