@@ -378,12 +378,12 @@ func TestCIStep_WaitsForPendingChecksBeforeFixing(t *testing.T) {
 		RunFn: func(ctx context.Context, opts agent.RunOpts) (*agent.Result, error) {
 			agentCalled = true
 			os.WriteFile(filepath.Join(opts.CWD, "fix.txt"), []byte("fixed"), 0o644)
-			return &agent.Result{}, nil
+			return &agent.Result{Output: json.RawMessage(`{"edited_paths":["fix.txt"]}`)}, nil
 		},
 	}
 
 	prURL := "https://github.com/test/repo/pull/42"
-	sctx := stepstest.NewTestContext(t, ag, dir, baseSHA, headSHA, config.Commands{})
+	sctx := stepstest.NewTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
 	sctx.Env = env
 	sctx.Run.PRURL = &prURL
 	sctx.Repo.UpstreamURL = upstream

@@ -929,12 +929,13 @@ func executeFixMode(sctx *pipeline.StepContext, stepName types.StepName, opts fi
 			return "", fmt.Errorf("resolve head before %s fix: %w", stepName, err)
 		}
 	}
-	var result *agent.Result
-	if opts.RunAgent != nil {
-		result, err = opts.RunAgent(runOpts)
-	} else {
-		result, err = sctx.RunAgentSessionContext(sctx.Ctx, opts.SessionRole, runOpts)
+	run := opts.RunAgent
+	if run == nil {
+		run = func(runOpts agent.RunOpts) (*agent.Result, error) {
+			return sctx.RunAgentSessionContext(sctx.Ctx, opts.SessionRole, runOpts)
+		}
 	}
+	result, err := runScratchAwareAgent(sctx, runOpts, run)
 	if err != nil {
 		if opts.ErrorPrefix == "" {
 			return "", err

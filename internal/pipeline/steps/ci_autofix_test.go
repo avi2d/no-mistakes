@@ -70,7 +70,7 @@ func TestCIStep_CIFailureAutoFix(t *testing.T) {
 	}
 
 	prURL := "https://github.com/test/repo/pull/42"
-	sctx := newTestContext(t, ag, dir, baseSHA, headSHA, config.Commands{})
+	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
 	sctx.Env = env
 	sctx.Run.PRURL = &prURL
 	sctx.Repo.UpstreamURL = upstream
@@ -128,7 +128,7 @@ func TestCIStep_CIAutoFixDisabledWithZero(t *testing.T) {
 	ag := &mockAgent{name: "test"}
 
 	prURL := "https://github.com/test/repo/pull/42"
-	sctx := newTestContext(t, ag, dir, baseSHA, headSHA, config.Commands{})
+	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
 	sctx.Env = env
 	sctx.Run.PRURL = &prURL
 	sctx.Config.CITimeout = 5 * time.Second
@@ -330,7 +330,7 @@ func TestCIStep_CIAutoFixRetriesAfterChecksRerun(t *testing.T) {
 	}
 
 	prURL := "https://github.com/test/repo/pull/42"
-	sctx := newTestContext(t, ag, dir, baseSHA, headSHA, config.Commands{})
+	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
 	sctx.Env = append(env, "FAKE_CLI_PR_HEAD_SHA="+headSHA)
 	sctx.Run.PRURL = &prURL
 	sctx.Repo.UpstreamURL = upstream
@@ -404,7 +404,7 @@ func TestCIStep_CIAutoFixRetriesWhenGitHubClockLagsLocalClock(t *testing.T) {
 	}
 
 	prURL := "https://github.com/test/repo/pull/42"
-	sctx := newTestContext(t, ag, dir, baseSHA, headSHA, config.Commands{})
+	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
 	sctx.Env = env
 	sctx.Run.PRURL = &prURL
 	sctx.Repo.UpstreamURL = upstream
@@ -487,7 +487,7 @@ func TestCIStep_CIAutoFixRetriesWhenFastChecksSkipPendingObservation(t *testing.
 	}
 
 	prURL := "https://github.com/test/repo/pull/42"
-	sctx := newTestContext(t, ag, dir, baseSHA, headSHA, config.Commands{})
+	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
 	sctx.Env = env
 	sctx.Run.PRURL = &prURL
 	sctx.Repo.UpstreamURL = upstream
@@ -575,7 +575,7 @@ func TestCIStep_CIAutoFixRetriesWhenSomeChecksStayFailing(t *testing.T) {
 	}
 
 	prURL := "https://github.com/test/repo/pull/42"
-	sctx := newTestContext(t, ag, dir, baseSHA, headSHA, config.Commands{})
+	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
 	sctx.Env = append(env, "FAKE_CLI_PR_HEAD_SHA="+headSHA)
 	sctx.Run.PRURL = &prURL
 	sctx.Repo.UpstreamURL = upstream
@@ -647,7 +647,7 @@ func TestCIStep_DoesNotRetryOnUnrelatedPendingCheck(t *testing.T) {
 	}
 
 	prURL := "https://github.com/test/repo/pull/42"
-	sctx := newTestContext(t, ag, dir, baseSHA, headSHA, config.Commands{})
+	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
 	sctx.Env = env
 	sctx.Run.PRURL = &prURL
 	sctx.Repo.UpstreamURL = upstream
@@ -726,7 +726,7 @@ func TestCIStep_RetriesMergeConflictAfterRerun(t *testing.T) {
 	}
 
 	prURL := "https://github.com/test/repo/pull/42"
-	sctx := newTestContext(t, ag, dir, baseSHA, headSHA, config.Commands{})
+	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
 	sctx.Env = env
 	sctx.Run.PRURL = &prURL
 	sctx.Repo.UpstreamURL = upstream
@@ -803,7 +803,7 @@ func TestCIStep_FixMode_ManualInterventionRunsCIFix(t *testing.T) {
 	}
 
 	prURL := "https://github.com/test/repo/pull/42"
-	sctx := newTestContext(t, ag, dir, baseSHA, headSHA, config.Commands{})
+	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
 	sctx.Env = env
 	sctx.Run.PRURL = &prURL
 	sctx.Repo.UpstreamURL = upstream
@@ -1127,7 +1127,7 @@ func TestCIStep_AutoFixPromptIncludesMustFixInstruction(t *testing.T) {
 	}
 
 	prURL := "https://github.com/test/repo/pull/42"
-	sctx := newTestContext(t, ag, dir, baseSHA, headSHA, config.Commands{})
+	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
 	sctx.Env = env
 	sctx.Run.PRURL = &prURL
 	sctx.Repo.UpstreamURL = upstream
@@ -1223,7 +1223,7 @@ func TestCIStep_FixPromptLeavesPublicationAndMonitoringToPipeline(t *testing.T) 
 					return &agent.Result{}, nil
 				},
 			}
-			sctx := newTestContext(t, ag, dir, baseSHA, headSHA, config.Commands{})
+			sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
 			pr := &scm.PR{Number: "42", URL: "https://github.com/test/repo/pull/42"}
 			if _, err := (&CIStep{}).autoFixCI(sctx, &forgejoLogTestHost{}, pr, tc.targets); err != nil {
 				t.Fatal(err)
@@ -1258,7 +1258,7 @@ func TestCIStep_FixPromptPrefersSimplificationOverMachinery(t *testing.T) {
 			return &agent.Result{}, nil
 		},
 	}
-	sctx := newTestContext(t, ag, dir, baseSHA, headSHA, config.Commands{})
+	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
 	pr := &scm.PR{Number: "42", URL: "https://github.com/test/repo/pull/42"}
 	if _, err := (&CIStep{}).autoFixCI(sctx, &forgejoLogTestHost{}, pr, ciTargetsFor([]string{"test"}, false)); err != nil {
 		t.Fatal(err)
@@ -1308,7 +1308,7 @@ func TestCIStep_FixPromptClosesTheInvariantAcrossSiblingSites(t *testing.T) {
 					return &agent.Result{}, nil
 				},
 			}
-			sctx := newTestContext(t, ag, dir, baseSHA, headSHA, config.Commands{})
+			sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
 			pr := &scm.PR{Number: "42", URL: "https://github.com/test/repo/pull/42"}
 			if _, err := (&CIStep{}).autoFixCI(sctx, &forgejoLogTestHost{}, pr, tc.targets); err != nil {
 				t.Fatal(err)
@@ -1340,7 +1340,7 @@ func TestCIStep_FixPromptDistinguishesCodeDefectFromExternalFailure(t *testing.T
 			return &agent.Result{}, nil
 		},
 	}
-	sctx := newTestContext(t, ag, dir, baseSHA, headSHA, config.Commands{})
+	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
 	pr := &scm.PR{Number: "42", URL: "https://github.com/test/repo/pull/42"}
 	if _, err := (&CIStep{}).autoFixCI(sctx, &forgejoLogTestHost{}, pr, ciTargetsFor([]string{"PR must be raised via no-mistakes"}, false)); err != nil {
 		t.Fatal(err)
@@ -1378,7 +1378,7 @@ func TestCIStep_HangingFixAgentFailsAfterTimeout(t *testing.T) {
 			return &agent.Result{}, nil
 		},
 	}
-	sctx := newTestContext(t, ag, dir, baseSHA, headSHA, config.Commands{})
+	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
 	sctx.Config.AgentTimeout = 20 * time.Millisecond
 	host := &forgejoLogTestHost{}
 	pr := &scm.PR{Number: "42", URL: "https://forge.example/octo/widgets/pulls/42"}
@@ -1403,7 +1403,7 @@ func TestCIStep_FixAgentSuccessfulReturnAfterTimeoutFailsWithoutCommit(t *testin
 			return &agent.Result{}, nil
 		},
 	}
-	sctx := newTestContext(t, ag, dir, baseSHA, headSHA, config.Commands{})
+	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
 	sctx.Config.AgentTimeout = 20 * time.Millisecond
 	host := &forgejoLogTestHost{}
 	pr := &scm.PR{Number: "42", URL: "https://forge.example/octo/widgets/pulls/42"}
@@ -1503,16 +1503,17 @@ func TestCIStep_FixAfterATimedOutRepairRevalidatesTheRecordedCommit(t *testing.T
 
 	calls := 0
 	ag := &mockAgent{
-		name: "slow-repair",
+		name:                "slow-repair",
+		skipAutoEditedPaths: true,
 		runFn: func(ctx context.Context, _ agent.RunOpts) (*agent.Result, error) {
 			calls++
 			if calls > 1 {
 				return &agent.Result{Output: json.RawMessage(`{"summary":"the recorded repair already fixes it","code_change_needed":true}`)}, nil
 			}
-			if err := os.WriteFile(filepath.Join(dir, "repair.txt"), []byte("fixed"), 0o644); err != nil {
+			if err := os.WriteFile(filepath.Join(dir, "feature.txt"), []byte("fixed"), 0o644); err != nil {
 				return nil, err
 			}
-			gitCmd(t, dir, "add", "repair.txt")
+			gitCmd(t, dir, "add", "feature.txt")
 			gitCmd(t, dir, "commit", "-m", "timed-out CI repair")
 			<-ctx.Done()
 			return nil, ctx.Err()
@@ -1539,6 +1540,7 @@ func TestCIStep_FixAfterATimedOutRepairRevalidatesTheRecordedCommit(t *testing.T
 		t.Fatal("timed-out repair was not recorded")
 	}
 
+	sctx.Config.AgentTimeout = 5 * time.Second
 	sctx.Fixing = true
 	sctx.PreviousFindings = parked.Findings
 	outcome, err := step.Execute(sctx)
@@ -1666,7 +1668,7 @@ func TestCIStep_AutoFixUsesOnlySelectedFindings(t *testing.T) {
 		},
 	}
 
-	sctx := newTestContext(t, ag, dir, baseSHA, headSHA, config.Commands{})
+	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
 	host := &mockReviewHost{comments: []scm.ReviewComment{{Author: "greptile-apps[bot]", Body: "unselected bot finding"}}}
 	pr := &scm.PR{Number: "869", URL: "https://github.com/kunchenguid/no-mistakes/pull/869"}
 
@@ -1707,7 +1709,7 @@ func TestCIStep_FixAgentBudgetExhaustionParksForADecisionInsteadOfRetrying(t *te
 	}
 
 	prURL := "https://github.com/test/repo/pull/3195"
-	sctx := newTestContext(t, ag, dir, baseSHA, headSHA, config.Commands{})
+	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
 	sctx.Env = env
 	sctx.Run.PRURL = &prURL
 	sctx.Config.CITimeout = 30 * time.Second
@@ -1857,7 +1859,7 @@ func TestCIStep_FixPromptPrefersRemovalOfUnrequiredPaths(t *testing.T) {
 			return &agent.Result{}, nil
 		},
 	}
-	sctx := newTestContext(t, ag, dir, baseSHA, headSHA, config.Commands{})
+	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
 	pr := &scm.PR{Number: "42", URL: "https://github.com/test/repo/pull/42"}
 	if _, err := (&CIStep{}).autoFixCI(sctx, &forgejoLogTestHost{}, pr, ciTargetsFor([]string{"test"}, false)); err != nil {
 		t.Fatal(err)

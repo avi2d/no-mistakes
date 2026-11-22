@@ -2,6 +2,7 @@ package steps
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -26,19 +28,65 @@ import (
 var testGitExecutable, testGitErr = testgit.RealGit()
 
 type mockAgent struct {
-	name  string
-	runFn func(ctx context.Context, opts agent.RunOpts) (*agent.Result, error)
-	calls []agent.RunOpts
+	skipAutoEditedPaths bool
+	name                string
+	runFn               func(ctx context.Context, opts agent.RunOpts) (*agent.Result, error)
+	calls               []agent.RunOpts
 }
 
 func (m *mockAgent) Name() string { return m.name }
 
 func (m *mockAgent) Run(ctx context.Context, opts agent.RunOpts) (*agent.Result, error) {
 	m.calls = append(m.calls, opts)
-	if m.runFn != nil {
+	if m.runFn == nil {
+		return &agent.Result{}, nil
+	}
+	if m.skipAutoEditedPaths || !strings.Contains(string(opts.JSONSchema), `"edited_paths"`) || opts.Purpose == "document" || opts.Purpose == "housekeeping" {
 		return m.runFn(ctx, opts)
 	}
-	return &agent.Result{}, nil
+	before := mockAgentFiles(opts.CWD)
+	result, err := m.runFn(ctx, opts)
+	if err != nil || result == nil {
+		return result, err
+	}
+	after := mockAgentFiles(opts.CWD)
+	var added []string
+	for path := range after {
+		if !before[path] {
+			added = append(added, path)
+		}
+	}
+	if len(added) == 0 {
+		return result, nil
+	}
+	var payload map[string]json.RawMessage
+	if len(result.Output) == 0 {
+		payload = make(map[string]json.RawMessage)
+	} else if json.Unmarshal(result.Output, &payload) != nil || payload == nil {
+		return result, nil
+	}
+	if _, ok := payload["edited_paths"]; ok {
+		return result, nil
+	}
+	sort.Strings(added)
+	payload["edited_paths"], _ = json.Marshal(added)
+	result.Output, _ = json.Marshal(payload)
+	return result, nil
+}
+
+func mockAgentFiles(dir string) map[string]bool {
+	cmd := exec.Command(testGitExecutable, "-C", dir, "ls-files", "-c", "-o", "--exclude-standard", "-z")
+	output, err := cmd.Output()
+	if err != nil {
+		return nil
+	}
+	files := make(map[string]bool)
+	for _, path := range strings.Split(string(output), "\x00") {
+		if path != "" {
+			files[path] = true
+		}
+	}
+	return files
 }
 
 func (m *mockAgent) Close() error { return nil }

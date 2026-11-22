@@ -727,7 +727,7 @@ func TestTestStep_BudgetCutInstructionsReachTheEvidenceTurn(t *testing.T) {
 			t.Parallel()
 			dir, baseSHA, headSHA := setupGitRepo(t)
 			var prompts []string
-			ag := &mockAgent{name: "test", runFn: func(ctx context.Context, opts agent.RunOpts) (*agent.Result, error) {
+			ag := &mockAgent{name: "test", skipAutoEditedPaths: true, runFn: func(ctx context.Context, opts agent.RunOpts) (*agent.Result, error) {
 				prompts = append(prompts, opts.Prompt)
 				if len(prompts) == 1 && tt.repair {
 					return &agent.Result{Output: json.RawMessage(`{"summary":"fix checkout"}`)}, nil
