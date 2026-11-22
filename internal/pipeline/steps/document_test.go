@@ -16,6 +16,35 @@ import (
 	"github.com/kunchenguid/no-mistakes/internal/types"
 )
 
+func TestDocumentStep_DoesNotCommitAgentScratchScript(t *testing.T) {
+	t.Parallel()
+	dir, baseSHA, headSHA := setupGitRepo(t)
+	gitCmd(t, dir, "checkout", "--detach", headSHA)
+	ag := &mockAgent{
+		name: "test",
+		runFn: func(ctx context.Context, opts agent.RunOpts) (*agent.Result, error) {
+			if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("# Updated\n"), 0o644); err != nil {
+				return nil, err
+			}
+			if err := os.WriteFile(filepath.Join(dir, "check-batch.sh"), []byte("echo scratch\n"), 0o644); err != nil {
+				return nil, err
+			}
+			return &agent.Result{Output: json.RawMessage(`{"findings":[],"summary":"update README","edited_paths":["README.md"]}`)}, nil
+		},
+	}
+	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
+	if _, err := (&DocumentStep{}).Execute(sctx); err != nil {
+		t.Fatal(err)
+	}
+	files := gitCmd(t, dir, "diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD")
+	if strings.Contains(files, "check-batch.sh") {
+		t.Fatalf("scratch script committed: %s", files)
+	}
+	if !strings.Contains(files, "README.md") {
+		t.Fatalf("documentation edit missing: %s", files)
+	}
+}
+
 func TestDocumentStep_AgentManaged_FixesAndCommitsWithoutApproval(t *testing.T) {
 	t.Parallel()
 	dir, baseSHA, headSHA := setupGitRepo(t)
