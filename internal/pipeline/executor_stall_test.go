@@ -29,8 +29,8 @@ func (a *scriptedAgent) Run(_ context.Context, opts agent.RunOpts) (*agent.Resul
 	return &agent.Result{Text: "done"}, nil
 }
 
-// A silent agent stalls again one quiet period after it speaks, and a loaded
-// runner delays the read of the cleared stall past 200ms.
+// SilentSince holds whole seconds, so a quiet period of at least one second
+// gives a stall that starts after the agent speaks a different SilentSince.
 const stallTestQuiet = time.Second
 
 // The silence guard would end the turn before a delayed script acts.
@@ -57,11 +57,11 @@ func waitForStall(t *testing.T, database *db.DB, stepID string, want bool) *db.S
 type stallAnnouncements struct {
 	database *db.DB
 	watched  atomic.Pointer[string]
-	seen     chan bool
+	seen     chan *db.StepResult
 }
 
 func newStallAnnouncements(database *db.DB) *stallAnnouncements {
-	return &stallAnnouncements{database: database, seen: make(chan bool, 64)}
+	return &stallAnnouncements{database: database, seen: make(chan *db.StepResult, 64)}
 }
 
 // The handler reads on the emitter's goroutine through a one-connection pool,
@@ -83,22 +83,37 @@ func (s *stallAnnouncements) handler(e ipc.Event) {
 		return
 	}
 	select {
-	case s.seen <- got.Stall != nil:
+	case s.seen <- got:
 	default:
 	}
 }
 
-func (s *stallAnnouncements) await(t *testing.T, stalled bool) {
+func (s *stallAnnouncements) awaitStall(t *testing.T) *db.StepResult {
 	t.Helper()
 	deadline := time.After(5 * time.Second)
 	for {
 		select {
 		case got := <-s.seen:
-			if got == stalled {
-				return
+			if got.Stall != nil {
+				return got
 			}
 		case <-deadline:
-			t.Fatalf("no run_updated event announced stalled=%v", stalled)
+			t.Fatal("no run_updated event announced the stall")
+		}
+	}
+}
+
+// Call only after the call that should have announced the change returns:
+// it reads what was emitted so far and never waits.
+func (s *stallAnnouncements) announcedSince(changed func(*db.StepResult) bool) bool {
+	for {
+		select {
+		case got := <-s.seen:
+			if changed(got) {
+				return true
+			}
+		default:
+			return false
 		}
 	}
 }
@@ -116,10 +131,14 @@ func TestExecutor_SilentAgentIsRecordedAsStalledUntilItSpeaks(t *testing.T) {
 		defer announcements.unwatch()
 		startedAt = time.Now()
 		opts.OnLifecycle(agent.LifecycleEvent{Agent: "pi", Phase: agent.LifecyclePhaseStart, PID: 4242, Message: "pi started pid=4242"})
-		announcements.await(t, true)
-		stalled = mustStep(t, database, stepID)
+		stalled = announcements.awaitStall(t)
 		opts.OnLifecycle(agent.LifecycleEvent{Agent: "pi", Phase: agent.LifecyclePhaseActivity, Message: "pi producing output"})
-		announcements.await(t, false)
+		firstStallGone := func(got *db.StepResult) bool {
+			return got.Stall == nil || got.Stall.SilentSince != stalled.Stall.SilentSince
+		}
+		if !announcements.announcedSince(firstStallGone) {
+			t.Error("no run_updated event announced the agent speaking again")
+		}
 	}}
 	step := &adaptiveCallStep{
 		name: types.StepReview,
