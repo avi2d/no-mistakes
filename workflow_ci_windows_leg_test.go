@@ -262,6 +262,26 @@ func TestCIWorkflow_ShardsRunEveryTestExactlyOnce(t *testing.T) {
 	}
 }
 
+func TestCIWorkflow_MacOSShardsNeverRunAWholeSlowPackageInOneBinary(t *testing.T) {
+	t.Parallel()
+
+	wf := loadCIWorkflowDoc(t)
+	shards := ciShards(t, wf, "test-macos", "darwin")
+	all := goListTestPackages(t, "darwin", "./...")
+	slow := goListTestPackages(t, "darwin", "./internal/daemon", "./internal/pipeline/steps")
+	for _, pkg := range slow {
+		tests := goTestNames(t, pkg)
+		for _, shard := range shards {
+			if !slices.Contains(shard.resolvePackages(t, all), pkg.ImportPath) {
+				continue
+			}
+			if !slices.ContainsFunc(tests, func(test string) bool { return !shard.selects(test) }) {
+				t.Errorf("macOS shard %s runs every test of %s in one go test binary, which reaches the 10-minute package timeout on a slow runner; split it by test name", shard.name, pkg.ImportPath)
+			}
+		}
+	}
+}
+
 func TestCIWorkflow_ShardGroupsKeepTheirPackages(t *testing.T) {
 	t.Parallel()
 
