@@ -701,6 +701,9 @@ func stopDetachedDaemonByPID(p *paths.Paths) error {
 	}
 	if err := validateDaemonPIDFallback(p, pid); err != nil {
 		if errors.Is(err, errDaemonPIDGone) {
+			if alive, healthErr := daemonHealthCheck(p); healthErr == nil && alive {
+				return fmt.Errorf("daemon still healthy after pid %d exited", pid)
+			}
 			cleanupDaemonArtifacts(p)
 			return nil
 		}
@@ -852,6 +855,9 @@ func waitForDaemonStop(p *paths.Paths, instance daemonInstance) error {
 	case err == nil:
 		if err := validateDaemonPIDFallback(p, pid); err != nil {
 			if errors.Is(err, errDaemonPIDGone) {
+				if alive, healthErr := daemonHealthCheck(p); healthErr == nil && alive {
+					return fmt.Errorf("daemon still healthy after pid %d exited", pid)
+				}
 				cleanupDaemonArtifacts(p)
 				return nil
 			}

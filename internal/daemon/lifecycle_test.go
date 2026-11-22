@@ -59,7 +59,7 @@ func TestRestartDoesNotFailWhenOldDaemonExitsBeforePIDCheck(t *testing.T) {
 	}
 }
 
-func TestWaitForDaemonStopKeepsArtifactsWhenKillFails(t *testing.T) {
+func TestWaitForDaemonStopKeepsArtifactsWhenPIDGoneButDaemonHealthy(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "dtest")
 	if err != nil {
 		t.Fatal(err)
@@ -88,16 +88,16 @@ func TestWaitForDaemonStopKeepsArtifactsWhenKillFails(t *testing.T) {
 	started := time.Now()
 	err = waitForDaemonStop(p, daemonInstance{})
 	if err == nil {
-		t.Fatal("expected waitForDaemonStop to fail when kill fails")
+		t.Fatal("expected waitForDaemonStop to refuse a healthy daemon")
 	}
 	if time.Since(started) < 5*time.Second {
 		t.Fatalf("waitForDaemonStop returned too early after %v", time.Since(started))
 	}
 	if _, err := os.Stat(p.PIDFile()); err != nil {
-		t.Fatalf("expected pid file to remain after failed kill, got err=%v", err)
+		t.Fatalf("expected pid file to remain for a healthy daemon, got err=%v", err)
 	}
 	if _, err := os.Stat(p.Socket()); err != nil {
-		t.Fatalf("expected socket file to remain after failed kill, got err=%v", err)
+		t.Fatalf("expected socket file to remain for a healthy daemon, got err=%v", err)
 	}
 }
 
@@ -968,7 +968,7 @@ func TestWaitForDaemonStopNeverKillsOwnPIDWhenHealthCheckOnlyErrors(t *testing.T
 	}
 }
 
-func TestWaitForDaemonStopDoesNotTreatHealthCheckErrorsAsStopped(t *testing.T) {
+func TestWaitForDaemonStopDoesNotTreatHealthCheckErrorsAsStoppedWithoutProofOfExit(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "dtest")
 	if err != nil {
 		t.Fatal(err)
@@ -986,12 +986,13 @@ func TestWaitForDaemonStopDoesNotTreatHealthCheckErrorsAsStopped(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	originalHealthCheck := daemonHealthCheck
+	originalHealthCheck, originalProcessRunning := daemonHealthCheck, daemonProcessRunning
 	daemonHealthCheck = func(*paths.Paths) (bool, error) {
 		return false, errors.New("transient ipc failure")
 	}
+	daemonProcessRunning = func(int) (bool, error) { return true, nil }
 	defer func() {
-		daemonHealthCheck = originalHealthCheck
+		daemonHealthCheck, daemonProcessRunning = originalHealthCheck, originalProcessRunning
 	}()
 
 	started := time.Now()
