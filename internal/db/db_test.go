@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -95,6 +96,30 @@ func TestOpenCreatesSchema(t *testing.T) {
 		if !hasColumn(t, d, "step_results", column) {
 			t.Fatalf("step_results.%s column missing from fresh schema", column)
 		}
+	}
+}
+
+func TestNoMigrationAddsAColumnTheFreshSchemaLacks(t *testing.T) {
+	sqlDB, err := OpenSQLite(filepath.Join(t.TempDir(), "fresh.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { sqlDB.Close() })
+	if _, err := sqlDB.Exec(schemaSQL); err != nil {
+		t.Fatal(err)
+	}
+	checked := 0
+	for _, stmt := range migrationStatements {
+		if !strings.Contains(stmt, " ADD COLUMN ") {
+			continue
+		}
+		checked++
+		if _, err := sqlDB.Exec(stmt); !isDuplicateColumnErr(err) {
+			t.Errorf("schemaSQL does not declare the column %q adds (exec error: %v)", stmt, err)
+		}
+	}
+	if checked == 0 {
+		t.Fatal("no ADD COLUMN migration was checked")
 	}
 }
 

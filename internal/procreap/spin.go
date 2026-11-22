@@ -26,8 +26,11 @@ type cpuState struct {
 	Command string
 }
 
-// listCPUStatesFunc reads the process table; overridden in tests.
-var listCPUStatesFunc = listProcessCPUStates
+type spinProcesses struct {
+	list   func() ([]cpuState, error)
+	alive  func(int) bool
+	signal func(int, procSignal) error
+}
 
 // KillSpinningLeaf terminates the hottest descendant leaf of root when it
 // burns at least minCPU of one core across window, and reports it with its
@@ -39,10 +42,14 @@ var listCPUStatesFunc = listProcessCPUStates
 // reused it. Errors reading the table are returned; a failed inspection
 // must never fail the turn it was diagnosing.
 func KillSpinningLeaf(root int, minCPU float64, window, grace time.Duration, launchedAt time.Time) (*SpinVictim, error) {
+	return killSpinningLeaf(root, minCPU, window, grace, launchedAt, spinProcesses{list: listProcessCPUStates, alive: processAlive, signal: signalProcess})
+}
+
+func killSpinningLeaf(root int, minCPU float64, window, grace time.Duration, launchedAt time.Time, processes spinProcesses) (*SpinVictim, error) {
 	if root <= 1 || minCPU <= 0 || window <= 0 {
 		return nil, nil
 	}
-	before, err := listCPUStatesFunc()
+	before, err := processes.list()
 	if err != nil {
 		return nil, err
 	}
@@ -56,7 +63,7 @@ func KillSpinningLeaf(root int, minCPU float64, window, grace time.Duration, lau
 		return nil, nil
 	}
 	time.Sleep(window)
-	after, err := listCPUStatesFunc()
+	after, err := processes.list()
 	if err != nil {
 		return nil, err
 	}
@@ -64,17 +71,17 @@ func KillSpinningLeaf(root int, minCPU float64, window, grace time.Duration, lau
 	if !ok {
 		return nil, nil
 	}
-	if !processAliveFunc(pid) {
+	if !processes.alive(pid) {
 		return nil, nil
 	}
-	if err := signalProcessFunc(pid, sigTerm); err != nil {
+	if err := processes.signal(pid, sigTerm); err != nil {
 		return nil, err
 	}
 	victim := &SpinVictim{PID: pid, Command: cmd, CPUFraction: frac}
-	if pollProcessExit(pid, grace) {
+	if pollProcessExit(pid, grace, processes.alive) {
 		return victim, nil
 	}
-	if err := signalProcessFunc(pid, sigKill); err != nil {
+	if err := processes.signal(pid, sigKill); err != nil {
 		return nil, err
 	}
 	victim.Killed = true
@@ -149,18 +156,18 @@ func selectSpinningLeaf(root int, before, after map[int]cpuState, wall time.Dura
 }
 
 // pollProcessExit reports whether pid is gone within grace.
-func pollProcessExit(pid int, grace time.Duration) bool {
+func pollProcessExit(pid int, grace time.Duration, alive func(int) bool) bool {
 	if grace <= 0 {
-		return !processAliveFunc(pid)
+		return !alive(pid)
 	}
 	deadline := time.Now().Add(grace)
 	for {
-		if !processAliveFunc(pid) {
+		if !alive(pid) {
 			return true
 		}
 		remaining := time.Until(deadline)
 		if remaining <= 0 {
-			return !processAliveFunc(pid)
+			return !alive(pid)
 		}
 		pause := 50 * time.Millisecond
 		if remaining < pause {

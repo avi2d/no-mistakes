@@ -24,13 +24,13 @@ module_dir=$(go list -m -f '{{.Dir}}')
 # A changed file belongs to the package in its nearest enclosing directory,
 # so a testdata or embedded file reaches the package that reads it.
 changed_packages=$(
-  go list -f '{{.Dir}} {{.ImportPath}}' ./... | awk -v root="$module_dir" -v changed="$changed" '
+  go list -f '{{.Dir}} {{.ImportPath}}' ./... | CHANGED="$changed" awk -v root="$module_dir" '
     {
       dir = substr($1, length(root) + 2)
       package_of[dir] = $2
     }
     END {
-      n = split(changed, files, "\n")
+      n = split(ENVIRON["CHANGED"], files, "\n")
       for (i = 1; i <= n; i++) {
         dir = files[i]
         while (dir != "") {
@@ -50,9 +50,9 @@ fi
 
 # Each P.test entry lists every package linked into P's test binary, its test
 # imports included; a variant built for that binary carries a " [P.test]" suffix.
-go list -test -f '{{.ImportPath}} {{join .Deps " "}}' ./... | awk -v changed="$changed_packages" '
+go list -test -f '{{.ImportPath}} {{join .Deps " "}}' ./... | CHANGED="$changed_packages" awk '
   BEGIN {
-    n = split(changed, list, "\n")
+    n = split(ENVIRON["CHANGED"], list, "\n")
     for (i = 1; i <= n; i++) {
       is_changed[list[i]] = 1
       print list[i]

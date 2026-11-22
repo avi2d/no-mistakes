@@ -33,7 +33,33 @@ func writeDaemonPIDRecord(t *testing.T, path string, record daemonPIDFile) {
 	}
 }
 
-func TestWaitForDaemonStopKeepsArtifactsWhenKillFails(t *testing.T) {
+func TestRestartDoesNotFailWhenOldDaemonExitsBeforePIDCheck(t *testing.T) {
+	p := paths.WithRoot(t.TempDir())
+	if err := p.EnsureDirs(); err != nil {
+		t.Fatal(err)
+	}
+	const pid = 424242
+	writeDaemonPIDRecord(t, p.PIDFile(), daemonPIDFile{PID: pid, StartedAt: time.Now()})
+	t.Setenv("NM_TEST_DAEMON_STOP_TIMEOUT", "1ms")
+
+	oldHealth, oldStart, oldRunning, oldKill := daemonHealthCheck, daemonProcessStartTime, daemonProcessRunning, daemonKillPID
+	daemonHealthCheck = func(*paths.Paths) (bool, error) { return false, errors.New("socket unavailable") }
+	daemonProcessStartTime = func(int) (time.Time, error) { return time.Time{}, errors.New("exit status 1") }
+	daemonProcessRunning = func(int) (bool, error) { return false, nil }
+	daemonKillPID = func(int) error { t.Fatal("must not kill a departed process"); return nil }
+	t.Cleanup(func() {
+		daemonHealthCheck, daemonProcessStartTime, daemonProcessRunning, daemonKillPID = oldHealth, oldStart, oldRunning, oldKill
+	})
+
+	if err := waitForDaemonStop(p, daemonInstance{pid: pid, startedAt: time.Now()}); err != nil {
+		t.Fatalf("restart cannot proceed to start: %v", err)
+	}
+	if _, err := os.Stat(p.PIDFile()); !os.IsNotExist(err) {
+		t.Fatalf("PID file remains: %v", err)
+	}
+}
+
+func TestWaitForDaemonStopKeepsArtifactsWhenPIDGoneButDaemonHealthy(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "dtest")
 	if err != nil {
 		t.Fatal(err)
@@ -62,16 +88,16 @@ func TestWaitForDaemonStopKeepsArtifactsWhenKillFails(t *testing.T) {
 	started := time.Now()
 	err = waitForDaemonStop(p, daemonInstance{})
 	if err == nil {
-		t.Fatal("expected waitForDaemonStop to fail when kill fails")
+		t.Fatal("expected waitForDaemonStop to refuse a healthy daemon")
 	}
 	if time.Since(started) < 5*time.Second {
 		t.Fatalf("waitForDaemonStop returned too early after %v", time.Since(started))
 	}
 	if _, err := os.Stat(p.PIDFile()); err != nil {
-		t.Fatalf("expected pid file to remain after failed kill, got err=%v", err)
+		t.Fatalf("expected pid file to remain for a healthy daemon, got err=%v", err)
 	}
 	if _, err := os.Stat(p.Socket()); err != nil {
-		t.Fatalf("expected socket file to remain after failed kill, got err=%v", err)
+		t.Fatalf("expected socket file to remain for a healthy daemon, got err=%v", err)
 	}
 }
 
@@ -942,7 +968,7 @@ func TestWaitForDaemonStopNeverKillsOwnPIDWhenHealthCheckOnlyErrors(t *testing.T
 	}
 }
 
-func TestWaitForDaemonStopDoesNotTreatHealthCheckErrorsAsStopped(t *testing.T) {
+func TestWaitForDaemonStopDoesNotTreatHealthCheckErrorsAsStoppedWithoutProofOfExit(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "dtest")
 	if err != nil {
 		t.Fatal(err)
@@ -960,12 +986,13 @@ func TestWaitForDaemonStopDoesNotTreatHealthCheckErrorsAsStopped(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	originalHealthCheck := daemonHealthCheck
+	originalHealthCheck, originalProcessRunning := daemonHealthCheck, daemonProcessRunning
 	daemonHealthCheck = func(*paths.Paths) (bool, error) {
 		return false, errors.New("transient ipc failure")
 	}
+	daemonProcessRunning = func(int) (bool, error) { return true, nil }
 	defer func() {
-		daemonHealthCheck = originalHealthCheck
+		daemonHealthCheck, daemonProcessRunning = originalHealthCheck, originalProcessRunning
 	}()
 
 	started := time.Now()

@@ -51,6 +51,19 @@ CREATE TABLE IF NOT EXISTS runs (
     pi_profile           TEXT,
 	 reviewer_profile     TEXT,
     verification_plan    TEXT,
+    quota_routing        TEXT,
+    intent               TEXT,
+    intent_source        TEXT,
+    intent_session_id    TEXT,
+    intent_score         REAL,
+    intent_check_json    TEXT,
+    ci_rerun_state       TEXT,
+    custody_returned_at  INTEGER,
+    closing_issue_refs   TEXT,
+    closing_issue_refs_locked_at INTEGER,
+    ci_test_restart_pending INTEGER NOT NULL DEFAULT 0,
+    pr_title             TEXT,
+    pr_body              TEXT,
     created_at           INTEGER NOT NULL,
     updated_at           INTEGER NOT NULL
 );
@@ -81,6 +94,12 @@ CREATE TABLE IF NOT EXISTS step_results (
     review_max_fix_rounds        INTEGER,
     ci_fix_attempts             INTEGER NOT NULL DEFAULT 0,
     override_reason             TEXT,
+    skip_reason                 TEXT,
+    approval_reason             TEXT,
+    stalled_agent               TEXT,
+    stalled_since               INTEGER,
+    failure_cause               TEXT,
+    carried_from                TEXT,
     response_origin             TEXT NOT NULL DEFAULT 'unknown'
 );
 
@@ -101,6 +120,8 @@ CREATE TABLE IF NOT EXISTS step_rounds (
     selection_source     TEXT,
     response_origin      TEXT NOT NULL DEFAULT 'unknown',
     fix_summary          TEXT,
+    reviewer_agent       TEXT,
+    reviewer_chain_trace TEXT,
     repair_published     INTEGER NOT NULL DEFAULT 0,
     duration_ms          INTEGER NOT NULL,
     created_at           INTEGER NOT NULL
@@ -189,6 +210,7 @@ CREATE TABLE IF NOT EXISTS run_media_attachments (
     path      TEXT NOT NULL,
     digest    TEXT NOT NULL,
     url       TEXT NOT NULL,
+    publisher TEXT NOT NULL DEFAULT 'github-user-attachments',
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
     PRIMARY KEY (run_id, path)
@@ -238,6 +260,7 @@ CREATE TABLE IF NOT EXISTS review_questions (
     answer       TEXT NOT NULL,
     answered_by  TEXT,
     answered_at  TEXT,
+    action       TEXT NOT NULL DEFAULT 'unknown',
     created_at   INTEGER NOT NULL,
     updated_at   INTEGER NOT NULL,
     PRIMARY KEY (repo_id, branch, question_id, run_id, ask_ordinal)
@@ -276,6 +299,9 @@ CREATE TABLE IF NOT EXISTS run_retries (
 // migrationStatements hold additive schema changes applied to databases that
 // were created before the referenced columns existed. Each statement must be
 // idempotent via its error being tolerated when the column already exists.
+// schemaSQL must also declare every column added here: an ADD COLUMN that
+// succeeds reparses the whole schema, which made each fresh Open cost tens of
+// such reparses.
 var migrationStatements = []string{
 	`ALTER TABLE runs ADD COLUMN verification_plan TEXT`,
 	`CREATE TRIGGER IF NOT EXISTS runs_verification_plan_immutable BEFORE UPDATE OF verification_plan ON runs WHEN NEW.verification_plan IS NOT OLD.verification_plan BEGIN SELECT RAISE(ABORT, 'run verification plan is immutable'); END`,
