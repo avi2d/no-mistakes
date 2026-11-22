@@ -37,21 +37,14 @@ func recordAgentScratchFiles(sctx *pipeline.StepContext, before map[string]bool,
 			intended[path] = true
 		}
 	}
-	missingList := false
 	for path := range after {
 		if before[path] || intended[path] {
 			continue
-		}
-		if validOutput && result.EditedPaths == nil {
-			missingList = true
 		}
 		if err := sctx.DB.AddRunScratchFile(sctx.Run.ID, path); err != nil {
 			return err
 		}
 		sctx.Log(fmt.Sprintf("warning: leaving agent scratch file uncommitted: %s", path))
-	}
-	if missingList {
-		return fmt.Errorf("agent output omitted edited_paths for new worktree files")
 	}
 	return nil
 }
@@ -92,14 +85,5 @@ func schemaWithEditedPaths(schema json.RawMessage) (json.RawMessage, error) {
 		return nil, err
 	}
 	object["properties"] = encoded
-	var required []string
-	if err := json.Unmarshal(object["required"], &required); err != nil {
-		return nil, err
-	}
-	required = append(required, "edited_paths")
-	object["required"], err = json.Marshal(required)
-	if err != nil {
-		return nil, err
-	}
 	return json.Marshal(object)
 }
