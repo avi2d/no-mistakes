@@ -339,20 +339,6 @@ Previous review findings to address:
 	// execution does not. This is an evidence threshold for what counts as a
 	// finding, not a general instruction to emit fewer of them.
 	//
-	// The dedicated Simplification section asks a different question from the
-	// defect pass: not "is this component correct" but "does the intent
-	// require this component at all". A reviewed spiral (backpass PR #107)
-	// showed why the defect pass alone cannot catch over-engineering: a
-	// permissive resolver with seven acceptance branches and a second,
-	// skill-only budget semantics each yielded a concrete, intended-usage
-	// defect per round, so every finding cleared the evidence threshold and
-	// every fix hardened the unrequired path instead of removing it, across
-	// thirteen rounds that never converged. The section reports the unrequired
-	// component itself as an ask-user warning whose remedy is removal, and asks
-	// defect findings inside such a component to name removal too, so the
-	// fixer's removal rule has something to act on. It stays ask-user because
-	// whether extra surface is wanted is the author's call; the section
-	// deliberately adds no schema field or second reviewer.
 	prompt := fmt.Sprintf(
 		`Review the code changes and return structured findings with a risk assessment.
 
@@ -394,8 +380,8 @@ Rules:
 - Do NOT report styling, formatting, linting, compilation, or type-checking issues.
 - If the change is clean, return an empty findings array.
 - For each finding, set the action field to one of:
-  - "ask-user": the finding is about functional requirements or product behavior, or otherwise challenges the author's deliberate intent. Even if it seems obviously wrong, we should ask the user for review. Examples: "this feature seems unnecessary", "this hardcoded value should be configurable", "this deletion looks wrong". When in doubt, default to "ask-user".
-  - "auto-fix": the finding is a non-functional, non user-visible issue (correctness, error handling, security, performance, mechanical code quality) that can be safely fixed without any discussion about the author's intent.
+  - "ask-user": the finding is about functional requirements or product behavior, or otherwise challenges the author's deliberate intent, except for the narrow removal case in Simplification below. Examples: "this feature seems unnecessary", "this hardcoded value should be configurable", "this deletion looks wrong". When in doubt, default to "ask-user".
+  - "auto-fix": the finding is a non-functional, non user-visible issue (correctness, error handling, security, performance, mechanical code quality) that can be safely fixed without any discussion about the author's intent, or meets the narrow removal case in Simplification below.
   - "no-op": the finding is informational and does not require any action (e.g. noting a pattern, acknowledging a tradeoff).
 - Classify by the remedy, not only by the topic. If the smallest honest remedy for a finding would add new durable state, a schema change, new background, retry, or persistence machinery, a new subsystem, or otherwise EXTEND the change beyond its stated intent rather than CORRECT what it already does, the action must be "ask-user" even when the defect itself looks mechanical. Say in the description that the remedy, not the defect, is what needs authorization.
 - For every "ask-user" finding, set question_action to the action the decision would authorize. Do not set it for other findings.
@@ -407,7 +393,8 @@ Rules:
 
 Simplification (a dedicated pass over what the change introduced, in addition to the findings above):
 - Enumerate every component the change introduced: a new branch, acceptance or matching path, fallback, alias, mode, flag, option, a second definition of a concept the code already defines once, or a parallel copy of a rule. Judge each one against the User intent when one is stated, otherwise against the change's own stated purpose. The stated purpose sets the required scope, not the implementation.
-- For each component that is not strictly required to satisfy that intent, report a finding with severity "warning" and action "ask-user". Name the component, state that no intent requirement needs it or which requirement it exceeds, and recommend removing it as the remedy. Do not recommend hardening, validating, or documenting a component the intent does not require.
+- For each component that is not strictly required to satisfy that intent, report a finding with severity "warning". Name the component, state that no intent requirement needs it or which requirement it exceeds, and recommend removing it as the remedy. Do not recommend hardening, validating, or documenting a component the intent does not require.
+- Use action "auto-fix" when its only recommendation is to remove code, documentation, or behavior beyond the stated intent, and the removal does not touch a public API or CLI surface, a security-sensitive path, user-facing wording or article text, or a choice between two product behaviors; use "ask-user" when any of these exclusions applies or when in doubt.
 - When a defect you reported above lives inside such a component, say so in that finding and name removal of the component as the smallest honest remedy, instead of prescribing a repair that keeps the component and hardens it.
 - Report each unrequired component once. When a component is required but a strictly narrower form satisfies the intent (for example an exact match where the change accepts several spellings), name the narrower form.
 

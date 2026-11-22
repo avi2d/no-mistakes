@@ -1862,12 +1862,6 @@ func TestReviewStep_RereviewOffersRevertExitFromPriorRoundMachinery(t *testing.T
 	})
 }
 
-// The Simplification section is a dedicated pass that asks whether the intent
-// requires each component the change introduced, distinct from the defect pass
-// and from the refactor-only "simplification opportunities" meaning that stays
-// in place. An unrequired component is a warning whose remedy is removal and
-// whose action stays ask-user: whether extra surface is wanted is the author's
-// call. This pins the emitted contract, not model interpretation.
 func TestReviewStep_SimplificationSectionContract(t *testing.T) {
 	t.Parallel()
 	dir, baseSHA, headSHA := setupGitRepo(t)
@@ -1910,7 +1904,7 @@ func TestReviewStep_SimplificationSectionContract(t *testing.T) {
 		"Enumerate every component the change introduced",
 		"a second definition of a concept the code already defines once",
 		"Judge each one against the User intent when one is stated, otherwise against the change's own stated purpose",
-		`not strictly required to satisfy that intent, report a finding with severity "warning" and action "ask-user"`,
+		`not strictly required to satisfy that intent, report a finding with severity "warning"`,
 		"recommend removing it as the remedy",
 		"Do not recommend hardening, validating, or documenting a component the intent does not require",
 		"name removal of the component as the smallest honest remedy",
