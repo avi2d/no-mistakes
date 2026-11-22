@@ -28,23 +28,30 @@ func recordAgentScratchFiles(sctx *pipeline.StepContext, before map[string]bool,
 		return err
 	}
 	var result struct {
-		EditedPaths []string `json:"edited_paths"`
+		EditedPaths *[]string `json:"edited_paths"`
 	}
-	if err := json.Unmarshal(output, &result); err != nil {
-		return fmt.Errorf("read agent edited paths: %w", err)
+	validOutput := json.Unmarshal(output, &result) == nil
+	intended := make(map[string]bool)
+	if validOutput && result.EditedPaths != nil {
+		for _, path := range *result.EditedPaths {
+			intended[path] = true
+		}
 	}
-	intended := make(map[string]bool, len(result.EditedPaths))
-	for _, path := range result.EditedPaths {
-		intended[path] = true
-	}
+	missingList := false
 	for path := range after {
 		if before[path] || intended[path] {
 			continue
+		}
+		if validOutput && result.EditedPaths == nil {
+			missingList = true
 		}
 		if err := sctx.DB.AddRunScratchFile(sctx.Run.ID, path); err != nil {
 			return err
 		}
 		sctx.Log(fmt.Sprintf("warning: leaving agent scratch file uncommitted: %s", path))
+	}
+	if missingList {
+		return fmt.Errorf("agent output omitted edited_paths for new worktree files")
 	}
 	return nil
 }

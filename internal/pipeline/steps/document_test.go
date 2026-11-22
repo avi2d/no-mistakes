@@ -88,7 +88,7 @@ func TestDocumentStep_AgentManaged_FixesAndCommitsWithoutApproval(t *testing.T) 
 		runFn: func(ctx context.Context, opts agent.RunOpts) (*agent.Result, error) {
 			callCount++
 			os.WriteFile(filepath.Join(dir, "README.md"), []byte("# Updated\n"), 0o644)
-			return &agent.Result{Output: json.RawMessage(`{"findings":[],"summary":"update README"}`)}, nil
+			return &agent.Result{Output: json.RawMessage(`{"findings":[],"summary":"update README","edited_paths":["README.md"]}`)}, nil
 		},
 	}
 	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
@@ -132,7 +132,7 @@ func TestDocumentStep_AgentManaged_MultilineCommitSummaryKeepsBody(t *testing.T)
 			if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("# Updated\n"), 0o644); err != nil {
 				return nil, err
 			}
-			return &agent.Result{Output: json.RawMessage(`{"findings":[],"summary":"update README\nand references"}`)}, nil
+			return &agent.Result{Output: json.RawMessage(`{"findings":[],"summary":"update README\nand references","edited_paths":["README.md"]}`)}, nil
 		},
 	}
 	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
@@ -157,7 +157,7 @@ func TestDocumentStep_AgentManaged_AllowsDocCommentEdits(t *testing.T) {
 		name: "test",
 		runFn: func(ctx context.Context, opts agent.RunOpts) (*agent.Result, error) {
 			os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n\n// documentedThing explains the exported behavior.\nfunc documentedThing() {}\n"), 0o644)
-			return &agent.Result{Output: json.RawMessage(`{"findings":[],"summary":"update doc comment"}`)}, nil
+			return &agent.Result{Output: json.RawMessage(`{"findings":[],"summary":"update doc comment","edited_paths":["main.go"]}`)}, nil
 		},
 	}
 	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
@@ -392,7 +392,7 @@ func TestDocumentStep_UserFix_PassesPreviousFindingsIntoPrompt(t *testing.T) {
 		name: "test",
 		runFn: func(ctx context.Context, opts agent.RunOpts) (*agent.Result, error) {
 			os.WriteFile(filepath.Join(dir, "README.md"), []byte("# Fixed\n"), 0o644)
-			return &agent.Result{Output: json.RawMessage(`{"findings":[],"summary":"address config docs"}`)}, nil
+			return &agent.Result{Output: json.RawMessage(`{"findings":[],"summary":"address config docs","edited_paths":["README.md"]}`)}, nil
 		},
 	}
 	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
@@ -543,7 +543,7 @@ func TestDocumentStep_ChangesWithEmptySummaryStillFails(t *testing.T) {
 		name: "test",
 		runFn: func(ctx context.Context, opts agent.RunOpts) (*agent.Result, error) {
 			os.WriteFile(filepath.Join(dir, "README.md"), []byte("# Updated\n"), 0o644)
-			return &agent.Result{Output: json.RawMessage(`{"findings":[],"summary":""}`)}, nil
+			return &agent.Result{Output: json.RawMessage(`{"findings":[],"summary":"","edited_paths":["README.md"]}`)}, nil
 		},
 	}
 	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
@@ -574,7 +574,7 @@ func TestDocumentStep_AgentSelfCommittedChangesWithEmptySummaryStillFails(t *tes
 			os.WriteFile(filepath.Join(dir, "README.md"), []byte("# Self committed\n"), 0o644)
 			gitCmd(t, dir, "add", "README.md")
 			gitCmd(t, dir, "-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "-m", "docs: update README")
-			return &agent.Result{Output: json.RawMessage(`{"findings":[],"summary":""}`)}, nil
+			return &agent.Result{Output: json.RawMessage(`{"findings":[],"summary":"","edited_paths":["README.md"]}`)}, nil
 		},
 	}
 	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
@@ -603,7 +603,7 @@ func TestDocumentStep_AgentSelfCommittedChangesWithEmptySummaryStillFails(t *tes
 	}
 }
 
-func TestDocumentStep_MalformedOutput_CommitsAndFailsClosed(t *testing.T) {
+func TestDocumentStep_MalformedOutputDoesNotCommitUnnamedFiles(t *testing.T) {
 	t.Parallel()
 	dir, baseSHA, headSHA := setupGitRepo(t)
 	gitCmd(t, dir, "checkout", "--detach", headSHA)
@@ -628,9 +628,8 @@ func TestDocumentStep_MalformedOutput_CommitsAndFailsClosed(t *testing.T) {
 	if outcome != nil {
 		t.Fatalf("Execute() outcome = %+v, want no outcome", outcome)
 	}
-	// Any edits the agent made should still be committed.
-	if status := gitStatusPorcelain(t, dir); status != "" {
-		t.Fatalf("expected agent edits committed despite malformed summary, got %q", status)
+	if status := gitStatusPorcelain(t, dir); status != "?? README.md" {
+		t.Fatalf("expected uncommitted edit to remain, got %q", status)
 	}
 }
 
