@@ -262,6 +262,26 @@ func TestCIWorkflow_ShardsRunEveryTestExactlyOnce(t *testing.T) {
 	}
 }
 
+func TestCIWorkflow_MacOSShardsNeverRunAWholeSlowPackageInOneBinary(t *testing.T) {
+	t.Parallel()
+
+	wf := loadCIWorkflowDoc(t)
+	shards := ciShards(t, wf, "test-macos", "darwin")
+	all := goListTestPackages(t, "darwin", "./...")
+	slow := goListTestPackages(t, "darwin", "./internal/cli", "./internal/daemon", "./internal/pipeline/steps")
+	for _, pkg := range slow {
+		tests := goTestNames(t, pkg)
+		for _, shard := range shards {
+			if !slices.Contains(shard.resolvePackages(t, all), pkg.ImportPath) {
+				continue
+			}
+			if !slices.ContainsFunc(tests, func(test string) bool { return !shard.selects(test) }) {
+				t.Errorf("macOS shard %s runs every test of %s in one go test binary, which nears the 10-minute package timeout on a slow runner; split it by test name", shard.name, pkg.ImportPath)
+			}
+		}
+	}
+}
+
 func TestCIWorkflow_ShardGroupsKeepTheirPackages(t *testing.T) {
 	t.Parallel()
 
@@ -411,17 +431,20 @@ func TestCIWorkflow_WindowsTestStepRunsItsMatrixRow(t *testing.T) {
 	}
 
 	_, macStep := namedStep(t, ciJob(t, wf, "test-macos"), "Test on macOS")
-	if macStep.Env["NM_CI_PACKAGES"] != "${{ matrix.packages }}" || macStep.Env["NM_CI_EXCLUDE"] != "${{ matrix.exclude }}" {
-		t.Errorf("macOS test step must read its packages from the matrix row, got env %v", macStep.Env)
-	}
-	for _, want := range []string{`pkgs=$(go list ./... | grep -Ev "$NM_CI_EXCLUDE")`, `pkgs=$NM_CI_PACKAGES`, `go test -race $pkgs`} {
-		if !strings.Contains(macStep.Run, want) {
-			t.Errorf("macOS test step must contain %q", want)
+	for key, value := range wantEnv {
+		if key != "NM_CI_TIMEOUT" && macStep.Env[key] != value {
+			t.Errorf("macOS test env %s = %q, want %q", key, macStep.Env[key], value)
 		}
 	}
-	for _, shard := range ciShards(t, wf, "test-macos", "darwin") {
-		if shard.run != "" || shard.skip != "" {
-			t.Errorf("macOS shard %s sets a name filter the macOS step does not pass to go test", shard.name)
+	for _, want := range []string{
+		`pkgs=$(go list ./... | grep -Ev "$NM_CI_EXCLUDE")`,
+		`pkgs=$NM_CI_PACKAGES`,
+		`if [ -n "$NM_CI_RUN" ]; then filters+=("-run=$NM_CI_RUN"); fi`,
+		`if [ -n "$NM_CI_SKIP" ]; then filters+=("-skip=$NM_CI_SKIP"); fi`,
+		`go test -race "${filters[@]}" $pkgs`,
+	} {
+		if !strings.Contains(macStep.Run, want) {
+			t.Errorf("macOS test step must contain %q", want)
 		}
 	}
 }

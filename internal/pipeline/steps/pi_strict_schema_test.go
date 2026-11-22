@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/kunchenguid/no-mistakes/internal/agent"
@@ -47,7 +48,13 @@ cat "$0.events"
 		}, "\r\n")
 	}
 	bin := filepath.Join(dir, name)
-	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+	// A child forked while bin is open for writing holds that descriptor until
+	// it execs, and exec of bin fails with ETXTBSY until then. Forks take
+	// ForkLock exclusively, so none starts while the write holds it shared.
+	syscall.ForkLock.RLock()
+	err := os.WriteFile(bin, []byte(script), 0o755)
+	syscall.ForkLock.RUnlock()
+	if err != nil {
 		t.Fatal(err)
 	}
 	events := `{"type":"message_end","message":{"role":"assistant","stopReason":"toolUse","content":[{"type":"toolCall","id":"final-1","name":"no_mistakes_output","arguments":{}}]}}` + "\n" +

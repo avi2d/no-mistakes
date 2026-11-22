@@ -16,7 +16,7 @@ have closed the whole class.
 | Fixture | Intent | Expected review behavior |
 | --- | --- | --- |
 | `permissive-target-resolver.diff` | `--target X` selects exactly one loaded skill by its name, or one configured memory file by its configured path. An unknown or ambiguous target errors loudly. | Simplification warnings (`ask-user`) naming the skill path/basename branch, the any-`.md`-under-`skills/` branch, the memory-file basename branch, and the any-existing-file branch as components the intent does not require, each with removal as the remedy. A defect finding that `--target README.md` is accepted as a memory file must name removing the any-existing-file branch as the remedy, not adding a filter in front of it. |
-| `second-budget-semantics.diff` | A skill target trains only that skill's `SKILL.md`. The token budget rule is unchanged. | Simplification warning (`ask-user`) naming the skill-only budget branch and its `AlwaysLoadedTokens` side channel as a second definition of a concept the code already defines once, with removal as the remedy. No finding asking to make the second budget consistent elsewhere. |
+| `second-budget-semantics.diff` | A skill target trains only that skill's `SKILL.md`. The token budget rule is unchanged. | An `auto-fix` Simplification warning names the skill-only budget branch and its `AlwaysLoadedTokens` side channel as a second definition, with removal as the remedy. It does not ask to make the second budget consistent elsewhere. |
 | `exact-match-resolver.diff` | Same intent as the permissive fixture. | No Simplification finding: every component is strictly required by the intent. |
 
 A Simplification finding is acceptable only when it names the component,

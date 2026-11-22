@@ -59,7 +59,12 @@ func TestRestartDoesNotFailWhenOldDaemonExitsBeforePIDCheck(t *testing.T) {
 	}
 }
 
+// shortDaemonStopTimeout keeps a test that must outlast the stop deadline from
+// sleeping through the production one, which is 15s on Windows.
+const shortDaemonStopTimeout = time.Second
+
 func TestWaitForDaemonStopKeepsArtifactsWhenPIDGoneButDaemonHealthy(t *testing.T) {
+	t.Setenv("NM_TEST_DAEMON_STOP_TIMEOUT", shortDaemonStopTimeout.String())
 	tmpDir, err := os.MkdirTemp("", "dtest")
 	if err != nil {
 		t.Fatal(err)
@@ -90,7 +95,7 @@ func TestWaitForDaemonStopKeepsArtifactsWhenPIDGoneButDaemonHealthy(t *testing.T
 	if err == nil {
 		t.Fatal("expected waitForDaemonStop to refuse a healthy daemon")
 	}
-	if time.Since(started) < 5*time.Second {
+	if time.Since(started) < shortDaemonStopTimeout {
 		t.Fatalf("waitForDaemonStop returned too early after %v", time.Since(started))
 	}
 	if _, err := os.Stat(p.PIDFile()); err != nil {
@@ -916,6 +921,7 @@ func TestReadPIDNoFile(t *testing.T) {
 // via a goroutine). waitForDaemonStop must give up with an error instead of
 // ever calling daemonKillPID against the current process.
 func TestWaitForDaemonStopNeverKillsOwnPIDWhenHealthCheckOnlyErrors(t *testing.T) {
+	t.Setenv("NM_TEST_DAEMON_STOP_TIMEOUT", shortDaemonStopTimeout.String())
 	tmpDir, err := os.MkdirTemp("", "dtest")
 	if err != nil {
 		t.Fatal(err)
@@ -969,6 +975,7 @@ func TestWaitForDaemonStopNeverKillsOwnPIDWhenHealthCheckOnlyErrors(t *testing.T
 }
 
 func TestWaitForDaemonStopDoesNotTreatHealthCheckErrorsAsStoppedWithoutProofOfExit(t *testing.T) {
+	t.Setenv("NM_TEST_DAEMON_STOP_TIMEOUT", shortDaemonStopTimeout.String())
 	tmpDir, err := os.MkdirTemp("", "dtest")
 	if err != nil {
 		t.Fatal(err)
@@ -1000,7 +1007,7 @@ func TestWaitForDaemonStopDoesNotTreatHealthCheckErrorsAsStoppedWithoutProofOfEx
 	if err == nil {
 		t.Fatal("expected waitForDaemonStop to fail when health checks only error")
 	}
-	if time.Since(started) < 5*time.Second {
+	if time.Since(started) < shortDaemonStopTimeout {
 		t.Fatalf("waitForDaemonStop returned too early after %v", time.Since(started))
 	}
 	if _, err := os.Stat(p.PIDFile()); err != nil {
@@ -1012,6 +1019,7 @@ func TestWaitForDaemonStopDoesNotTreatHealthCheckErrorsAsStoppedWithoutProofOfEx
 }
 
 func TestWaitForDaemonStopRejectsStalePIDBeforeKill(t *testing.T) {
+	t.Setenv("NM_TEST_DAEMON_STOP_TIMEOUT", shortDaemonStopTimeout.String())
 	tmpDir, err := os.MkdirTemp("", "dtest")
 	if err != nil {
 		t.Fatal(err)
@@ -1059,7 +1067,7 @@ func TestWaitForDaemonStopRejectsStalePIDBeforeKill(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected waitForDaemonStop to fail for stale pid")
 	}
-	if time.Since(started) < 5*time.Second {
+	if time.Since(started) < shortDaemonStopTimeout {
 		t.Fatalf("waitForDaemonStop returned too early after %v", time.Since(started))
 	}
 	if killCalled {
