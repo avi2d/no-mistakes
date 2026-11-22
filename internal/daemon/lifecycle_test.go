@@ -33,6 +33,32 @@ func writeDaemonPIDRecord(t *testing.T, path string, record daemonPIDFile) {
 	}
 }
 
+func TestRestartDoesNotFailWhenOldDaemonExitsBeforePIDCheck(t *testing.T) {
+	p := paths.WithRoot(t.TempDir())
+	if err := p.EnsureDirs(); err != nil {
+		t.Fatal(err)
+	}
+	const pid = 424242
+	writeDaemonPIDRecord(t, p.PIDFile(), daemonPIDFile{PID: pid, StartedAt: time.Now()})
+	t.Setenv("NM_TEST_DAEMON_STOP_TIMEOUT", "1ms")
+
+	oldHealth, oldStart, oldRunning, oldKill := daemonHealthCheck, daemonProcessStartTime, daemonProcessRunning, daemonKillPID
+	daemonHealthCheck = func(*paths.Paths) (bool, error) { return false, errors.New("socket unavailable") }
+	daemonProcessStartTime = func(int) (time.Time, error) { return time.Time{}, errors.New("exit status 1") }
+	daemonProcessRunning = func(int) (bool, error) { return false, nil }
+	daemonKillPID = func(int) error { t.Fatal("must not kill a departed process"); return nil }
+	t.Cleanup(func() {
+		daemonHealthCheck, daemonProcessStartTime, daemonProcessRunning, daemonKillPID = oldHealth, oldStart, oldRunning, oldKill
+	})
+
+	if err := waitForDaemonStop(p, daemonInstance{pid: pid, startedAt: time.Now()}); err != nil {
+		t.Fatalf("restart cannot proceed to start: %v", err)
+	}
+	if _, err := os.Stat(p.PIDFile()); !os.IsNotExist(err) {
+		t.Fatalf("PID file remains: %v", err)
+	}
+}
+
 func TestWaitForDaemonStopKeepsArtifactsWhenKillFails(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "dtest")
 	if err != nil {
