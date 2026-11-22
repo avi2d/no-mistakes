@@ -1,6 +1,7 @@
 package procreap
 
 import (
+	"errors"
 	"testing"
 	"time"
 )
@@ -127,4 +128,33 @@ func TestKillSpinningLeaf_StaleRootKillsNothing(t *testing.T) {
 	if victim, err := KillSpinningLeaf(100, 0.5, time.Millisecond, time.Millisecond, time.Now().Add(-time.Hour)); err != nil || victim != nil {
 		t.Fatalf("reused PID: victim=%+v err=%v, want nothing killed", victim, err)
 	}
+}
+
+func TestKillSpinningLeaf_ParallelProbeMustNotSeeAnotherTestsHook(t *testing.T) {
+	original := listCPUStatesFunc
+	t.Cleanup(func() { listCPUStatesFunc = original })
+	firstReady := make(chan struct{})
+	secondReady := make(chan struct{})
+	firstErr := errors.New("first probe")
+	secondErr := errors.New("second probe")
+	t.Run("first", func(t *testing.T) {
+		t.Parallel()
+		listCPUStatesFunc = func() ([]cpuState, error) { return nil, firstErr }
+		close(firstReady)
+		<-secondReady
+		_, err := KillSpinningLeaf(100, 0.5, time.Millisecond, time.Millisecond, time.Time{})
+		if !errors.Is(err, firstErr) {
+			t.Errorf("first probe returned %v, want %v", err, firstErr)
+		}
+	})
+	t.Run("second", func(t *testing.T) {
+		t.Parallel()
+		<-firstReady
+		listCPUStatesFunc = func() ([]cpuState, error) { return nil, secondErr }
+		close(secondReady)
+		_, err := KillSpinningLeaf(100, 0.5, time.Millisecond, time.Millisecond, time.Time{})
+		if !errors.Is(err, secondErr) {
+			t.Errorf("second probe returned %v, want %v", err, secondErr)
+		}
+	})
 }
