@@ -45,6 +45,38 @@ func TestDocumentStep_DoesNotCommitAgentScratchScript(t *testing.T) {
 	}
 }
 
+func TestDocumentStep_LaterStagingDoesNotCommitAgentScratchScript(t *testing.T) {
+	t.Parallel()
+	dir, baseSHA, headSHA := setupGitRepo(t)
+	gitCmd(t, dir, "checkout", "--detach", headSHA)
+	ag := &mockAgent{
+		name: "test",
+		runFn: func(ctx context.Context, opts agent.RunOpts) (*agent.Result, error) {
+			if err := os.WriteFile(filepath.Join(dir, "check-batch.sh"), []byte("echo scratch\n"), 0o644); err != nil {
+				return nil, err
+			}
+			return &agent.Result{Output: json.RawMessage(`{"findings":[],"summary":"docs current","edited_paths":[]}`)}, nil
+		},
+	}
+	sctx := newHousekeepingContext(t, ag, dir, baseSHA, headSHA, config.Commands{})
+	if _, err := (&DocumentStep{}).Execute(sctx); err != nil {
+		t.Fatal(err)
+	}
+	if gitCmd(t, dir, "ls-files", "--", "check-batch.sh") != "" {
+		gitCmd(t, dir, "rm", "--cached", "--", "check-batch.sh")
+		gitCmd(t, dir, "-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "-m", "remove scratch from index")
+	}
+	if err := stagePipelineChanges(sctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := gitCmd(t, dir, "diff", "--cached", "--name-only"); strings.Contains(got, "check-batch.sh") {
+		t.Fatalf("later staging added scratch script: %s", got)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "check-batch.sh")); err != nil {
+		t.Fatalf("scratch script was not preserved: %v", err)
+	}
+}
+
 func TestDocumentStep_AgentManaged_FixesAndCommitsWithoutApproval(t *testing.T) {
 	t.Parallel()
 	dir, baseSHA, headSHA := setupGitRepo(t)
