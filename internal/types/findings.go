@@ -744,7 +744,7 @@ func (f *Finding) UnmarshalJSON(data []byte) error {
 }
 
 func (f Finding) AskUserAction() QuestionAction {
-	if f.ActionOrDefault() != ActionAskUser {
+	if f.Action != ActionAskUser {
 		return ""
 	}
 	return f.QuestionAction.OrUnknown()
