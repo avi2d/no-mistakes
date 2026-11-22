@@ -54,6 +54,7 @@ func writeFinalPRScopeScenario(t *testing.T) string {
     structured:
       findings: []
       summary: "update flag documentation"
+      edited_paths: ["docs/flag.md", "docs/reference.md"]
   - match: "Draft a pull request title and summary for the full branch delta."
     text: "full four-file PR summary"
     structured:
