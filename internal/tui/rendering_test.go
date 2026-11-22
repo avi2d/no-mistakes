@@ -423,8 +423,8 @@ func TestRenderDiff_StatsMatchDesign(t *testing.T) {
 func TestRenderFindings_BlankLineBetweenItems(t *testing.T) {
 	// DESIGN.md Gutter System shows a blank line between each finding item.
 	raw := `{"findings":[
-		{"id":"f1","severity":"error","file":"main.go","line":10,"description":"nil pointer"},
-		{"id":"f2","severity":"warning","file":"util.go","line":5,"description":"unused var"}
+		{"id":"f1","severity":"error","file":"main.go","line":10,"description":"nil pointer","action":"auto-fix"},
+		{"id":"f2","severity":"warning","file":"util.go","line":5,"description":"unused var","action":"auto-fix"}
 	],"summary":"2 issues"}`
 
 	got := stripANSI(renderFindings(raw, 80))

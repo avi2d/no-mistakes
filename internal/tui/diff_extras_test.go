@@ -217,8 +217,8 @@ func TestRenderFindings_FocusedDescriptionNotDim(t *testing.T) {
 	// Focused finding's description should NOT be dim, keeping default style
 	// so it visually pops against the dim unfocused descriptions.
 	raw := `{"findings":[
-		{"id":"f1","severity":"error","file":"a.go","line":1,"description":"focused text"},
-		{"id":"f2","severity":"warning","file":"b.go","line":2,"description":"other text"}
+		{"id":"f1","severity":"error","file":"a.go","line":1,"description":"focused text","action":"auto-fix"},
+		{"id":"f2","severity":"warning","file":"b.go","line":2,"description":"other text","action":"auto-fix"}
 	],"summary":"2 issues"}`
 
 	selected := map[string]bool{"f1": true, "f2": true}
@@ -237,11 +237,12 @@ func TestRenderFindings_FocusedDescriptionNotDim(t *testing.T) {
 }
 
 func TestRenderFindings_UnfocusedDescriptionDim(t *testing.T) {
+	lipgloss.SetColorProfile(termenv.ANSI)
 	// Unfocused findings' descriptions should be dim (bright black) to create
 	// visual contrast with the focused finding.
 	raw := `{"findings":[
-		{"id":"f1","severity":"error","file":"a.go","line":1,"description":"first issue"},
-		{"id":"f2","severity":"warning","file":"b.go","line":2,"description":"second issue"}
+		{"id":"f1","severity":"error","file":"a.go","line":1,"description":"first issue","action":"auto-fix"},
+		{"id":"f2","severity":"warning","file":"b.go","line":2,"description":"second issue","action":"auto-fix"}
 	],"summary":"2 issues"}`
 
 	selected := map[string]bool{"f1": true, "f2": true}
@@ -261,8 +262,8 @@ func TestRenderFindings_FocusChangesDescriptionStyle(t *testing.T) {
 	lipgloss.SetColorProfile(termenv.ANSI)
 	// Moving cursor from f1 to f2 should swap which description is dim vs default.
 	raw := `{"findings":[
-		{"id":"f1","severity":"error","file":"a.go","line":1,"description":"first issue"},
-		{"id":"f2","severity":"warning","file":"b.go","line":2,"description":"second issue"}
+		{"id":"f1","severity":"error","file":"a.go","line":1,"description":"first issue","action":"auto-fix"},
+		{"id":"f2","severity":"warning","file":"b.go","line":2,"description":"second issue","action":"auto-fix"}
 	],"summary":"2 issues"}`
 
 	selected := map[string]bool{"f1": true, "f2": true}
