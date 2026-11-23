@@ -27,6 +27,15 @@ func (s *PushStep) Execute(sctx *pipeline.StepContext) (*pipeline.StepOutcome, e
 	if err := assertPipelineHeadContinuity(sctx, s.Name()); err != nil {
 		return nil, err
 	}
+	attestationSteps, err := sctx.DB.GetStepsByRun(sctx.Run.ID)
+	if err != nil {
+		return nil, fmt.Errorf("load step results before push: %w", err)
+	}
+	for _, step := range attestationSteps {
+		if step.StepName == types.StepLint && step.ExitCode != nil && *step.ExitCode != 0 {
+			return nil, fmt.Errorf("cannot push: lint exited with code %d; repair lint and run the pipeline again", *step.ExitCode)
+		}
+	}
 	ctx := sctx.Ctx
 	newHeadSHA := ""
 	if err := sctx.DB.SetRunPushActive(sctx.Run.ID, true); err != nil {
@@ -83,13 +92,6 @@ func (s *PushStep) Execute(sctx *pipeline.StepContext) (*pipeline.StepOutcome, e
 	headBeingPushed, err := git.HeadSHA(ctx, sctx.WorkDir)
 	if err != nil {
 		return nil, fmt.Errorf("resolve head before push: %w", err)
-	}
-	// This run's own review/test/document have already completed by now (see
-	// AllSteps' fixed order), so these are honest statuses to attest for the
-	// head about to be pushed - see attestHeadBeforePush.
-	attestationSteps, err := sctx.DB.GetStepsByRun(sctx.Run.ID)
-	if err != nil {
-		return nil, fmt.Errorf("load step results for attestation: %w", err)
 	}
 	if err := publishRunHead(sctx, headBeingPushed, newHeadSHA, attestationSteps); err != nil {
 		return nil, err

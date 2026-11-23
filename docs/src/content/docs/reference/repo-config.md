@@ -593,7 +593,7 @@ review:
 On the first Review gate, a fix response can still send findings of any severity to the fixer.
 From the second round on, a fix response sends only selected `error` findings to the fixer.
 Selected `warning` and `info` findings, including ones you add to the response, go in **Review follow-ups** in the PR description instead.
-`axi respond` lists their IDs under `recorded.follow_ups`, not `recorded.fixed`.
+`axi respond` lists their IDs under `recorded.follow_ups`, not `recorded.sent_to_fixer`.
 Findings you explicitly ignore do not become follow-ups.
 
 If no selected finding is an error, Review approves the gate without another fix round.

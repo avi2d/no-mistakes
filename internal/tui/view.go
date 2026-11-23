@@ -50,10 +50,14 @@ func (m Model) View() string {
 	stepAwaiting := awaitingStep(m.steps)
 	approvalReady := m.approvalReady(stepAwaiting)
 	retryAvailable := m.reviewRetryAvailable()
-	actionBar := renderActionBar(m.steps, showSelectionActions, allowFix, m.showDiff, selectedCount, totalCount, m.confirmAbort, hasDiff, approvalReady, retryAvailable)
+	lintCommandFailed := m.hasFailingLintCommand(stepAwaiting)
+	actionBar := renderActionBar(m.steps, showSelectionActions, allowFix, m.showDiff, selectedCount, totalCount, m.confirmAbort, hasDiff, approvalReady, retryAvailable, lintCommandFailed)
 	if stepAwaiting != nil && m.stepDiffTruncated[stepAwaiting.StepName] {
-		warning := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ansiYellow)).
-			Render("⚠ Diff truncated at 512 KiB. Approval applies to the full diff.")
+		text := "⚠ Diff truncated at 512 KiB. Approval applies to the full diff."
+		if lintCommandFailed {
+			text = "⚠ Diff truncated at 512 KiB."
+		}
+		warning := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ansiYellow)).Render(text)
 		actionBar = warning + "\n" + actionBar
 	}
 
@@ -242,7 +246,7 @@ func (m Model) View() string {
 		}
 		// The help overlay is user-invoked, so render it even when the content
 		// budget is exhausted rather than silently dropping it.
-		overlay := renderHelpOverlay(boxWidth, m.run, awaitingStep(m.steps) != nil, m.showDiff, hasDiff, m.done, m.yoloMode)
+		overlay := renderHelpOverlay(boxWidth, m.run, stepAwaiting != nil, m.showDiff, hasDiff, m.done, m.yoloMode, lintCommandFailed)
 		if overlay != "" {
 			extraSections = append(extraSections, overlay)
 			if contentBudget > 0 {

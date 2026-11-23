@@ -416,6 +416,7 @@ func TestDriveRun_YesLeavesRefusalGatesAwaitingResponse(t *testing.T) {
 	}{
 		{types.StepCI, protectedPath, "1 awaiting", "package.lock"},
 		{types.StepTest, unvalidatedWork, "2 awaiting", "fix_test.go"},
+		{types.StepLint, `{"findings":[{"id":"lint-1","severity":"warning","description":"lint exited 1","category":"lint-command"}]}`, "1 awaiting", "Lint still fails"},
 		{types.StepReview, `{"findings":[{"id":"review-fix-rounds-exhausted","severity":"warning","action":"ask-user","description":"Review used 1/1 fix rounds"}]}`, "1 awaiting", "Review used 1/1 fix rounds"},
 		{types.StepReview, `{"findings":[{"id":"R1","severity":"error","file":"main.go","description":"still broken","action":"auto-fix"},{"id":"fix-round-no-diff","severity":"warning","action":"ask-user","description":"fix_round_no_diff: the review fix round in round 2 landed no diff"}]}`, "1 awaiting, 1 auto-fix", "landed no diff"},
 	} {
@@ -450,6 +451,13 @@ func TestDriveRun_YesLeavesRefusalGatesAwaitingResponse(t *testing.T) {
 				for _, want := range []string{"gate:", refusal.awaiting, refusal.want, string(status)} {
 					if !strings.Contains(output.String(), want) {
 						t.Errorf("parked output missing %q: %s", want, output.String())
+					}
+				}
+				if refusal.step == types.StepLint {
+					for _, action := range []string{"--action approve", "--action skip"} {
+						if strings.Contains(output.String(), action) {
+							t.Errorf("failed lint gate offered %s: %s", action, output.String())
+						}
 					}
 				}
 				t.Logf("AXI output with --yes (automatic IPC responses: %d):\n%s%s", responses.Load(), progress.String(), output.String())

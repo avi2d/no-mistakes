@@ -464,12 +464,13 @@ func (m *Model) setStepReportedFindings(name types.StepName, reportedFindings in
 	}
 }
 
-// stepsWithRunningElapsed returns a copy of m.steps with DurationMS set on
-// running/fixing steps based on their recorded start times.
 func (m Model) stepsWithRunningElapsed() []ipc.StepResultInfo {
 	steps := make([]ipc.StepResultInfo, len(m.steps))
 	copy(steps, m.steps)
 	for i := range steps {
+		if findings, ok := m.stepFindings[steps[i].StepName]; ok {
+			steps[i].FindingsJSON = &findings
+		}
 		if steps[i].DurationMS != nil {
 			continue
 		}

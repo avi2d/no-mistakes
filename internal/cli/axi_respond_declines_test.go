@@ -85,7 +85,7 @@ func TestAxiRespond_EchoesRecordedDispositionsAndForwardsIgnores(t *testing.T) {
 	if strings.Join(gotParams.IgnoreFindingIDs, ",") != "R2" {
 		t.Fatalf("forwarded ignores = %v, want [R2]", gotParams.IgnoreFindingIDs)
 	}
-	for _, want := range []string{"recorded:", "fixed", "R1", "ignored", "R2", "kept", "R3", "outcome: passed"} {
+	for _, want := range []string{"recorded:", "sent_to_fixer", "R1", "ignored", "R2", "kept", "R3", "outcome: passed"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("respond output missing %q:\n%s", want, out)
 		}

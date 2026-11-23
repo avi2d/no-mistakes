@@ -307,7 +307,13 @@ Runs linters and static analysis.
 - Machine-local [`repository_overrides.commands.lint.additional`](/no-mistakes/reference/global-config/#machine-local-commands) checks run after either lint path above; a failing one adds an auto-fixable `error` finding naming that local check and parks the step.
 - Bounds those agent turns, including a configured-lint repair turn, with [`agent_timeout`](/no-mistakes/reference/global-config/#agent_timeout): a silent turn is cancelled at that stall budget, a still-working one continues past that budget only when its still-working cap is set, and, without an eligible [`agent_crash_retries`](/no-mistakes/reference/global-config/#agent_crash_retries) retry, cancellation fails the step with a timeout diagnostic rather than leaving the run active indefinitely
 
-**Approval:** lint findings with `action: ask-user` pause for approval.
+**Approval:** a failed configured lint command or machine-local lint check cannot be approved.
+`axi run --yes` and TUI yolo leave that gate parked.
+Use `fix` to repair and rerun lint, or abort the run.
+Skipping the gate after a failed check still blocks Push.
+A run started with `--skip lint` does not run these checks and can still push.
+
+Lint findings with `action: ask-user` pause for approval.
 `action: auto-fix` findings stay eligible for the fix loop when `commands.lint` is configured.
 `action: no-op` findings are informational only.
 Combined-pass lint findings use the same gate: `error` and `warning` findings pause for a decision, while `info` findings do not.
