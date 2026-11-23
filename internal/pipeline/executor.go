@@ -14,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/kunchenguid/no-mistakes/internal/agent"
+	"github.com/kunchenguid/no-mistakes/internal/cimonitor"
 	"github.com/kunchenguid/no-mistakes/internal/config"
 	"github.com/kunchenguid/no-mistakes/internal/custody"
 	"github.com/kunchenguid/no-mistakes/internal/db"
@@ -1434,6 +1435,9 @@ func (e *Executor) executeStep(ctx context.Context, step Step, sr *db.StepResult
 		return text
 	}
 	writeLog := func(text string) {
+		if stepName == types.StepCI {
+			text = cimonitor.StampLines(text, time.Now())
+		}
 		touchLogActivity(appendLog(text), true)
 	}
 	writeLogChunk := func(text string) {
@@ -2626,7 +2630,7 @@ func stepActivityFromLog(text string) string {
 		return ""
 	}
 	start := strings.LastIndexByte(text[:end], '\n') + 1
-	line := strings.TrimSpace(text[start:end])
+	line := strings.TrimSpace(cimonitor.Unstamp(text[start:end]))
 	return "log: " + truncateActivity(line)
 }
 

@@ -1062,6 +1062,7 @@ func (s *CIStep) Execute(sctx *pipeline.StepContext) (outcome *pipeline.StepOutc
 							completeMsg = ciNoChecksPassedCompleteMsg
 						}
 						sctx.Log(completeMsg)
+						recordCIFirstGreen(sctx)
 						sctx.Log("validation complete: releasing the run now; the PR is ready for a human to merge")
 						return &pipeline.StepOutcome{CIReadyNoCI: &declaredNoCI}, nil
 					}
@@ -1148,6 +1149,9 @@ func logCIMonitorStatus(sctx *pipeline.StepContext, message string, previous ciM
 			previous.logged = message
 			return previous, nil
 		}
+		if ready {
+			recordCIFirstGreen(sctx)
+		}
 		if message != previous.logged || pending {
 			sctx.Log(message)
 
@@ -1202,6 +1206,18 @@ func setCIMonitorPRState(sctx *pipeline.StepContext, state string) error {
 		return sctx.SetPRState(state)
 	}
 	return sctx.DB.UpdateRunPRState(sctx.Run.ID, state)
+}
+
+// recordCIFirstGreen stamps the step row the first time checks read fully
+// green. It is observability only, so a failed write is logged and the step
+// carries on.
+func recordCIFirstGreen(sctx *pipeline.StepContext) {
+	if sctx.DB == nil || sctx.StepResultID == "" {
+		return
+	}
+	if err := sctx.DB.RecordCIFirstGreen(sctx.StepResultID); err != nil {
+		sctx.Log(fmt.Sprintf("warning: could not record first green CI time: %v", err))
+	}
 }
 
 func setCIMonitorReadiness(sctx *pipeline.StepContext, ready, declaredNoCI bool) error {

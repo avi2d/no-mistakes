@@ -56,6 +56,9 @@ type StepResult struct {
 	// CarriedFrom names the source run's step row that a retried run carried
 	// instead of executing.
 	CarriedFrom *string
+	// CIFirstGreenAt is the unix-seconds time the CI step first read its checks
+	// as fully green. Set once; NULL means that never happened on this step.
+	CIFirstGreenAt *int64
 }
 
 // AgentStall names the agent a step is waiting on and the unix-seconds time
@@ -70,7 +73,7 @@ type AgentStall struct {
 // agent-process failure - rather than because of what the step judged.
 const StepFailureCauseAgentInvocation = "agent_invocation"
 
-const stepResultColumns = `id, run_id, step_name, step_order, status, exit_code, duration_ms, log_path, findings_json, error, started_at, completed_at, last_activity_at, last_activity, agent_pid, auto_fix_limit, round_started_at, override_reason, skip_reason, approval_reason, failure_cause, carried_from, review_max_fix_rounds, response_origin, stalled_agent, stalled_since`
+const stepResultColumns = `id, run_id, step_name, step_order, status, exit_code, duration_ms, log_path, findings_json, error, started_at, completed_at, last_activity_at, last_activity, agent_pid, auto_fix_limit, round_started_at, override_reason, skip_reason, approval_reason, failure_cause, carried_from, review_max_fix_rounds, response_origin, stalled_agent, stalled_since, ci_first_green_at`
 
 // readableStepResultColumns tolerates databases that predate the optional
 // columns. The ci_fix_attempts column is no longer read: the CI step's fix
@@ -87,7 +90,7 @@ type stepStallColumns struct {
 }
 
 func stepScanTargets(s *StepResult, stall *stepStallColumns) []any {
-	return []any{&s.ID, &s.RunID, &s.StepName, &s.StepOrder, &s.Status, &s.ExitCode, &s.DurationMS, &s.LogPath, &s.FindingsJSON, &s.Error, &s.StartedAt, &s.CompletedAt, &s.LastActivityAt, &s.LastActivity, &s.AgentPID, &s.AutoFixLimit, &s.RoundStartedAt, &s.OverrideReason, &s.SkipReason, &s.ApprovalReason, &s.FailureCause, &s.CarriedFrom, &s.ReviewMaxFixRounds, &s.ResponseOrigin, &stall.agent, &stall.since}
+	return []any{&s.ID, &s.RunID, &s.StepName, &s.StepOrder, &s.Status, &s.ExitCode, &s.DurationMS, &s.LogPath, &s.FindingsJSON, &s.Error, &s.StartedAt, &s.CompletedAt, &s.LastActivityAt, &s.LastActivity, &s.AgentPID, &s.AutoFixLimit, &s.RoundStartedAt, &s.OverrideReason, &s.SkipReason, &s.ApprovalReason, &s.FailureCause, &s.CarriedFrom, &s.ReviewMaxFixRounds, &s.ResponseOrigin, &stall.agent, &stall.since, &s.CIFirstGreenAt}
 }
 
 func scanStepResult(row interface{ Scan(...any) error }, s *StepResult) error {
@@ -483,6 +486,20 @@ func (d *DB) CompleteCIStep(id, runID string, declaredNoCI bool, exitCode int, d
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit completed CI: %w", err)
+	}
+	return nil
+}
+
+// RecordCIFirstGreen stamps the CI step row with the time its checks first
+// read fully green. COALESCE keeps the first stamp, so a later red-then-green
+// cycle on the same step does not move it.
+func (d *DB) RecordCIFirstGreen(stepResultID string) error {
+	result, err := d.sql.Exec(`UPDATE step_results SET ci_first_green_at = COALESCE(ci_first_green_at, ?) WHERE id = ?`, now(), stepResultID)
+	if err != nil {
+		return fmt.Errorf("record CI first green: %w", err)
+	}
+	if rows, err := result.RowsAffected(); err != nil || rows != 1 {
+		return fmt.Errorf("record CI first green: step row not found")
 	}
 	return nil
 }

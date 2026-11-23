@@ -106,7 +106,8 @@ CREATE TABLE IF NOT EXISTS step_results (
     stalled_since               INTEGER,
     failure_cause               TEXT,
     carried_from                TEXT,
-    response_origin             TEXT NOT NULL DEFAULT 'unknown'
+    response_origin             TEXT NOT NULL DEFAULT 'unknown',
+    ci_first_green_at           INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS step_rounds (
@@ -517,4 +518,5 @@ COMMIT;`,
 	`ALTER TABLE runs ADD COLUMN transcript_homes TEXT`,
 	`ALTER TABLE step_rounds ADD COLUMN review_follow_ups_json TEXT`,
 	`ALTER TABLE review_questions ADD COLUMN action TEXT NOT NULL DEFAULT 'unknown'`,
+	`ALTER TABLE step_results ADD COLUMN ci_first_green_at INTEGER`,
 }

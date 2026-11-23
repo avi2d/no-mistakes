@@ -121,6 +121,7 @@ type stepView struct {
 	QuietWarning      time.Duration
 	SkipReason        string
 	Stall             *ipc.AgentStall
+	CIFirstGreenAt    *int64
 }
 
 // runView is a render-ready view of a pipeline run.
@@ -197,6 +198,7 @@ func runViewFromIPC(r *ipc.RunInfo) runView {
 			WorkScope:         s.WorkScope,
 			SkipReason:        s.SkipReason,
 			Stall:             s.Stall,
+			CIFirstGreenAt:    s.CIFirstGreenAt,
 		}
 		if s.LastActivity != nil {
 			sv.LastActivity = *s.LastActivity
@@ -250,6 +252,7 @@ func runViewFromDB(r *db.Run, steps []*db.StepResult, database *db.DB) runView {
 		if s.Stall != nil {
 			sv.Stall = &ipc.AgentStall{Agent: s.Stall.Agent, SilentSince: s.Stall.SilentSince}
 		}
+		sv.CIFirstGreenAt = s.CIFirstGreenAt
 		if s.LastActivity != nil {
 			sv.LastActivity = *s.LastActivity
 		}
@@ -531,6 +534,17 @@ func joinComma(parts []string) string {
 	return out
 }
 
+// ciGreenAt is the UTC time the CI step first read its checks as fully green,
+// or "" when that never happened on this run's CI step.
+func (rv runView) ciGreenAt() string {
+	for _, s := range rv.Steps {
+		if s.Name == string(types.StepCI) && s.CIFirstGreenAt != nil {
+			return time.Unix(*s.CIFirstGreenAt, 0).UTC().Format(time.RFC3339)
+		}
+	}
+	return ""
+}
+
 // runObjectField renders a run as a TOON "run:" object with a steps table.
 func runObjectField(rv runView) toon.Field {
 	return runObjectFieldWithKey("run", rv)
@@ -555,6 +569,9 @@ func runObjectFieldWithKey(key string, rv runView) toon.Field {
 	}
 	fields = append(fields, toon.Field{Key: "head", Value: shortSHA(rv.HeadSHA)})
 	fields = append(fields, toon.Field{Key: "head_sha", Value: rv.HeadSHA})
+	if green := rv.ciGreenAt(); green != "" {
+		fields = append(fields, toon.Field{Key: "ci_green_at", Value: green})
+	}
 	if rv.TestOverrideReason != "" {
 		fields = append(fields, toon.Field{Key: "test_override_reason", Value: rv.TestOverrideReason})
 	}

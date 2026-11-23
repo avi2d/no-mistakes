@@ -543,3 +543,10 @@ func (a *lifecycleEmittingAgent) Run(_ context.Context, opts agent.RunOpts) (*ag
 	}
 	return &agent.Result{Text: "done"}, nil
 }
+
+func TestStepActivityFromLogIgnoresCIStampPrefix(t *testing.T) {
+	stamped := "[2026-11-23T07:15:32Z] issues detected: test - auto-fixing (attempt 1/3)...\n"
+	if got, want := stepActivityFromLog(stamped), "log: issues detected: test - auto-fixing (attempt 1/3)..."; got != want {
+		t.Fatalf("stepActivityFromLog() = %q, want %q", got, want)
+	}
+}

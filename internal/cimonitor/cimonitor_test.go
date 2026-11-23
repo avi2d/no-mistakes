@@ -3,6 +3,7 @@ package cimonitor
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestParseActivity_Empty(t *testing.T) {
@@ -213,5 +214,36 @@ func TestHeadBindingWaitReplacesPreviousActivity(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestStampedChecksPassedLineStillReadsAsReady(t *testing.T) {
+	at := time.Date(2026, 11, 23, 10, 15, 32, 0, time.FixedZone("UTC+3", 3*60*60))
+	stamped := StampLines(ChecksPassedMsg, at)
+	if want := "[2026-11-23T07:15:32Z] " + ChecksPassedMsg; stamped != want {
+		t.Fatalf("StampLines = %q, want %q", stamped, want)
+	}
+	if got := Unstamp(stamped); got != ChecksPassedMsg {
+		t.Fatalf("Unstamp = %q, want the bare message", got)
+	}
+	if a := ParseActivity([]string{stamped}); !a.Ready {
+		t.Fatalf("stamped checks-passed line stopped reading as ready: %+v", a)
+	}
+}
+
+func TestStampLinesStampsEachLineAndSkipsBlankOnes(t *testing.T) {
+	at := time.Date(2026, 11, 23, 7, 15, 32, 0, time.UTC)
+	got := StampLines("first\n\nsecond\n", at)
+	want := "[2026-11-23T07:15:32Z] first\n\n[2026-11-23T07:15:32Z] second\n"
+	if got != want {
+		t.Fatalf("StampLines = %q, want %q", got, want)
+	}
+}
+
+func TestUnstampDoesNotStripBracketedTextWithoutATimestamp(t *testing.T) {
+	for _, line := range []string{"plain line", "[not a time] text", "[2026-11-23T07:15:32Z]text"} {
+		if got := Unstamp(line); got != line {
+			t.Fatalf("Unstamp(%q) = %q, want the line unchanged", line, got)
+		}
 	}
 }
