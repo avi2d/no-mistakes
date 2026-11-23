@@ -726,6 +726,9 @@ type StepResultInfo struct {
 	// Stall is set while the step's agent has been silent for at least
 	// step_quiet_warning.
 	Stall *AgentStall `json:"stall,omitempty"`
+	// CIFirstGreenAt is the unix-seconds time the CI step first read its checks
+	// as fully green. Nil when that never happened on this step.
+	CIFirstGreenAt *int64 `json:"ci_first_green_at,omitempty"`
 }
 
 // AgentStall names the agent a step is waiting on and the unix-seconds time

@@ -3,6 +3,7 @@ package db
 import (
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/kunchenguid/no-mistakes/internal/types"
 )
@@ -717,5 +718,44 @@ func TestGetStepsByRun_ReadOnlyToleratesPreActivityColumns(t *testing.T) {
 	}
 	if steps[0].LastActivityAt != nil || steps[0].AgentPID != nil || steps[0].AutoFixLimit != nil {
 		t.Fatalf("missing columns must read as NULL: %+v", steps[0])
+	}
+}
+
+func TestRecordCIFirstGreenNeverMovesAnExistingStamp(t *testing.T) {
+	d, err := Open(filepath.Join(t.TempDir(), "state.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	repo, _ := d.InsertRepo("/tmp/repo", "origin", "main")
+	run, _ := d.InsertRun(repo.ID, "feature", "head", "base")
+
+	stamped, err := d.InsertStepResult(run.ID, types.StepCI)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.sql.Exec(`UPDATE step_results SET ci_first_green_at = ? WHERE id = ?`, 1000, stamped.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.RecordCIFirstGreen(stamped.ID); err != nil {
+		t.Fatal(err)
+	}
+	got, err := d.GetStepResult(stamped.ID)
+	if err != nil || got.CIFirstGreenAt == nil || *got.CIFirstGreenAt != 1000 {
+		t.Fatalf("existing first-green stamp moved: %+v, %v", got, err)
+	}
+
+	fresh, err := d.InsertStepResult(run.ID, types.StepCI)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := time.Now().Unix()
+	if err := d.RecordCIFirstGreen(fresh.ID); err != nil {
+		t.Fatal(err)
+	}
+	after := time.Now().Unix()
+	got, err = d.GetStepResult(fresh.ID)
+	if err != nil || got.CIFirstGreenAt == nil || *got.CIFirstGreenAt < before || *got.CIFirstGreenAt > after {
+		t.Fatalf("first green stamp = %+v, want a time between %d and %d: %v", got, before, after, err)
 	}
 }

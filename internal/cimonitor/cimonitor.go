@@ -12,7 +12,10 @@
 // package combines that authoritative state with the activity log for consumers.
 package cimonitor
 
-import "strings"
+import (
+	"strings"
+	"time"
+)
 
 // Log messages the CI monitor emits. These are matched exactly (not by
 // substring) when deriving the "checks passed" state, so the producer and the
@@ -87,7 +90,8 @@ func FromAuthoritative(ready, declaredNoCI bool, logs []string) Activity {
 // FromAuthoritative for the persisted readiness state.
 func ParseActivity(logs []string) Activity {
 	var a Activity
-	for _, line := range logs {
+	for _, stamped := range logs {
+		line := Unstamp(stamped)
 		switch {
 		case strings.Contains(line, "running agent to fix CI"):
 			// Emitted once per fix attempt by autoFixCI in real runs (and by
@@ -162,6 +166,34 @@ func ParseActivity(logs []string) Activity {
 		}
 	}
 	return a
+}
+
+// StampLines prefixes each non-empty line of text with its UTC write time.
+func StampLines(text string, at time.Time) string {
+	if text == "" {
+		return text
+	}
+	prefix := "[" + at.UTC().Format(time.RFC3339) + "] "
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		if line != "" {
+			lines[i] = prefix + line
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// Unstamp returns line without the prefix StampLines adds. A line without a
+// well-formed prefix is returned unchanged.
+func Unstamp(line string) string {
+	const width = len("[2006-01-02T15:04:05Z] ")
+	if len(line) < width || line[0] != '[' || line[width-2:width] != "] " {
+		return line
+	}
+	if _, err := time.Parse(time.RFC3339, line[1:width-2]); err != nil {
+		return line
+	}
+	return line[width:]
 }
 
 // ChecksPassed reports whether the CI monitor's latest state is "checks passed,
