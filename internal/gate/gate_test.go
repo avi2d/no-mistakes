@@ -13,6 +13,7 @@ import (
 	"github.com/kunchenguid/no-mistakes/internal/db"
 	gitpkg "github.com/kunchenguid/no-mistakes/internal/git"
 	"github.com/kunchenguid/no-mistakes/internal/paths"
+	"github.com/kunchenguid/no-mistakes/internal/testscript"
 )
 
 func TestMain(m *testing.M) {
@@ -829,7 +830,7 @@ func TestInitRefreshPreservesCustomPostReceiveHook(t *testing.T) {
 	}
 	hookPath := filepath.Join(p.RepoDir(repo.ID), "hooks", "post-receive")
 	customHook := []byte("#!/bin/sh\necho custom hook\n")
-	if err := os.WriteFile(hookPath, customHook, 0o755); err != nil {
+	if err := testscript.WriteFile(hookPath, customHook, 0o755); err != nil {
 		t.Fatalf("write custom hook: %v", err)
 	}
 
@@ -1140,14 +1141,14 @@ func TestInit_PostReceiveSurvivesHooksPathPoisoning(t *testing.T) {
 	marker := filepath.Join(markerDir, "fired")
 	hookPath := filepath.Join(bareDir, "hooks", "post-receive")
 	hook := "#!/bin/sh\ntouch '" + marker + "'\nexit 0\n"
-	if err := os.WriteFile(hookPath, []byte(hook), 0o755); err != nil {
+	if err := testscript.WriteFile(hookPath, []byte(hook), 0o755); err != nil {
 		t.Fatalf("write marker hook: %v", err)
 	}
 	// This unit test has no isolated daemon. Stub only pre-receive admission;
 	// the behavior under test is hookspath isolation for post-receive. Full
 	// fail-closed admission is covered by the isolated-daemon e2e regression.
 	preHookPath := filepath.Join(bareDir, "hooks", "pre-receive")
-	if err := os.WriteFile(preHookPath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+	if err := testscript.WriteFile(preHookPath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
 		t.Fatalf("write admission stub: %v", err)
 	}
 

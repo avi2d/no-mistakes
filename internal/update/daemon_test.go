@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/kunchenguid/no-mistakes/internal/paths"
+	"github.com/kunchenguid/no-mistakes/internal/testscript"
 )
 
 func TestEnsureDaemonUsesCurrentExecutableAllowsWindowsCaseDifferences(t *testing.T) {
@@ -344,7 +345,7 @@ func TestDefaultResetDaemonStartsTheNewlyInstalledBinary(t *testing.T) {
 	argsFile := filepath.Join(dir, "args")
 	exe := filepath.Join(dir, "no-mistakes")
 	script := "#!/bin/sh\nprintf '%s ' \"$@\" > '" + argsFile + "'\necho \"$NO_MISTAKES_NO_UPDATE_CHECK\" >> '" + argsFile + "'\n"
-	if err := os.WriteFile(exe, []byte(script), 0o755); err != nil {
+	if err := testscript.WriteFile(exe, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -385,7 +386,7 @@ func TestDefaultResetDaemonReportsTheNewBinarysStartFailure(t *testing.T) {
 	})
 
 	exe := filepath.Join(t.TempDir(), "no-mistakes")
-	if err := os.WriteFile(exe, []byte("#!/bin/sh\necho 'unit refresh failed' >&2\nexit 1\n"), 0o755); err != nil {
+	if err := testscript.WriteFile(exe, []byte("#!/bin/sh\necho 'unit refresh failed' >&2\nexit 1\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	currentGOOS = "linux"

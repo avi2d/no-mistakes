@@ -12,6 +12,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/kunchenguid/no-mistakes/internal/testscript"
 )
 
 func TestRun_TrimsOutputWithLifecycleAwareRunner(t *testing.T) {
@@ -89,7 +91,7 @@ func installFakeGit(t *testing.T, body string) {
 	binDir := t.TempDir()
 	gitPath := filepath.Join(binDir, "git")
 	script := "#!/bin/sh\n" + body + "\n"
-	if err := os.WriteFile(gitPath, []byte(script), 0o755); err != nil {
+	if err := testscript.WriteFile(gitPath, []byte(script), 0o755); err != nil {
 		t.Fatalf("write fake git: %v", err)
 	}
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))

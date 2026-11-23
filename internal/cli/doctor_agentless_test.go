@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/kunchenguid/no-mistakes/internal/telemetry"
+	"github.com/kunchenguid/no-mistakes/internal/testscript"
 )
 
 func TestDoctorReportsGateCannotValidateWithoutAgent(t *testing.T) {
@@ -66,7 +67,7 @@ func writeDoctorGitBinary(t *testing.T, dir string) {
 		name = "git.cmd"
 		contents = "@echo off\r\necho git version test\r\n"
 	}
-	if err := os.WriteFile(filepath.Join(dir, name), []byte(contents), 0o755); err != nil {
+	if err := testscript.WriteFile(filepath.Join(dir, name), []byte(contents), 0o755); err != nil {
 		t.Fatalf("write fake git: %v", err)
 	}
 }
@@ -79,7 +80,7 @@ func writeDoctorStubBinary(t *testing.T, dir, base string) {
 		name += ".cmd"
 		contents = "@echo off\r\nexit /b 0\r\n"
 	}
-	if err := os.WriteFile(filepath.Join(dir, name), []byte(contents), 0o755); err != nil {
+	if err := testscript.WriteFile(filepath.Join(dir, name), []byte(contents), 0o755); err != nil {
 		t.Fatalf("write fake %s: %v", base, err)
 	}
 }

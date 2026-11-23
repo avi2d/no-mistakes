@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/kunchenguid/no-mistakes/internal/agent"
+	"github.com/kunchenguid/no-mistakes/internal/testscript"
 	"github.com/kunchenguid/no-mistakes/internal/types"
 )
 
@@ -44,7 +45,7 @@ n=$((n + 1))
 printf '%%s' "$n" > "$dir/calls"
 cat "$dir/reply-$n.jsonl"
 `, fakeDir)
-	if err := os.WriteFile(filepath.Join(fakeDir, "pi"), []byte(script), 0o755); err != nil {
+	if err := testscript.WriteFile(filepath.Join(fakeDir, "pi"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 }

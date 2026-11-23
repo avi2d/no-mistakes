@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/kunchenguid/no-mistakes/internal/shellenv"
+	"github.com/kunchenguid/no-mistakes/internal/testscript"
 )
 
 const nativeAgentEscapedPipeHelperEnv = "NM_AGENT_NATIVE_PIPE_HELPER"
@@ -479,7 +480,7 @@ func runFakeClaudeResult(t *testing.T, dir, holder string, schema json.RawMessag
 {"type":"result","subtype":"success","is_error":false,"result":"ok","structured_output":{"ok":true}}`
 	bin := filepath.Join(dir, "claude")
 	script := "#!/bin/sh\ncat > /dev/null\n" + holder + "printf '%s\\n' '" + events + "'\nexit 0\n"
-	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+	if err := testscript.WriteFile(bin, []byte(script), 0o755); err != nil {
 		t.Fatalf("write fake claude: %v", err)
 	}
 	return (&claudeAgent{bin: bin}).runOnce(context.Background(), RunOpts{Prompt: "p", CWD: dir, JSONSchema: schema, RequireCompletedChildren: true})

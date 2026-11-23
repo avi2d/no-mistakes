@@ -14,6 +14,7 @@ import (
 	"github.com/kunchenguid/no-mistakes/internal/git"
 	"github.com/kunchenguid/no-mistakes/internal/ipc"
 	"github.com/kunchenguid/no-mistakes/internal/paths"
+	"github.com/kunchenguid/no-mistakes/internal/testscript"
 	"github.com/kunchenguid/no-mistakes/internal/types"
 )
 
@@ -141,7 +142,7 @@ func TestCommitIdentityPushPathsCarryLinkedCheckoutSnapshot(t *testing.T) {
 			head := cliGit(t, linked, "rev-parse", "HEAD")
 			optionsPath := filepath.Join(gateDir, "identity-push-options")
 			hook := "#!/bin/sh\n: > identity-push-options\ni=0\nwhile [ \"$i\" -lt \"${GIT_PUSH_OPTION_COUNT:-0}\" ]; do\n  printenv \"GIT_PUSH_OPTION_$i\" >> identity-push-options\n  i=$((i + 1))\ndone\n"
-			if err := os.WriteFile(filepath.Join(gateDir, "hooks", "pre-receive"), []byte(hook), 0o755); err != nil {
+			if err := testscript.WriteFile(filepath.Join(gateDir, "hooks", "pre-receive"), []byte(hook), 0o755); err != nil {
 				t.Fatal(err)
 			}
 			chdir(t, linked)
@@ -218,7 +219,7 @@ func TestCommitIdentityPlainPushRequiresLiveCheckoutAgreement(t *testing.T) {
 			cliGit(t, main, "clone", "--bare", main, gateDir)
 			cliGit(t, gateDir, "config", "core.hooksPath", "hooks")
 			cliGit(t, main, "remote", "add", gate.RemoteName, gateDir)
-			if err := os.WriteFile(filepath.Join(gateDir, "hooks", "post-receive"), []byte(git.PostReceiveHookScript()), 0o755); err != nil {
+			if err := testscript.WriteFile(filepath.Join(gateDir, "hooks", "post-receive"), []byte(git.PostReceiveHookScript()), 0o755); err != nil {
 				t.Fatal(err)
 			}
 			linked := filepath.Join(t.TempDir(), "live linked checkout")

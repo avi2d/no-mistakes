@@ -9,6 +9,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/kunchenguid/no-mistakes/internal/testscript"
 )
 
 func TestReconcileStaleBranchRebasedAcrossBaseDeletion(t *testing.T) {
@@ -121,7 +123,7 @@ while read old new ref; do
   fi
 done
 `
-			if err := os.WriteFile(filepath.Join(gateDir, "hooks", "reference-transaction"), []byte(hook), 0o755); err != nil {
+			if err := testscript.WriteFile(filepath.Join(gateDir, "hooks", "reference-transaction"), []byte(hook), 0o755); err != nil {
 				t.Fatal(err)
 			}
 			if change == "merge_failure" || change == "tree_failure" {
@@ -138,7 +140,7 @@ done
 				}
 				bin := t.TempDir()
 				wrapper := fmt.Sprintf("#!/bin/sh\nfor arg do\n  [ \"$arg\" != %q ] || exit 37\ndone\nexec %q \"$@\"\n", command, realGit)
-				if err := os.WriteFile(filepath.Join(bin, "git"), []byte(wrapper), 0o755); err != nil {
+				if err := testscript.WriteFile(filepath.Join(bin, "git"), []byte(wrapper), 0o755); err != nil {
 					t.Fatal(err)
 				}
 				t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))

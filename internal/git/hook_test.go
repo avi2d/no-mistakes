@@ -8,6 +8,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/kunchenguid/no-mistakes/internal/testscript"
 )
 
 func TestPreReceiveHookScript(t *testing.T) {
@@ -39,7 +41,7 @@ func TestRefreshManagedPreReceiveHookPreservesCustomHook(t *testing.T) {
 		t.Fatal(err)
 	}
 	custom := []byte("#!/bin/sh\necho custom\n")
-	if err := os.WriteFile(filepath.Join(hooks, "pre-receive"), custom, 0o755); err != nil {
+	if err := testscript.WriteFile(filepath.Join(hooks, "pre-receive"), custom, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	changed, err := RefreshManagedPreReceiveHook(bare)
@@ -74,7 +76,7 @@ func TestGateConfigCurrentRejectsMissingOrTamperedAdmissionHook(t *testing.T) {
 		t.Fatal("fresh managed admission hook should be current")
 	}
 	pre := filepath.Join(bare, "hooks", "pre-receive")
-	if err := os.WriteFile(pre, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+	if err := testscript.WriteFile(pre, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if GateConfigCurrent(bare) {
@@ -205,12 +207,12 @@ func TestPostReceiveHookScriptDoesNotEvaluatePushOptions(t *testing.T) {
 	argsPath := filepath.Join(base, "args.txt")
 	fakeBin := filepath.Join(base, "fake-no-mistakes")
 	fakeScript := "#!/bin/sh\nprintf '%s\n' \"$@\" > " + shellSingleQuote(argsPath) + "\nexit 0\n"
-	if err := os.WriteFile(fakeBin, []byte(fakeScript), 0o755); err != nil {
+	if err := testscript.WriteFile(fakeBin, []byte(fakeScript), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
 	hookPath := filepath.Join(base, "post-receive")
-	if err := os.WriteFile(hookPath, []byte(postReceiveHookScript(fakeBin)), 0o755); err != nil {
+	if err := testscript.WriteFile(hookPath, []byte(postReceiveHookScript(fakeBin)), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -284,7 +286,7 @@ func TestRefreshManagedPostReceiveHookPreservesCustomHook(t *testing.T) {
 	}
 	hookPath := filepath.Join(bare, "hooks", "post-receive")
 	custom := "#!/bin/sh\necho custom hook\n"
-	if err := os.WriteFile(hookPath, []byte(custom), 0o755); err != nil {
+	if err := testscript.WriteFile(hookPath, []byte(custom), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -356,7 +358,7 @@ func TestPostReceiveHook_ResolvesAbsoluteGateDir(t *testing.T) {
 	argsPath := filepath.Join(base, "args.txt")
 	fakeBin := filepath.Join(base, "fake-no-mistakes")
 	fakeScript := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + shellSingleQuote(argsPath) + "\nexit 0\n"
-	if err := os.WriteFile(fakeBin, []byte(fakeScript), 0o755); err != nil {
+	if err := testscript.WriteFile(fakeBin, []byte(fakeScript), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -364,7 +366,7 @@ func TestPostReceiveHook_ResolvesAbsoluteGateDir(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(hookPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(hookPath, []byte(postReceiveHookScript(fakeBin)), 0o755); err != nil {
+	if err := testscript.WriteFile(hookPath, []byte(postReceiveHookScript(fakeBin)), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -420,7 +422,7 @@ func TestPostReceiveHook_FallsBackToHookLocationForGateDir(t *testing.T) {
 	argsPath := filepath.Join(base, "args.txt")
 	fakeBin := filepath.Join(base, "fake-no-mistakes")
 	fakeScript := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + shellSingleQuote(argsPath) + "\nexit 0\n"
-	if err := os.WriteFile(fakeBin, []byte(fakeScript), 0o755); err != nil {
+	if err := testscript.WriteFile(fakeBin, []byte(fakeScript), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -429,7 +431,7 @@ func TestPostReceiveHook_FallsBackToHookLocationForGateDir(t *testing.T) {
 		t.Fatal(err)
 	}
 	fakeGit := filepath.Join(fakePath, "git")
-	if err := os.WriteFile(fakeGit, []byte("#!/bin/sh\nexit 127\n"), 0o755); err != nil {
+	if err := testscript.WriteFile(fakeGit, []byte("#!/bin/sh\nexit 127\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -437,7 +439,7 @@ func TestPostReceiveHook_FallsBackToHookLocationForGateDir(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(hookPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(hookPath, []byte(postReceiveHookScript(fakeBin)), 0o755); err != nil {
+	if err := testscript.WriteFile(hookPath, []byte(postReceiveHookScript(fakeBin)), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -529,7 +531,7 @@ func TestPostReceiveHook_SurfacesNotifyFailures(t *testing.T) {
 	// distinctive marker on stderr.
 	fakeBin := filepath.Join(base, "fake-no-mistakes")
 	fakeScript := "#!/bin/sh\necho 'TESTMARKER notify failed' >&2\nexit 7\n"
-	if err := os.WriteFile(fakeBin, []byte(fakeScript), 0o755); err != nil {
+	if err := testscript.WriteFile(fakeBin, []byte(fakeScript), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -539,7 +541,7 @@ func TestPostReceiveHook_SurfacesNotifyFailures(t *testing.T) {
 		t.Fatal(err)
 	}
 	hookPath := filepath.Join(hooksDir, "post-receive")
-	if err := os.WriteFile(hookPath, []byte(postReceiveHookScript(fakeBin)), 0o755); err != nil {
+	if err := testscript.WriteFile(hookPath, []byte(postReceiveHookScript(fakeBin)), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -683,7 +685,7 @@ func TestIsolateHooksPath_PushToGateStillWorks(t *testing.T) {
 	}
 	marker := filepath.Join(base, "hook-ran")
 	hookScript := "#!/bin/sh\necho ran > " + marker + "\nexit 0\n"
-	if err := os.WriteFile(filepath.Join(hooksDir, "post-receive"), []byte(hookScript), 0o755); err != nil {
+	if err := testscript.WriteFile(filepath.Join(hooksDir, "post-receive"), []byte(hookScript), 0o755); err != nil {
 		t.Fatal(err)
 	}
 

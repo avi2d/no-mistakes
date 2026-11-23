@@ -3,7 +3,7 @@ package steps
 import (
 	"context"
 	"encoding/json"
-	"os"
+
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -14,6 +14,7 @@ import (
 	"github.com/kunchenguid/no-mistakes/internal/agent"
 	"github.com/kunchenguid/no-mistakes/internal/config"
 	"github.com/kunchenguid/no-mistakes/internal/pipeline"
+	"github.com/kunchenguid/no-mistakes/internal/testscript"
 	"github.com/kunchenguid/no-mistakes/internal/types"
 )
 
@@ -31,7 +32,7 @@ func attributionRepo(t *testing.T, baseFailures, headFailures string, attributio
 	gitCmd(t, dir, "checkout", "--quiet", "-b", "main")
 	script := "#!/bin/sh\nstatus=0\nwhile read -r name; do [ -n \"$name\" ] && echo \"--- FAIL: $name (0.0${RANDOM:-1}s)\" && status=1; done < failures.txt\n[ $status -eq 0 ] || printf 'FAIL\\texample.com/suite\\t0.1s\\n'\nexit $status\n"
 	write := func(name, content string) {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o755); err != nil {
+		if err := testscript.WriteFile(filepath.Join(dir, name), []byte(content), 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}

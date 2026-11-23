@@ -14,6 +14,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/kunchenguid/no-mistakes/internal/testscript"
 )
 
 var (
@@ -273,7 +275,7 @@ if [ "$1" = "remote" ] && [ "$2" = "add" ] && mkdir %s 2>/dev/null; then
 fi
 exec %s "$@"
 `, shellQuote(filepath.Join(dir, "fired")), shellQuote(p.reached.Name()), shellQuote(p.release.Name()), shellQuote(realGit))
-	if err := os.WriteFile(filepath.Join(p.binDir, "git"), []byte(shim), 0o755); err != nil {
+	if err := testscript.WriteFile(filepath.Join(p.binDir, "git"), []byte(shim), 0o755); err != nil {
 		t.Fatalf("write git shim: %v", err)
 	}
 	return p

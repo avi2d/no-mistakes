@@ -17,6 +17,7 @@ import (
 
 	"github.com/kunchenguid/no-mistakes/internal/db"
 	"github.com/kunchenguid/no-mistakes/internal/paths"
+	"github.com/kunchenguid/no-mistakes/internal/testscript"
 	"github.com/kunchenguid/no-mistakes/internal/types"
 )
 
@@ -129,7 +130,7 @@ func TestUpdaterRunReplacesExecutable(t *testing.T) {
 	defer server.Close()
 
 	execPath := filepath.Join(t.TempDir(), "no-mistakes")
-	if err := os.WriteFile(execPath, []byte("old-binary"), 0o755); err != nil {
+	if err := testscript.WriteFile(execPath, []byte("old-binary"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -191,7 +192,7 @@ func TestUpdaterRunResetsDaemonAfterUpdate(t *testing.T) {
 	defer server.Close()
 
 	execPath := filepath.Join(t.TempDir(), "no-mistakes")
-	if err := os.WriteFile(execPath, []byte("old-binary"), 0o755); err != nil {
+	if err := testscript.WriteFile(execPath, []byte("old-binary"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -276,7 +277,7 @@ func TestUpdaterRunRefusesWithActiveRunsAndListsThem(t *testing.T) {
 	}
 
 	execPath := filepath.Join(t.TempDir(), "no-mistakes")
-	if err := os.WriteFile(execPath, []byte("old-binary"), 0o755); err != nil {
+	if err := testscript.WriteFile(execPath, []byte("old-binary"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -404,7 +405,7 @@ func TestUpdaterRunFailsWhenDaemonResetFails(t *testing.T) {
 	defer server.Close()
 
 	execPath := filepath.Join(t.TempDir(), "no-mistakes")
-	if err := os.WriteFile(execPath, []byte("old-binary"), 0o755); err != nil {
+	if err := testscript.WriteFile(execPath, []byte("old-binary"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -478,7 +479,7 @@ func TestUpdaterRunFailsWhenDaemonResetLeavesDaemonOffline(t *testing.T) {
 	defer server.Close()
 
 	execPath := filepath.Join(t.TempDir(), "no-mistakes")
-	if err := os.WriteFile(execPath, []byte("old-binary"), 0o755); err != nil {
+	if err := testscript.WriteFile(execPath, []byte("old-binary"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -548,11 +549,11 @@ func TestUpdaterRunFailsWhenDaemonUsesDifferentExecutable(t *testing.T) {
 
 	execDir := t.TempDir()
 	execPath := filepath.Join(execDir, "no-mistakes")
-	if err := os.WriteFile(execPath, []byte("old-binary"), 0o755); err != nil {
+	if err := testscript.WriteFile(execPath, []byte("old-binary"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	otherExecPath := filepath.Join(execDir, "other-no-mistakes")
-	if err := os.WriteFile(otherExecPath, []byte("other-binary"), 0o755); err != nil {
+	if err := testscript.WriteFile(otherExecPath, []byte("other-binary"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -661,11 +662,11 @@ func TestUpdaterRunReplacesDaemonWhenDifferentExecutableConfirmed(t *testing.T) 
 		t.Run(tt.name, func(t *testing.T) {
 			execDir := t.TempDir()
 			execPath := filepath.Join(execDir, "no-mistakes")
-			if err := os.WriteFile(execPath, []byte("old-binary"), 0o755); err != nil {
+			if err := testscript.WriteFile(execPath, []byte("old-binary"), 0o755); err != nil {
 				t.Fatal(err)
 			}
 			otherExecPath := filepath.Join(execDir, "other-no-mistakes")
-			if err := os.WriteFile(otherExecPath, []byte("other-binary"), 0o755); err != nil {
+			if err := testscript.WriteFile(otherExecPath, []byte("other-binary"), 0o755); err != nil {
 				t.Fatal(err)
 			}
 
@@ -757,7 +758,7 @@ func TestUpdaterRunFailsWhenDaemonExecutableCannotBeResolved(t *testing.T) {
 
 	execDir := t.TempDir()
 	execPath := filepath.Join(execDir, "no-mistakes")
-	if err := os.WriteFile(execPath, []byte("old-binary"), 0o755); err != nil {
+	if err := testscript.WriteFile(execPath, []byte("old-binary"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -824,7 +825,7 @@ func TestUpdaterRunSkipsDaemonExecutableCheckWhenAlreadyUpToDate(t *testing.T) {
 	defer server.Close()
 
 	execPath := filepath.Join(t.TempDir(), "no-mistakes")
-	if err := os.WriteFile(execPath, []byte("current-binary"), 0o755); err != nil {
+	if err := testscript.WriteFile(execPath, []byte("current-binary"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1038,7 +1039,7 @@ func TestInNixStore(t *testing.T) {
 		t.Fatal("the store directory itself is not an installed binary")
 	}
 	userOwned := filepath.Join(t.TempDir(), "no-mistakes")
-	if err := os.WriteFile(userOwned, []byte("binary"), 0o755); err != nil {
+	if err := testscript.WriteFile(userOwned, []byte("binary"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if inNixStore(userOwned) {

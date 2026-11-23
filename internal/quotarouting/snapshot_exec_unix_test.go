@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kunchenguid/no-mistakes/internal/testscript"
 	"github.com/kunchenguid/no-mistakes/internal/types"
 )
 
@@ -33,7 +34,7 @@ func TestReadSnapshotReapsDescendantsOnEveryExit(t *testing.T) {
 				script += "wait\n"
 			}
 			executable := filepath.Join(dir, "quota-axi")
-			if err := os.WriteFile(executable, []byte(script), 0o755); err != nil {
+			if err := testscript.WriteFile(executable, []byte(script), 0o755); err != nil {
 				t.Fatal(err)
 			}
 			snapshot, err := ReadSnapshot(context.Background(), executable, 2*time.Second)
@@ -73,7 +74,7 @@ func TestReadSnapshotRequestsClaudeProfileSelectorMetadata(t *testing.T) {
 if [ "$*" != '--full --json' ]; then exit 3; fi
 printf '%s' '{"schemaVersion":6,"providers":[{"provider":"claude","accountKey":"profile:selected","accountKeys":["profile:selected"],"accountLocator":{"kind":"config-dir","path":"/selected-profile","delegateEligible":true},"quotaSemantics":{"status":"known","effectiveAvailability":[{"scope":"all_models","status":"known","effectivePercentRemaining":0}]}}]}'
 `
-	if err := os.WriteFile(executable, []byte(script), 0o755); err != nil {
+	if err := testscript.WriteFile(executable, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	snapshot, err := ReadSnapshot(context.Background(), executable, time.Second)

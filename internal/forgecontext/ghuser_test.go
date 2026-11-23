@@ -11,6 +11,7 @@ import (
 
 	"github.com/kunchenguid/no-mistakes/internal/config"
 	"github.com/kunchenguid/no-mistakes/internal/scm"
+	"github.com/kunchenguid/no-mistakes/internal/testscript"
 )
 
 // installFakeGH puts a gh on PATH that answers `gh auth token` with
@@ -45,7 +46,7 @@ func installFakeGH(t *testing.T, signedIn ...string) (argsFile string) {
 		b.WriteString("esac\necho \"no oauth token found for $4 account $6\" >&2\nexit 1\n")
 		contents = b.String()
 	}
-	if err := os.WriteFile(filepath.Join(dir, name), []byte(contents), 0o755); err != nil {
+	if err := testscript.WriteFile(filepath.Join(dir, name), []byte(contents), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))

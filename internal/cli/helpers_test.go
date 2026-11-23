@@ -19,6 +19,7 @@ import (
 	"github.com/kunchenguid/no-mistakes/internal/git"
 	"github.com/kunchenguid/no-mistakes/internal/paths"
 	"github.com/kunchenguid/no-mistakes/internal/testgit"
+	"github.com/kunchenguid/no-mistakes/internal/testscript"
 )
 
 func init() {
@@ -200,7 +201,7 @@ func writeMockClaude(t *testing.T, dir string) string {
 	if runtime.GOOS == "windows" {
 		path := filepath.Join(dir, "claude.bat")
 		script := "@echo off\r\necho {\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"structured_output\":{\"findings\":[],\"summary\":\"clean\"}}\r\n"
-		if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		if err := testscript.WriteFile(path, []byte(script), 0o755); err != nil {
 			t.Fatal(err)
 		}
 		return path
@@ -209,7 +210,7 @@ func writeMockClaude(t *testing.T, dir string) string {
 	script := `#!/bin/sh
 printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"structured_output":{"findings":[],"summary":"clean"}}'
 `
-	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+	if err := testscript.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	return path
@@ -291,7 +292,7 @@ func linkTestBinary(t *testing.T, binDir, name string) string {
 			"if /I \"%~n0\"==\"gh\" exit /b 0\r\n" +
 			"if /I \"%~n0\"==\"claude\" exit /b 0\r\n" +
 			"exit /b 1\r\n"
-		if err := os.WriteFile(dst, []byte(content), 0o755); err != nil {
+		if err := testscript.WriteFile(dst, []byte(content), 0o755); err != nil {
 			t.Fatal(err)
 		}
 		return dst
@@ -309,7 +310,7 @@ func linkTestBinary(t *testing.T, binDir, name string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(dst, data, 0o755); err != nil {
+	if err := testscript.WriteFile(dst, data, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	return dst

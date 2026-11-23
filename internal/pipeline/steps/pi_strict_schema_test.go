@@ -8,11 +8,11 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"syscall"
 	"testing"
 
 	"github.com/kunchenguid/no-mistakes/internal/agent"
 	"github.com/kunchenguid/no-mistakes/internal/config"
+	"github.com/kunchenguid/no-mistakes/internal/testscript"
 	"github.com/kunchenguid/no-mistakes/internal/types"
 )
 
@@ -48,12 +48,7 @@ cat "$0.events"
 		}, "\r\n")
 	}
 	bin := filepath.Join(dir, name)
-	// A child forked while bin is open for writing holds that descriptor until
-	// it execs, and exec of bin fails with ETXTBSY until then. Forks take
-	// ForkLock exclusively, so none starts while the write holds it shared.
-	syscall.ForkLock.RLock()
-	err := os.WriteFile(bin, []byte(script), 0o755)
-	syscall.ForkLock.RUnlock()
+	err := testscript.WriteFile(bin, []byte(script), 0o755)
 	if err != nil {
 		t.Fatal(err)
 	}

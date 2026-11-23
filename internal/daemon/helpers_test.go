@@ -17,6 +17,7 @@ import (
 	"github.com/kunchenguid/no-mistakes/internal/logstore"
 	"github.com/kunchenguid/no-mistakes/internal/paths"
 	"github.com/kunchenguid/no-mistakes/internal/pipeline"
+	"github.com/kunchenguid/no-mistakes/internal/testscript"
 	"github.com/kunchenguid/no-mistakes/internal/types"
 	"github.com/kunchenguid/no-mistakes/internal/winproc"
 )
@@ -420,7 +421,7 @@ func writeMockClaude(t *testing.T, dir string) string {
 	if runtime.GOOS == "windows" {
 		path := filepath.Join(dir, "claude.bat")
 		script := "@echo off\r\necho {\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"structured_output\":{\"findings\":[],\"summary\":\"clean\"}}\r\n"
-		if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		if err := testscript.WriteFile(path, []byte(script), 0o755); err != nil {
 			t.Fatal(err)
 		}
 		return path
@@ -429,7 +430,7 @@ func writeMockClaude(t *testing.T, dir string) string {
 	script := `#!/bin/sh
 printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"structured_output":{"findings":[],"summary":"clean"}}'
 `
-	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+	if err := testscript.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	return path
@@ -441,7 +442,7 @@ func writeMockGHState(t *testing.T, dir, state string) (string, string) {
 	if runtime.GOOS == "windows" {
 		path := filepath.Join(dir, "gh.bat")
 		script := "@echo off\r\nset TOKENSTATE=\r\nif defined GH_TOKEN set TOKENSTATE=set\r\necho env:%GH_CONFIG_DIR% token:%TOKENSTATE%>>\"" + logPath + "\"\r\necho %*>>\"" + logPath + "\"\r\necho %* | findstr /C:\"auth status\" >nul && exit /b 0\r\necho %* | findstr /C:\"pr view 42\" >nul && (echo " + state + "& exit /b 0)\r\nexit /b 1\r\n"
-		if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		if err := testscript.WriteFile(path, []byte(script), 0o755); err != nil {
 			t.Fatal(err)
 		}
 		return dir, logPath
@@ -456,7 +457,7 @@ case "$*" in
 esac
 exit 1
 `
-	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+	if err := testscript.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	return dir, logPath
@@ -477,7 +478,7 @@ func writeMockGHNoPR(t *testing.T, dir string) string {
 	if runtime.GOOS == "windows" {
 		path := filepath.Join(dir, "gh.bat")
 		script := "@echo off\r\necho %* | findstr /C:\"auth status\" >nul && exit /b 0\r\necho %* | findstr /C:\"pr list\" >nul && (echo []& exit /b 0)\r\nexit /b 1\r\n"
-		if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		if err := testscript.WriteFile(path, []byte(script), 0o755); err != nil {
 			t.Fatal(err)
 		}
 		return dir
@@ -490,7 +491,7 @@ case "$*" in
 esac
 exit 1
 `
-	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+	if err := testscript.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	return dir
@@ -505,7 +506,7 @@ func writeSlowMockClaude(t *testing.T, dir string) string {
 	if runtime.GOOS == "windows" {
 		path := filepath.Join(dir, "claude.bat")
 		script := "@echo off\r\ntimeout /t 3 /nobreak >nul\r\necho {\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"structured_output\":{\"summary\":\"slow intent\"}}\r\n"
-		if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		if err := testscript.WriteFile(path, []byte(script), 0o755); err != nil {
 			t.Fatal(err)
 		}
 		return path
@@ -515,7 +516,7 @@ func writeSlowMockClaude(t *testing.T, dir string) string {
 sleep 3
 printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"structured_output":{"summary":"slow intent"}}'
 `
-	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+	if err := testscript.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	return path

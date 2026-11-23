@@ -12,6 +12,7 @@ import (
 
 	"github.com/kunchenguid/no-mistakes/internal/git"
 	"github.com/kunchenguid/no-mistakes/internal/paths"
+	"github.com/kunchenguid/no-mistakes/internal/testscript"
 )
 
 func makeLongRoot(t *testing.T) string {
@@ -79,7 +80,7 @@ func TestPreReceiveHookThroughShortLinkReportsPhysicalSocketPathTooLong(t *testi
 	if err := os.MkdirAll(filepath.Dir(hook), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(hook, []byte(script), 0o755); err != nil {
+	if err := testscript.WriteFile(hook, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 

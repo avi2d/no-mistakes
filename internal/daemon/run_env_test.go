@@ -12,6 +12,7 @@ import (
 	"github.com/kunchenguid/no-mistakes/internal/agent"
 	"github.com/kunchenguid/no-mistakes/internal/ipc"
 	"github.com/kunchenguid/no-mistakes/internal/pipeline"
+	"github.com/kunchenguid/no-mistakes/internal/testscript"
 	"github.com/kunchenguid/no-mistakes/internal/types"
 )
 
@@ -42,7 +43,7 @@ func writeRunTokenCapturingPi(t *testing.T, dir, capturePath string) string {
 	const response = `{"type":"agent_end","messages":[{"role":"assistant","content":[{"type":"text","text":"ok"}]}]}`
 	bin := filepath.Join(dir, "pi")
 	script := "#!/bin/sh\nprintf '%s|%s\\n' \"$*\" \"$RUN_TOKEN\" >> " + shellQuoteForTest(capturePath) + "\ncat >/dev/null\nprintf '%s\\n' '" + response + "'\n"
-	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+	if err := testscript.WriteFile(bin, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	return bin

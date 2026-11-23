@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/kunchenguid/no-mistakes/internal/testscript"
 )
 
 // decoyHome is a second no-mistakes root that never has a daemon: a push that
@@ -98,7 +100,7 @@ func TestPushToAMisshapenGateIsRefusedClosed(t *testing.T) {
 		if err != nil {
 			t.Fatalf("read managed %s: %v", hook, err)
 		}
-		if err := os.WriteFile(filepath.Join(misshapen, "hooks", hook), src, 0o755); err != nil {
+		if err := testscript.WriteFile(filepath.Join(misshapen, "hooks", hook), src, 0o755); err != nil {
 			t.Fatalf("install %s: %v", hook, err)
 		}
 	}

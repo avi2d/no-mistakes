@@ -11,6 +11,7 @@ import (
 
 	"github.com/kunchenguid/no-mistakes/internal/ipc"
 	"github.com/kunchenguid/no-mistakes/internal/paths"
+	"github.com/kunchenguid/no-mistakes/internal/testscript"
 )
 
 // TestDetachedDaemonUsesBoundedDedicatedLogSinks is a production-shaped
@@ -35,7 +36,7 @@ func TestDetachedDaemonUsesBoundedDedicatedLogSinks(t *testing.T) {
 	}
 
 	shellShim := filepath.Join(t.TempDir(), "test-shell")
-	if err := os.WriteFile(shellShim, []byte("#!/bin/sh\nexec env -0\n"), 0o755); err != nil {
+	if err := testscript.WriteFile(shellShim, []byte("#!/bin/sh\nexec env -0\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("SHELL", shellShim)
