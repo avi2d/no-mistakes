@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/kunchenguid/no-mistakes/internal/testscript"
 )
 
 func TestRunShellCommandWithEnv_UsesCmdAndIgnoresUserShell(t *testing.T) {
@@ -15,7 +17,7 @@ func TestRunShellCommandWithEnv_UsesCmdAndIgnoresUserShell(t *testing.T) {
 	marker := filepath.Join(t.TempDir(), "user-shell-used")
 	shellPath := filepath.Join(t.TempDir(), "fake-shell.cmd")
 	script := "@echo off\r\n> \"%USER_SHELL_MARKER%\" echo used\r\nexit /b 99\r\n"
-	if err := os.WriteFile(shellPath, []byte(script), 0o755); err != nil {
+	if err := testscript.WriteFile(shellPath, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("SHELL", shellPath)

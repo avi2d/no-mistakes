@@ -24,6 +24,7 @@ import (
 	"github.com/kunchenguid/no-mistakes/internal/paths"
 	"github.com/kunchenguid/no-mistakes/internal/pipeline"
 	"github.com/kunchenguid/no-mistakes/internal/reviewqa"
+	"github.com/kunchenguid/no-mistakes/internal/testscript"
 	"github.com/kunchenguid/no-mistakes/internal/types"
 	"github.com/kunchenguid/no-mistakes/internal/verificationplan"
 )
@@ -79,7 +80,7 @@ func writeProviderOutageClaude(t *testing.T, p *paths.Paths, flag string) {
 	path := filepath.Join(t.TempDir(), "claude")
 	script := "#!/bin/sh\nif [ -e " + shellQuoteForTest(flag) + " ]; then echo 'provider processing error' >&2; exit 1; fi\n" +
 		`printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"structured_output":{"findings":[],"summary":"clean"}}'` + "\n"
-	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+	if err := testscript.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(p.ConfigFile(), []byte("agent: claude\nagent_path_override:\n  claude: "+path+"\n"), 0o644); err != nil {
@@ -340,7 +341,7 @@ func writeFakeAgents(t *testing.T, p *paths.Paths, selected string, extra string
 	config := "agent: " + selected + "\nagent_path_override:\n"
 	for _, name := range names {
 		path := filepath.Join(t.TempDir(), name)
-		if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		if err := testscript.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
 			t.Fatal(err)
 		}
 		config += "  " + name + ": " + path + "\n"

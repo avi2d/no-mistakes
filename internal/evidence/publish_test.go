@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/kunchenguid/no-mistakes/internal/git"
+	"github.com/kunchenguid/no-mistakes/internal/testscript"
 )
 
 // Ambient GIT_CONFIG_* injection from agent harnesses would leak into every
@@ -300,7 +301,7 @@ func TestPublish_FailsClosedWhenTheRemoteRefusesThePush(t *testing.T) {
 	remote, work := newRepoWithRemote(t)
 	source := writeEvidence(t, t.TempDir(), map[string]string{"proof.txt": "ok\n"})
 	hook := filepath.Join(remote, "hooks", "pre-receive")
-	if err := os.WriteFile(hook, []byte("#!/bin/sh\necho 'denied: no write access' >&2\nexit 1\n"), 0o755); err != nil {
+	if err := testscript.WriteFile(hook, []byte("#!/bin/sh\necho 'denied: no write access' >&2\nexit 1\n"), 0o755); err != nil {
 		t.Fatalf("write hook: %v", err)
 	}
 

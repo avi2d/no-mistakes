@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/kunchenguid/no-mistakes/internal/testscript"
 )
 
 // A transport helper (ssh, git-remote-https) outlives a killed git and keeps its
@@ -23,7 +25,7 @@ func TestCIStep_CommitRepair_StalledTransportHelperFailsClosedWithinItsDeadline(
 	reached := filepath.Join(tmp, "reached")
 	helper := filepath.Join(tmp, "stalled-ssh.sh")
 	script := "#!/bin/sh\n[ \"$1\" = -G ] && exit 0\n: > '" + reached + "'\nexec sleep 30\n"
-	if err := os.WriteFile(helper, []byte(script), 0o755); err != nil {
+	if err := testscript.WriteFile(helper, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	sctx, dir, _ := agentCommitContext(t, nil)

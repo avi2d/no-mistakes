@@ -7,6 +7,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/kunchenguid/no-mistakes/internal/testscript"
 )
 
 // The generated prompt is an owned interface. These assertions implement the
@@ -65,7 +67,7 @@ done`, `{"type":"result","subtype":"success","is_error":false,"result":"done"}`}
 			dir := t.TempDir()
 			bin := filepath.Join(dir, "fake-agent")
 			script := "#!/bin/sh\nset -eu\n" + tc.capture + "\nprintf '%s\\n' '" + tc.response + "'\n"
-			if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+			if err := testscript.WriteFile(bin, []byte(script), 0o755); err != nil {
 				t.Fatal(err)
 			}
 			prompt := "Perform the assigned phase.\n" + ExecutionContextPromptSection(dir)

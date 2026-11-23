@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/kunchenguid/no-mistakes/internal/paths"
+	"github.com/kunchenguid/no-mistakes/internal/testscript"
 )
 
 // Issue #1691, and the captain's ruling on #1697 that restart when idle must
@@ -28,7 +29,7 @@ func TestRunRestartableServesAgainAfterAScheduledRestart(t *testing.T) {
 	}
 	if runtime.GOOS != "windows" {
 		shellShim := filepath.Join(t.TempDir(), "test-shell")
-		if err := os.WriteFile(shellShim, []byte("#!/bin/sh\nexec env -0\n"), 0o755); err != nil {
+		if err := testscript.WriteFile(shellShim, []byte("#!/bin/sh\nexec env -0\n"), 0o755); err != nil {
 			t.Fatal(err)
 		}
 		t.Setenv("SHELL", shellShim)

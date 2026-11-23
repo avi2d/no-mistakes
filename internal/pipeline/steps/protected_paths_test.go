@@ -15,6 +15,7 @@ import (
 	"github.com/kunchenguid/no-mistakes/internal/ipc"
 	"github.com/kunchenguid/no-mistakes/internal/paths"
 	"github.com/kunchenguid/no-mistakes/internal/pipeline"
+	"github.com/kunchenguid/no-mistakes/internal/testscript"
 	"github.com/kunchenguid/no-mistakes/internal/types"
 )
 
@@ -359,7 +360,7 @@ func TestCIStep_ProtectedPathRetryPublicationFailureKeepsRefusal(t *testing.T) {
 	hooks := t.TempDir()
 	gitCmd(t, f.upstream, "config", "core.hooksPath", hooks)
 	rejectPush := filepath.Join(hooks, "pre-receive")
-	if err := os.WriteFile(rejectPush, []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+	if err := testscript.WriteFile(rejectPush, []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	outcome, err = f.run(t)

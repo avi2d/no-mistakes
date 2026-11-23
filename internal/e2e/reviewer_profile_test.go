@@ -19,6 +19,7 @@ import (
 	"github.com/kunchenguid/no-mistakes/internal/gate"
 	"github.com/kunchenguid/no-mistakes/internal/ipc"
 	"github.com/kunchenguid/no-mistakes/internal/paths"
+	"github.com/kunchenguid/no-mistakes/internal/testscript"
 	"github.com/kunchenguid/no-mistakes/internal/types"
 )
 
@@ -241,7 +242,7 @@ func TestLiveReviewerSelectionRetryKeepsPin(t *testing.T) {
 	}
 	failFlag := filepath.Join(h.BinDir, "provider-down")
 	script := "#!/bin/sh\nif [ -f " + shellQuote(failFlag) + " ]; then\n  for arg in \"$@\"; do\n    if [ \"$arg\" = pinned-reviewer-e2e ]; then echo 'provider processing error' >&2; exit 1; fi\n  done\nfi\nexec " + shellQuote(healthy) + " \"$@\"\n"
-	if err := os.WriteFile(bin, []byte(script), 0755); err != nil {
+	if err := testscript.WriteFile(bin, []byte(script), 0755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(failFlag, nil, 0600); err != nil {

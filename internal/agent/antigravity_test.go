@@ -9,6 +9,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/kunchenguid/no-mistakes/internal/testscript"
 )
 
 func TestAntigravityAgent_BuildArgs(t *testing.T) {
@@ -437,7 +439,7 @@ func writeFakeAgy(t *testing.T, dir string, jsonlLines []string, exitCode int) s
 		lines = append(lines, "exit "+itoa(exitCode))
 		script = strings.Join(lines, "\n") + "\n"
 	}
-	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+	if err := testscript.WriteFile(bin, []byte(script), 0o755); err != nil {
 		t.Fatalf("write fake agy: %v", err)
 	}
 	return bin
@@ -552,7 +554,7 @@ func writeFakeAgyRecordingArgs(t *testing.T, dir string, jsonlLines []string) st
 		lines = append(lines, "exit 0")
 		script = strings.Join(lines, "\n") + "\n"
 	}
-	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+	if err := testscript.WriteFile(bin, []byte(script), 0o755); err != nil {
 		t.Fatalf("write fake agy: %v", err)
 	}
 	return bin

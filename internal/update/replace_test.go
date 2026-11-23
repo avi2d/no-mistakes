@@ -7,6 +7,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/kunchenguid/no-mistakes/internal/testscript"
 )
 
 func TestReplaceExecutableWindowsMovesRunningImageAside(t *testing.T) {
@@ -39,10 +41,10 @@ func TestReplaceExecutableWindowsRemovesStaleBackup(t *testing.T) {
 	setReplaceTestGOOS(t, "windows")
 
 	execPath := filepath.Join(t.TempDir(), "no-mistakes.exe")
-	if err := os.WriteFile(execPath, []byte("current-binary"), 0o755); err != nil {
+	if err := testscript.WriteFile(execPath, []byte("current-binary"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(execPath+".old", []byte("stale-binary"), 0o755); err != nil {
+	if err := testscript.WriteFile(execPath+".old", []byte("stale-binary"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -57,7 +59,7 @@ func TestReplaceExecutableWindowsRestoresTargetWhenInstallFails(t *testing.T) {
 	setReplaceTestGOOS(t, "windows")
 
 	execPath := filepath.Join(t.TempDir(), "no-mistakes.exe")
-	if err := os.WriteFile(execPath, []byte("old-binary"), 0o755); err != nil {
+	if err := testscript.WriteFile(execPath, []byte("old-binary"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	originalRename := renameFile
@@ -85,7 +87,7 @@ func TestCleanupOldExecutable(t *testing.T) {
 	setReplaceTestGOOS(t, "windows")
 
 	execPath := filepath.Join(t.TempDir(), "no-mistakes.exe")
-	if err := os.WriteFile(execPath+".old", []byte("old-binary"), 0o755); err != nil {
+	if err := testscript.WriteFile(execPath+".old", []byte("old-binary"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := cleanupOldExecutable(execPath); err != nil {
@@ -165,7 +167,7 @@ func TestReplaceExecutableDarwinRequiresAtomicReplace(t *testing.T) {
 		t.Fatal(err)
 	}
 	execPath := filepath.Join(dir, "no-mistakes")
-	if err := os.WriteFile(execPath, []byte("old-binary"), 0o755); err != nil {
+	if err := testscript.WriteFile(execPath, []byte("old-binary"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Chmod(dir, 0o555); err != nil {

@@ -4,12 +4,13 @@ package e2e
 
 import (
 	"fmt"
-	"os"
+
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/kunchenguid/no-mistakes/internal/testscript"
 	"github.com/kunchenguid/no-mistakes/internal/types"
 )
 
@@ -42,7 +43,7 @@ head -c 1048576 /dev/zero | tr '\000' B
 printf '\nTAIL_MARKER 最后的错误🙂\n'
 exit 1
 `
-			if err := os.WriteFile(commandPath, []byte(script), 0o755); err != nil {
+			if err := testscript.WriteFile(commandPath, []byte(script), 0o755); err != nil {
 				t.Fatalf("write large failure command: %v", err)
 			}
 

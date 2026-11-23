@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/kunchenguid/no-mistakes/internal/telemetry"
+	"github.com/kunchenguid/no-mistakes/internal/testscript"
 )
 
 // TestDoctorListsCopilotAgent exercises the user-facing `no-mistakes doctor`
@@ -54,13 +55,13 @@ func writeFakeCopilotBinary(t *testing.T, dir string) string {
 	t.Helper()
 	if runtime.GOOS == "windows" {
 		dst := filepath.Join(dir, "copilot.cmd")
-		if err := os.WriteFile(dst, []byte("@echo off\r\nexit /b 0\r\n"), 0o755); err != nil {
+		if err := testscript.WriteFile(dst, []byte("@echo off\r\nexit /b 0\r\n"), 0o755); err != nil {
 			t.Fatal(err)
 		}
 		return dst
 	}
 	dst := filepath.Join(dir, "copilot")
-	if err := os.WriteFile(dst, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+	if err := testscript.WriteFile(dst, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	return dst

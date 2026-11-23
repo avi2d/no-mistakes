@@ -14,6 +14,7 @@ import (
 	"github.com/kunchenguid/no-mistakes/internal/ipc"
 	"github.com/kunchenguid/no-mistakes/internal/pipeline"
 	"github.com/kunchenguid/no-mistakes/internal/runenv"
+	"github.com/kunchenguid/no-mistakes/internal/testscript"
 	"github.com/kunchenguid/no-mistakes/internal/types"
 )
 
@@ -27,7 +28,7 @@ func TestReviewerChainFloorAndEnvironmentAreEntryScoped(t *testing.T) {
 		bin += ".cmd"
 		script = "@echo off\r\n>\"" + capture + "\" echo %REVIEWER_ACCOUNT%\r\nmore > nul\r\necho " + response + "\r\n"
 	}
-	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+	if err := testscript.WriteFile(bin, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	quota := filepath.Join(dir, "quota.json")
@@ -83,7 +84,7 @@ func TestReviewerChainSkipsRefusedAccount(t *testing.T) {
 		bin += ".cmd"
 		script = "@echo off\r\nif \"%REVIEWER_ACCOUNT%\"==\"first\" echo " + refusal + " 1>&2\r\nif \"%REVIEWER_ACCOUNT%\"==\"first\" exit /b 1\r\n>\"" + capture + "\" echo %REVIEWER_ACCOUNT%\r\nmore > nul\r\necho " + response + "\r\n"
 	}
-	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+	if err := testscript.WriteFile(bin, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	globalYAML := `agent: pi
@@ -128,7 +129,7 @@ func TestPipelineReviewRolesUseIndependentPiProfiles(t *testing.T) {
 		bin += ".cmd"
 		script = "@echo off\r\necho %* > pi-argv.txt\r\nmore > nul\r\necho " + response + "\r\n"
 	}
-	if err := os.WriteFile(bin, []byte(script), 0755); err != nil {
+	if err := testscript.WriteFile(bin, []byte(script), 0755); err != nil {
 		t.Fatal(err)
 	}
 	global, err := config.LoadGlobalFromBytes([]byte(`agent: pi
@@ -190,7 +191,7 @@ func TestPipelineReviewerFallsBackOnInvocationQuota(t *testing.T) {
 		bin += ".cmd"
 		script = "@echo off\r\nmore > nul\r\necho %* | findstr /C:\"--model provider-one/exhausted\" > nul\r\nif not errorlevel 1 (\r\necho " + refusal + "\r\nexit /b 0\r\n)\r\necho " + response + "\r\n"
 	}
-	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+	if err := testscript.WriteFile(bin, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	global, err := config.LoadGlobalFromBytes([]byte(`agent: pi
@@ -281,7 +282,7 @@ func writeCapturingPiAgent(t *testing.T, dir, capturePath string) string {
 		bin += ".cmd"
 		script = "@echo off\r\nfor %%I in (\"%CD%\") do echo %* >> \"" + capturePath + ".%%~nxI\"\r\nmore > nul\r\necho " + response + "\r\n"
 	}
-	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+	if err := testscript.WriteFile(bin, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	return bin

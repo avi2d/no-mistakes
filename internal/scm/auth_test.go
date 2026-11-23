@@ -1,10 +1,11 @@
 package scm
 
 import (
-	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
+
+	"github.com/kunchenguid/no-mistakes/internal/testscript"
 )
 
 func TestAuthCheckCommand(t *testing.T) {
@@ -40,7 +41,7 @@ func TestCLIAvailable(t *testing.T) {
 			name += ".exe"
 		}
 		path := filepath.Join(binDir, name)
-		if err := os.WriteFile(path, []byte(""), 0o755); err != nil {
+		if err := testscript.WriteFile(path, []byte(""), 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}

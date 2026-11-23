@@ -18,6 +18,7 @@ import (
 	"github.com/kunchenguid/no-mistakes/internal/config"
 	"github.com/kunchenguid/no-mistakes/internal/quotarouting"
 	"github.com/kunchenguid/no-mistakes/internal/runenv"
+	"github.com/kunchenguid/no-mistakes/internal/testscript"
 	"github.com/kunchenguid/no-mistakes/internal/types"
 )
 
@@ -35,7 +36,7 @@ func writeQuotaAXI(t *testing.T, stdout string) string {
 	requireQuotaShell(t)
 	path := filepath.Join(t.TempDir(), "quota-axi")
 	script := "#!/bin/sh\ncat <<'NMEOF'\n" + stdout + "\nNMEOF\n"
-	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+	if err := testscript.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatalf("write fake quota-axi: %v", err)
 	}
 	return path
@@ -48,7 +49,7 @@ func writeQuotaAXIFail(t *testing.T) string {
 	requireQuotaShell(t)
 	path := filepath.Join(t.TempDir(), "quota-axi")
 	script := "#!/bin/sh\necho 'boom' >&2\nexit 3\n"
-	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+	if err := testscript.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatalf("write failing quota-axi: %v", err)
 	}
 	return path
@@ -215,7 +216,7 @@ func TestQuotaRoutingRecordForRun_TimeoutKeepsConfiguredOrder(t *testing.T) {
 	requireQuotaShell(t)
 	path := filepath.Join(t.TempDir(), "quota-axi")
 	script := "#!/bin/sh\nexec sleep 5\n"
-	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+	if err := testscript.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatalf("write slow quota-axi: %v", err)
 	}
 	cfg := quotaRoutingConfig(path)
@@ -430,7 +431,7 @@ func TestPipelineQuotaSnapshotIsReadOnceAndNeverByReviewRoles(t *testing.T) {
 		t.Fatal(err)
 	}
 	script = bytes.Replace(script, []byte("#!/bin/sh\n"), []byte("#!/bin/sh\nprintf x >> \"$NM_QUOTA_READS\"\n"), 1)
-	if err := os.WriteFile(cfg.QuotaRouting.QuotaAXIPath, script, 0o755); err != nil {
+	if err := testscript.WriteFile(cfg.QuotaRouting.QuotaAXIPath, script, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	cfg.ReviewAgents = map[string]config.ReviewAgent{}
@@ -480,10 +481,10 @@ func TestMissingQuotaSnapshotStillSwitchesOnANativeQuotaError(t *testing.T) {
 	dir := t.TempDir()
 	claude := filepath.Join(dir, "claude")
 	pi := filepath.Join(dir, "pi")
-	if err := os.WriteFile(claude, []byte("#!/bin/sh\necho 'quota exceeded' >&2\nexit 1\n"), 0o755); err != nil {
+	if err := testscript.WriteFile(claude, []byte("#!/bin/sh\necho 'quota exceeded' >&2\nexit 1\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(pi, []byte(`#!/bin/sh
+	if err := testscript.WriteFile(pi, []byte(`#!/bin/sh
 cat >/dev/null
 printf '%s' '{"type":"agent_end","messages":[{"role":"assistant","content":[{"type":"text","text":"ok"}]}]}'
 `), 0o755); err != nil {
@@ -535,7 +536,7 @@ func TestQuotaRoutingRecoveryWithoutARecordNeverReadsANewSnapshot(t *testing.T) 
 		t.Fatal(err)
 	}
 	script = bytes.Replace(script, []byte("#!/bin/sh\n"), []byte("#!/bin/sh\nprintf called > \"$NM_QUOTA_RECOVERY_MARKER\"\n"), 1)
-	if err := os.WriteFile(executable, script, 0o755); err != nil {
+	if err := testscript.WriteFile(executable, script, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	global, err := os.ReadFile(manager.paths.ConfigFile())

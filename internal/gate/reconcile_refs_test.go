@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/kunchenguid/no-mistakes/internal/testscript"
 )
 
 func TestReconciliationRejectsSymbolicRefs(t *testing.T) {
@@ -76,7 +78,7 @@ while read old new ref; do
   fi
 done
 `
-			if err := os.WriteFile(filepath.Join(gateDir, "hooks", "reference-transaction"), []byte(hook), 0o755); err != nil {
+			if err := testscript.WriteFile(filepath.Join(gateDir, "hooks", "reference-transaction"), []byte(hook), 0o755); err != nil {
 				t.Fatal(err)
 			}
 			result, err := ReconcileStaleBranch(ctx, gateDir, work, "feature", liveHead, AbandonedSubmission{Head: privateHead}, nil)

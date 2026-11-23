@@ -11,6 +11,7 @@ import (
 	"github.com/kunchenguid/no-mistakes/internal/agent"
 	"github.com/kunchenguid/no-mistakes/internal/config"
 	"github.com/kunchenguid/no-mistakes/internal/runenv"
+	"github.com/kunchenguid/no-mistakes/internal/testscript"
 	"github.com/kunchenguid/no-mistakes/internal/types"
 )
 
@@ -27,7 +28,7 @@ func writeStdinCapturingPiAgent(t *testing.T, dir, capturePath string) string {
 		bin += ".cmd"
 		script = "@echo off\r\nmore > \"" + capturePath + "\"\r\necho " + response + "\r\n"
 	}
-	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+	if err := testscript.WriteFile(bin, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	return bin

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/kunchenguid/no-mistakes/internal/runenv"
+	"github.com/kunchenguid/no-mistakes/internal/testscript"
 )
 
 // TestStartServerWithPort_DetectsEarlyExit verifies that when the spawned
@@ -54,7 +55,7 @@ func TestStartServerWithPortAppliesForgeEnvironment(t *testing.T) {
 		script = "@echo off\r\nset TOKENSTATE=\r\nif defined GITLAB_TOKEN set TOKENSTATE=set\r\necho config:%GLAB_CONFIG_DIR% token:%TOKENSTATE% disable:%COMPACT_ADVISER_DISABLE%>\"%CAPTURE_FILE%\"\r\nexit /b 1\r\n"
 	}
 	bin := filepath.Join(dir, name)
-	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+	if err := testscript.WriteFile(bin, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("GITLAB_TOKEN", "ambient-must-not-leak")

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/kunchenguid/no-mistakes/internal/agent"
+	"github.com/kunchenguid/no-mistakes/internal/testscript"
 )
 
 // writeFakePiExecutable materializes a fake `pi` binary for the pipeline
@@ -24,7 +25,7 @@ func writeFakePiExecutable(t *testing.T, dir, posixScript, windowsScript string)
 		script = windowsScript
 	}
 	bin := filepath.Join(dir, name)
-	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+	if err := testscript.WriteFile(bin, []byte(script), 0o755); err != nil {
 		t.Fatalf("write fake pi: %v", err)
 	}
 	return bin

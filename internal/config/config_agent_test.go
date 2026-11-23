@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/kunchenguid/no-mistakes/internal/testscript"
 	"github.com/kunchenguid/no-mistakes/internal/types"
 )
 
@@ -422,7 +423,7 @@ func TestResolveAgent_AutoReturnsRovoDevProbeExitError(t *testing.T) {
 		script += ".cmd"
 		contents = []byte("@echo off\r\nexit /b 1\r\n")
 	}
-	if err := os.WriteFile(script, contents, 0o755); err != nil {
+	if err := testscript.WriteFile(script, contents, 0o755); err != nil {
 		t.Fatalf("write probe script: %v", err)
 	}
 

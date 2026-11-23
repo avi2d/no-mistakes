@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kunchenguid/no-mistakes/internal/testscript"
 	"github.com/kunchenguid/no-mistakes/internal/types"
 )
 
@@ -48,7 +49,7 @@ func setupMachineLocalCommands(t *testing.T, h *Harness, overrides string) {
 
 func writeMachineLocalScript(t *testing.T, path, body string) {
 	t.Helper()
-	if err := os.WriteFile(path, []byte("#!/bin/sh\n"+body), 0o755); err != nil {
+	if err := testscript.WriteFile(path, []byte("#!/bin/sh\n"+body), 0o755); err != nil {
 		t.Fatalf("write %s: %v", path, err)
 	}
 }

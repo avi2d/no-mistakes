@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/kunchenguid/no-mistakes/internal/testscript"
 )
 
 // TestRealGit_IgnoresWrapperOnPATH is a resolution-only assertion: it never
@@ -17,7 +19,7 @@ func TestRealGit_IgnoresWrapperOnPATH(t *testing.T) {
 
 	wrapperDir := t.TempDir()
 	wrapper := filepath.Join(wrapperDir, "git")
-	if err := os.WriteFile(wrapper, []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+	if err := testscript.WriteFile(wrapper, []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", wrapperDir+string(os.PathListSeparator)+os.Getenv("PATH"))

@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/kunchenguid/no-mistakes/internal/testscript"
 )
 
 func TestInstallScriptInstallsUserOwnedBinaryAndPathSymlink(t *testing.T) {
@@ -48,7 +50,7 @@ func TestInstallScriptReplacesExistingPathEntryWithSymlink(t *testing.T) {
 		t.Fatal(err)
 	}
 	oldPath := filepath.Join(linkDir, "no-mistakes")
-	if err := os.WriteFile(oldPath, []byte("old-binary"), 0o755); err != nil {
+	if err := testscript.WriteFile(oldPath, []byte("old-binary"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -323,7 +325,7 @@ exit 1
 
 func writeExecutable(t *testing.T, path, content string) {
 	t.Helper()
-	if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
+	if err := testscript.WriteFile(path, []byte(content), 0o755); err != nil {
 		t.Fatal(err)
 	}
 }

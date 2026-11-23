@@ -17,6 +17,7 @@ import (
 	"github.com/kunchenguid/no-mistakes/internal/db"
 	"github.com/kunchenguid/no-mistakes/internal/ipc"
 	"github.com/kunchenguid/no-mistakes/internal/paths"
+	"github.com/kunchenguid/no-mistakes/internal/testscript"
 	"github.com/kunchenguid/no-mistakes/internal/types"
 )
 
@@ -1046,7 +1047,7 @@ func TestAxiRunSkipsRepositoryPrePushHookForLocalGate(t *testing.T) {
 	hookDir := t.TempDir()
 	marker := filepath.Join(t.TempDir(), "pre-push-ran")
 	hook := "#!/bin/sh\nprintf 'invoked\\n' > \"$NM_E2E_PRE_PUSH_MARKER\"\nexit 97\n"
-	if err := os.WriteFile(filepath.Join(hookDir, "pre-push"), []byte(hook), 0o755); err != nil {
+	if err := testscript.WriteFile(filepath.Join(hookDir, "pre-push"), []byte(hook), 0o755); err != nil {
 		t.Fatalf("write pre-push hook: %v", err)
 	}
 	if out, err := h.runGit(context.Background(), operator, "config", "core.hooksPath", hookDir); err != nil {

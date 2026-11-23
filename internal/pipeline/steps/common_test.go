@@ -20,6 +20,7 @@ import (
 	"github.com/kunchenguid/no-mistakes/internal/pipeline"
 	"github.com/kunchenguid/no-mistakes/internal/runenv"
 	"github.com/kunchenguid/no-mistakes/internal/scm"
+	"github.com/kunchenguid/no-mistakes/internal/testscript"
 	"github.com/kunchenguid/no-mistakes/internal/types"
 )
 
@@ -632,7 +633,7 @@ func TestCommitAgentFixes_BypassesMissingLegacyHuskyRuntime(t *testing.T) {
 	if err := os.MkdirAll(hooksDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(hooksDir, "pre-commit"), []byte("#!/usr/bin/env sh\n. \"$(dirname -- \"$0\")/_/husky.sh\"\n"), 0o755); err != nil {
+	if err := testscript.WriteFile(filepath.Join(hooksDir, "pre-commit"), []byte("#!/usr/bin/env sh\n. \"$(dirname -- \"$0\")/_/husky.sh\"\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	gitCmd(t, dir, "add", ".husky/pre-commit")
@@ -853,7 +854,7 @@ func TestCommitAgentFixes_BypassesLegacyHuskyPrepareCommitMsgHook(t *testing.T) 
 	if err := os.MkdirAll(hooksDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(hooksDir, "prepare-commit-msg"), []byte("#!/usr/bin/env sh\n. \"$(dirname -- \"$0\")/_/husky.sh\"\n"), 0o755); err != nil {
+	if err := testscript.WriteFile(filepath.Join(hooksDir, "prepare-commit-msg"), []byte("#!/usr/bin/env sh\n. \"$(dirname -- \"$0\")/_/husky.sh\"\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	gitCmd(t, dir, "add", ".husky/prepare-commit-msg")
@@ -937,7 +938,7 @@ func TestCommitAgentFixes_BypassesCompleteCommitHookFamilyOnlyForCorrection(t *t
 	hookNames := []string{"pre-commit", "prepare-commit-msg", "commit-msg", "post-commit"}
 	for _, hookName := range hookNames {
 		body := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' %q >> hook-family.log\n", hookName)
-		if err := os.WriteFile(filepath.Join(hooksDir, hookName), []byte(body), 0o755); err != nil {
+		if err := testscript.WriteFile(filepath.Join(hooksDir, hookName), []byte(body), 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}

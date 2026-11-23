@@ -20,6 +20,7 @@ import (
 	"github.com/kunchenguid/no-mistakes/internal/ipc"
 	"github.com/kunchenguid/no-mistakes/internal/lifecycle"
 	"github.com/kunchenguid/no-mistakes/internal/paths"
+	"github.com/kunchenguid/no-mistakes/internal/testscript"
 	"github.com/kunchenguid/no-mistakes/internal/types"
 )
 
@@ -376,7 +377,7 @@ func newActiveRunUpdater(t *testing.T) (*updater, string, *bytes.Buffer, *bytes.
 	}
 
 	execPath := filepath.Join(t.TempDir(), "no-mistakes")
-	if err := os.WriteFile(execPath, []byte("old-binary"), 0o755); err != nil {
+	if err := testscript.WriteFile(execPath, []byte("old-binary"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	stdout, stderr := new(bytes.Buffer), new(bytes.Buffer)

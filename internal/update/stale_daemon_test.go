@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/kunchenguid/no-mistakes/internal/paths"
+	"github.com/kunchenguid/no-mistakes/internal/testscript"
 )
 
 // A daemon that exited but left its socket and PID file behind is cleared by
@@ -77,7 +78,7 @@ func TestUpdaterRunStartsDaemonAfterProbeClearsStaleArtifacts(t *testing.T) {
 	}
 
 	execPath := filepath.Join(t.TempDir(), "no-mistakes")
-	if err := os.WriteFile(execPath, []byte("old-binary"), 0o755); err != nil {
+	if err := testscript.WriteFile(execPath, []byte("old-binary"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	u := &updater{

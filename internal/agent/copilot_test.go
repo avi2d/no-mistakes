@@ -8,6 +8,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/kunchenguid/no-mistakes/internal/testscript"
 )
 
 func TestCopilotAgent_BuildArgs(t *testing.T) {
@@ -251,7 +253,7 @@ func writeFakeCopilot(t *testing.T, dir string, jsonlLines []string, exitCode in
 		lines = append(lines, "exit "+itoa(exitCode))
 		script = strings.Join(lines, "\n") + "\n"
 	}
-	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+	if err := testscript.WriteFile(bin, []byte(script), 0o755); err != nil {
 		t.Fatalf("write fake copilot: %v", err)
 	}
 	return bin
@@ -269,7 +271,7 @@ cat > stdin.txt
 printf '%s\n' '{"type":"assistant.message","data":{"content":"done","outputTokens":1}}'
 printf '%s\n' '{"type":"result","exitCode":0}'
 `
-	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+	if err := testscript.WriteFile(bin, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	prompt := strings.Repeat("copilot-prompt-", 512)

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/kunchenguid/no-mistakes/internal/testscript"
 	"github.com/kunchenguid/no-mistakes/internal/update"
 )
 
@@ -78,7 +79,7 @@ echo "unexpected gh args: $*" >&2
 exit 1
 `
 	ghPath := filepath.Join(fakeBin, "gh")
-	if err := os.WriteFile(ghPath, []byte(script), 0o755); err != nil {
+	if err := testscript.WriteFile(ghPath, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/kunchenguid/no-mistakes/internal/telemetry"
+	"github.com/kunchenguid/no-mistakes/internal/testscript"
 )
 
 func TestDoctorValidatesForgeProfileWithItsAuthoritativeEnvironment(t *testing.T) {
@@ -110,7 +111,7 @@ func writeDoctorProfileGHBinary(t *testing.T, dir, profileDir string) {
 		name = "gh.cmd"
 		contents = fmt.Sprintf("@echo off\r\nif not \"%%GH_CONFIG_DIR%%\"==\"%s\" exit /b 10\r\nif defined GH_TOKEN exit /b 11\r\nexit /b 0\r\n", profileDir)
 	}
-	if err := os.WriteFile(filepath.Join(dir, name), []byte(contents), 0o755); err != nil {
+	if err := testscript.WriteFile(filepath.Join(dir, name), []byte(contents), 0o755); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -123,7 +124,7 @@ func writeDoctorFailingBinary(t *testing.T, dir, base string) {
 		name += ".cmd"
 		contents = "@echo off\r\necho invalid-auth 1>&2\r\nexit /b 1\r\n"
 	}
-	if err := os.WriteFile(filepath.Join(dir, name), []byte(contents), 0o755); err != nil {
+	if err := testscript.WriteFile(filepath.Join(dir, name), []byte(contents), 0o755); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -152,7 +153,7 @@ func TestDoctorValidatesOwnerScopedGHUserProfileAsThatLogin(t *testing.T) {
 			"if \"%2\"==\"token\" (if \"%6\"==\"remicaesar\" if not defined GH_TOKEN (echo stored-remicaesar& exit /b 0)& exit /b 1)\r\n" +
 			"if not \"%GH_TOKEN%\"==\"stored-remicaesar\" exit /b 12\r\nexit /b 0\r\n"
 	}
-	if err := os.WriteFile(filepath.Join(binDir, name), []byte(contents), 0o755); err != nil {
+	if err := testscript.WriteFile(filepath.Join(binDir, name), []byte(contents), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("NM_HOME", nmHome)

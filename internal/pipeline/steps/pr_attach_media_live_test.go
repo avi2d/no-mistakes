@@ -13,6 +13,7 @@ import (
 
 	"github.com/kunchenguid/no-mistakes/internal/config"
 	"github.com/kunchenguid/no-mistakes/internal/scm"
+	"github.com/kunchenguid/no-mistakes/internal/testscript"
 	"github.com/kunchenguid/no-mistakes/internal/types"
 )
 
@@ -28,7 +29,7 @@ func TestPRMediaOptOutWithRealGH(t *testing.T) {
 	bin := t.TempDir()
 	calls := filepath.Join(home, "gh-calls.txt")
 	wrapper := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$NM_MEDIA_GH_CALLS\"\nexec \"$NM_MEDIA_REAL_GH\" \"$@\"\n"
-	if err := os.WriteFile(filepath.Join(bin, "gh"), []byte(wrapper), 0o755); err != nil {
+	if err := testscript.WriteFile(filepath.Join(bin, "gh"), []byte(wrapper), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("HOME", home)

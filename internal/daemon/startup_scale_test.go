@@ -13,6 +13,7 @@ import (
 	"github.com/kunchenguid/no-mistakes/internal/git"
 	"github.com/kunchenguid/no-mistakes/internal/paths"
 	"github.com/kunchenguid/no-mistakes/internal/testgit"
+	"github.com/kunchenguid/no-mistakes/internal/testscript"
 )
 
 // TestColdDetachedStartupProductionGateCardinality reproduces the production
@@ -81,7 +82,7 @@ func startColdDetachedFixture(t *testing.T, gateCount int, delayedGit bool) time
 		shim := "#!/bin/sh\n" +
 			"if [ \"$2\" = config ] && [ \"$3\" = receive.advertisePushOptions ]; then /bin/sleep 0.075; fi\n" +
 			"exec \"$NM_TEST_REAL_GIT\" \"$@\"\n"
-		if err := os.WriteFile(gitShim, []byte(shim), 0o755); err != nil {
+		if err := testscript.WriteFile(gitShim, []byte(shim), 0o755); err != nil {
 			t.Fatal(err)
 		}
 		t.Setenv("NM_TEST_REAL_GIT", realGit)
@@ -91,7 +92,7 @@ func startColdDetachedFixture(t *testing.T, gateCount int, delayedGit bool) time
 	// Run() resolves a login-shell environment before recovery. This isolated
 	// shell preserves the fixture PATH without reading the developer's profile.
 	shellShim := filepath.Join(t.TempDir(), "test-shell")
-	if err := os.WriteFile(shellShim, []byte("#!/bin/sh\nexec env -0\n"), 0o755); err != nil {
+	if err := testscript.WriteFile(shellShim, []byte("#!/bin/sh\nexec env -0\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("SHELL", shellShim)

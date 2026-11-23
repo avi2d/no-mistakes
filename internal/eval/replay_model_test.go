@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/kunchenguid/no-mistakes/internal/testscript"
 	"github.com/kunchenguid/no-mistakes/internal/types"
 )
 
@@ -125,7 +126,7 @@ func installFakePiJSONL(t *testing.T, fakeDir, reply string) {
 	} else {
 		script = "#!/bin/sh\n[ \"$1\" = \"--version\" ] && { echo 0.99.1; exit 0; }\ncat >/dev/null\ncat <<'EOF'\n" + reply + "EOF\n"
 	}
-	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+	if err := testscript.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 }

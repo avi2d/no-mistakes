@@ -1,13 +1,13 @@
 package cli
 
 import (
-	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/kunchenguid/no-mistakes/internal/telemetry"
+	"github.com/kunchenguid/no-mistakes/internal/testscript"
 )
 
 var doctorACPAliasRows = []struct {
@@ -88,13 +88,13 @@ func writeFakeBinary(t *testing.T, dir, name string) string {
 	t.Helper()
 	if runtime.GOOS == "windows" {
 		dst := filepath.Join(dir, name+".cmd")
-		if err := os.WriteFile(dst, []byte("@echo off\r\nexit /b 0\r\n"), 0o755); err != nil {
+		if err := testscript.WriteFile(dst, []byte("@echo off\r\nexit /b 0\r\n"), 0o755); err != nil {
 			t.Fatal(err)
 		}
 		return dst
 	}
 	dst := filepath.Join(dir, name)
-	if err := os.WriteFile(dst, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+	if err := testscript.WriteFile(dst, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	return dst

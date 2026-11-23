@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/kunchenguid/no-mistakes/internal/runenv"
+	"github.com/kunchenguid/no-mistakes/internal/testscript"
 )
 
 func TestCodexAgentRunAppliesForgeEnvironment(t *testing.T) {
@@ -147,7 +148,7 @@ func writeFakeCodex(t *testing.T, dir, posixScript, windowsScript string) string
 	}
 
 	bin := filepath.Join(dir, name)
-	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+	if err := testscript.WriteFile(bin, []byte(script), 0o755); err != nil {
 		t.Fatalf("write fake codex: %v", err)
 	}
 	return bin

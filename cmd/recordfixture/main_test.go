@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/kunchenguid/no-mistakes/internal/testscript"
 )
 
 func TestSplitBinArgs(t *testing.T) {
@@ -142,7 +144,7 @@ func TestCaptureCodexPlacesForwardedFlagsBeforePrompt(t *testing.T) {
 		}, "\r\n")
 	}
 	binPath := filepath.Join(tmp, binName)
-	if err := os.WriteFile(binPath, []byte(script), 0o755); err != nil {
+	if err := testscript.WriteFile(binPath, []byte(script), 0o755); err != nil {
 		t.Fatalf("write fake codex: %v", err)
 	}
 
@@ -192,7 +194,7 @@ func TestCaptureAgyPlacesForwardedFlagsBeforePromptAndSchemaLast(t *testing.T) {
 		}, "\r\n")
 	}
 	binPath := filepath.Join(tmp, binName)
-	if err := os.WriteFile(binPath, []byte(script), 0o755); err != nil {
+	if err := testscript.WriteFile(binPath, []byte(script), 0o755); err != nil {
 		t.Fatalf("write fake agy: %v", err)
 	}
 
@@ -264,7 +266,7 @@ func TestCaptureAgyRejectsErrorThenSuccessResult(t *testing.T) {
 		}, "\r\n")
 	}
 	binPath := filepath.Join(tmp, binName)
-	if err := os.WriteFile(binPath, []byte(script), 0o755); err != nil {
+	if err := testscript.WriteFile(binPath, []byte(script), 0o755); err != nil {
 		t.Fatalf("write fake agy: %v", err)
 	}
 
@@ -298,7 +300,7 @@ func TestCaptureAgyRejectsErrorResultWithoutReplacingFixture(t *testing.T) {
 		script = "@echo off\r\necho {\"event\":\"result\",\"result\":{\"status\":\"ERROR\"}}\r\n"
 	}
 	binPath := filepath.Join(tmp, binName)
-	if err := os.WriteFile(binPath, []byte(script), 0o755); err != nil {
+	if err := testscript.WriteFile(binPath, []byte(script), 0o755); err != nil {
 		t.Fatalf("write fake agy: %v", err)
 	}
 

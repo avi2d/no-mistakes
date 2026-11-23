@@ -17,6 +17,7 @@ import (
 	"github.com/kunchenguid/no-mistakes/internal/paths"
 	"github.com/kunchenguid/no-mistakes/internal/pipeline"
 	"github.com/kunchenguid/no-mistakes/internal/pipeline/steps"
+	"github.com/kunchenguid/no-mistakes/internal/testscript"
 	"github.com/kunchenguid/no-mistakes/internal/types"
 )
 
@@ -979,7 +980,7 @@ while read oldrev newrev refname; do
 done
 exit 0
 `
-	if err := os.WriteFile(hookPath, []byte(legacyHook), 0o755); err != nil {
+	if err := testscript.WriteFile(hookPath, []byte(legacyHook), 0o755); err != nil {
 		t.Fatal(err)
 	}
 

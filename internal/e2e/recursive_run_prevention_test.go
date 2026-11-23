@@ -13,6 +13,7 @@ import (
 
 	"github.com/kunchenguid/no-mistakes/internal/db"
 	"github.com/kunchenguid/no-mistakes/internal/paths"
+	"github.com/kunchenguid/no-mistakes/internal/testscript"
 	"github.com/kunchenguid/no-mistakes/internal/types"
 )
 
@@ -268,7 +269,7 @@ case "$prompt" in
 esac
 %s
 `, probeGuard, promptSource, execAgent)
-	if err := os.WriteFile(wrapper, []byte(script), 0o755); err != nil {
+	if err := testscript.WriteFile(wrapper, []byte(script), 0o755); err != nil {
 		t.Fatalf("write recursive incident agent: %v", err)
 	}
 }

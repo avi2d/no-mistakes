@@ -14,6 +14,7 @@ import (
 	"github.com/kunchenguid/no-mistakes/internal/gate"
 	"github.com/kunchenguid/no-mistakes/internal/ipc"
 	"github.com/kunchenguid/no-mistakes/internal/paths"
+	"github.com/kunchenguid/no-mistakes/internal/testscript"
 )
 
 func TestTriggerRunRejectedPushRestoresReconciledGateRef(t *testing.T) {
@@ -55,7 +56,7 @@ func TestTriggerRunRejectedPushRestoresReconciledGateRef(t *testing.T) {
 	write("advanced.txt", "advanced\n")
 	write("feature.txt", "feature\n")
 	liveHead := cliGit(t, dir, "rev-parse", "HEAD")
-	if err := os.WriteFile(filepath.Join(gateDir, "hooks", "pre-receive"), []byte("#!/bin/sh\necho submission-rejected >&2\nexit 1\n"), 0o755); err != nil {
+	if err := testscript.WriteFile(filepath.Join(gateDir, "hooks", "pre-receive"), []byte("#!/bin/sh\necho submission-rejected >&2\nexit 1\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	srv := ipc.NewServer()
