@@ -16,6 +16,39 @@ import (
 	"github.com/kunchenguid/no-mistakes/internal/types"
 )
 
+func TestLintStep_ConfiguredCommandFailureCarriesTheLintCommandCategory(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, command string
+		additional    []string
+		wantExit      int
+	}{
+		{name: "repository command", command: "exit 7", wantExit: 7},
+		{name: "machine-local check", command: "exit 0", additional: []string{"exit 9"}, wantExit: 9},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir, base, head := setupGitRepo(t)
+			sctx := newTestContextWithDBRecords(t, &mockAgent{name: "test"}, dir, base, head, config.Commands{Lint: tc.command})
+			sctx.Config.CommandOverrides = map[string]config.CommandOverride{"lint": {Additional: tc.additional}}
+
+			outcome, err := (&LintStep{}).Execute(sctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !outcome.NeedsApproval || outcome.ExitCode != tc.wantExit {
+				t.Fatalf("expected lint to park with exit code %d, got %+v", tc.wantExit, outcome)
+			}
+			findings, err := types.ParseFindingsJSON(outcome.Findings)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(findings.Items) != 1 || findings.Items[0].Category != types.FindingCategoryLintCommand {
+				t.Fatalf("failed lint check must produce a lint-command finding, got %s", outcome.Findings)
+			}
+		})
+	}
+}
+
 func TestLintStep_FixMode_CommitsChanges(t *testing.T) {
 	t.Parallel()
 	dir, baseSHA, headSHA := setupGitRepo(t)

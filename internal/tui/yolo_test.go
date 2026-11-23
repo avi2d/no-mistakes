@@ -30,6 +30,7 @@ func TestModel_Yolo_RefusalGatesSendNoAutomaticResponse(t *testing.T) {
 	}{
 		{types.StepDocument, pipeline.ProtectedPathOutcome(&pipeline.ProtectedPathError{Path: "ledger.json", Rule: "ledger.json"}).Findings},
 		{types.StepTest, unvalidatedWork},
+		{types.StepLint, `{"findings":[{"id":"lint-1","severity":"warning","description":"lint exited 1","category":"lint-command"}]}`},
 		{types.StepReview, `{"findings":[{"id":"review-fix-rounds-exhausted","severity":"warning","action":"ask-user","description":"Review used 1/1 fix rounds"}]}`},
 		{types.StepReview, `{"findings":[{"id":"R1","severity":"error","file":"main.go","description":"still broken","action":"auto-fix"},{"id":"fix-round-no-diff","severity":"warning","action":"ask-user","description":"fix_round_no_diff: the review fix round in round 2 landed no diff"}]}`},
 	} {
@@ -53,6 +54,21 @@ func TestModel_Yolo_RefusalGatesSendNoAutomaticResponse(t *testing.T) {
 				}
 				if m.yoloFixed[refusal.step] || m.yoloApproved[refusal.step] {
 					t.Fatal("refusal consumed yolo bookkeeping without an operator decision")
+				}
+				if refusal.step == types.StepLint {
+					view := stripANSI(m.View())
+					if !strings.Contains(view, "Lint still fails") || !strings.Contains(view, "awaiting repair") ||
+						strings.Contains(view, "awaiting approval") || strings.Contains(view, "a approve") || strings.Contains(view, "s skip") {
+						t.Fatalf("failing lint should offer fix or abort, not approve or skip:\n%s", view)
+					}
+					if m.respondCmd(types.ActionApprove) != nil || m.respondCmd(types.ActionSkip) != nil {
+						t.Fatal("failing lint should not accept the TUI approve or skip keys")
+					}
+					m.showHelp = true
+					help := stripANSI(m.View())
+					if strings.Contains(help, "approve") || strings.Contains(help, "skip") {
+						t.Fatalf("failing lint help offered an unavailable action:\n%s", help)
+					}
 				}
 			})
 		}

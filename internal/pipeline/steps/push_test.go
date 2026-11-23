@@ -13,7 +13,62 @@ import (
 	"github.com/kunchenguid/no-mistakes/internal/paths"
 	"github.com/kunchenguid/no-mistakes/internal/pipeline"
 	"github.com/kunchenguid/no-mistakes/internal/testgit"
+	"github.com/kunchenguid/no-mistakes/internal/types"
 )
+
+func TestPushStep_RefusesWhenThisRunsLintCommandExitedNonZero(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		status   types.StepStatus
+		exitCode int
+	}{
+		{name: "skipped after failing", status: types.StepStatusSkipped, exitCode: 7},
+		{name: "approved after failing", status: types.StepStatusCompleted, exitCode: 7},
+		{name: "skipped at launch", status: types.StepStatusSkipped},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			upstream := t.TempDir()
+			gitCmd(t, upstream, "init", "--bare")
+			dir, base, head := setupGitRepo(t)
+			gitCmd(t, dir, "remote", "add", "origin", upstream)
+			gitCmd(t, dir, "push", "origin", "main", "main:refs/heads/feature")
+
+			sctx := newTestContextWithDBRecords(t, &mockAgent{name: "test"}, dir, base, head, config.Commands{Lint: "exit 7"})
+			sctx.Repo.UpstreamURL = upstream
+			setupGateMirror(t, sctx)
+			recordReviewApproval(t, sctx, head)
+			recordLint := func(runID string, status types.StepStatus, exitCode int) {
+				row, err := sctx.DB.InsertStepResult(runID, types.StepLint)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := sctx.DB.CompleteStepWithStatus(row.ID, status, exitCode, 0, ""); err != nil {
+					t.Fatal(err)
+				}
+			}
+			otherRun, err := sctx.DB.InsertRun(sctx.Repo.ID, "refs/heads/another-branch", head, base)
+			if err != nil {
+				t.Fatal(err)
+			}
+			recordLint(otherRun.ID, types.StepStatusSkipped, 7)
+			recordLint(sctx.Run.ID, tc.status, tc.exitCode)
+
+			_, err = (&PushStep{}).Execute(sctx)
+			wantHead := head
+			if tc.exitCode != 0 {
+				wantHead = base
+				if err == nil || !strings.Contains(err.Error(), "lint exited with code 7") {
+					t.Fatalf("expected lint refusal, got %v", err)
+				}
+			} else if err != nil {
+				t.Fatalf("launch-time lint skip should allow push: %v", err)
+			}
+			if got := gitCmd(t, upstream, "rev-parse", "refs/heads/feature"); got != wantHead {
+				t.Fatalf("remote head = %s, want %s", got, wantHead)
+			}
+		})
+	}
+}
 
 func setupGateMirror(t *testing.T, sctx *pipeline.StepContext) string {
 	t.Helper()

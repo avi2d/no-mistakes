@@ -1390,6 +1390,10 @@ func driveRunScoped(ctx context.Context, progress io.Writer, client *ipc.Client,
 				fmt.Fprintf(progress, "%s: the reviewer's question history could not be read in full, so only a human can decide this gate; --yes leaves it awaiting a response\n", gate.Name)
 				return run, false, nil
 			}
+			if gate.hasFailingLintCommand() {
+				fmt.Fprintln(progress, "lint: the configured lint command still fails. --yes leaves the gate parked for an explicit response. Use fix or abort.")
+				return run, false, nil
+			}
 			if pipeline.HasUnvalidatedWorkRefusal(gate.FindingsJSON) {
 				fmt.Fprintf(progress, "%s: unvalidated work in the run worktree requires an explicit response; --yes leaves this gate awaiting a response\n", gate.Name)
 				return run, false, nil
@@ -1580,9 +1584,9 @@ func respondDispositionFields(result ipc.RespondResult) []toon.Field {
 	if !result.OK || (result.Fixed == nil && result.Ignored == nil && result.Kept == nil && result.FollowUps == nil) {
 		return nil
 	}
-	fixed, ignored, kept := result.Fixed, result.Ignored, result.Kept
-	if fixed == nil {
-		fixed = []string{}
+	sentToFixer, ignored, kept := result.Fixed, result.Ignored, result.Kept
+	if sentToFixer == nil {
+		sentToFixer = []string{}
 	}
 	if ignored == nil {
 		ignored = []string{}
@@ -1591,7 +1595,7 @@ func respondDispositionFields(result ipc.RespondResult) []toon.Field {
 		kept = []string{}
 	}
 	fields := []toon.Field{
-		{Key: "fixed", Value: fixed},
+		{Key: "sent_to_fixer", Value: sentToFixer},
 		{Key: "ignored", Value: ignored},
 		{Key: "kept", Value: kept},
 	}

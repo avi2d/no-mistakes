@@ -118,6 +118,8 @@ const FindingCategoryReviewQuestion = "review-question"
 // recorded as an override rather than a silent green completion.
 const FindingCategoryTestCommand = "test-command"
 
+const FindingCategoryLintCommand = "lint-command"
+
 // FindingCategoryTestVerdict marks the finding the Test step derives from its
 // evidence turn's verdict. A completed evidence turn replaces an earlier
 // verdict finding; a budget-cut park can retain the last completed turn's

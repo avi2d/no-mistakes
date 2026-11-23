@@ -129,7 +129,7 @@ func (m Model) maybeAutoApproveCmd() tea.Cmd {
 	if pipeline.HasReviewFixRoundLimit(m.stepFindings[step.StepName]) || pipeline.HasFixRoundNoDiff(m.stepFindings[step.StepName]) {
 		return nil
 	}
-	if pipeline.HasProtectedPathRefusal(m.stepFindings[step.StepName]) || pipeline.HasUnvalidatedWorkRefusal(m.stepFindings[step.StepName]) {
+	if pipeline.HasProtectedPathRefusal(m.stepFindings[step.StepName]) || pipeline.HasUnvalidatedWorkRefusal(m.stepFindings[step.StepName]) || m.hasFailingLintCommand(step) {
 		return nil
 	}
 	// Only an answer settles an open review question, so yolo has no standing
@@ -163,12 +163,19 @@ func (m Model) maybeAutoApproveCmd() tea.Cmd {
 	return m.respondCmd(types.ActionApprove)
 }
 
+func (m Model) hasFailingLintCommand(step *ipc.StepResultInfo) bool {
+	return step != nil && step.StepName == types.StepLint && pipeline.HasFailingLintCommand(m.stepFindings[step.StepName])
+}
+
 func (m Model) respondCmd(action types.ApprovalAction) tea.Cmd {
 	step := awaitingStep(m.steps)
 	if step == nil {
 		return nil
 	}
 	if !m.approvalReady(step) {
+		return nil
+	}
+	if m.hasFailingLintCommand(step) && (action == types.ActionApprove || action == types.ActionSkip) {
 		return nil
 	}
 	if action == types.ActionFix {

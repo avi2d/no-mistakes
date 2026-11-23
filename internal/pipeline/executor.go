@@ -1337,7 +1337,7 @@ func fileRevertedToBase(ctx context.Context, workDir, base, head, relPath string
 func (e *Executor) executeStep(ctx context.Context, step Step, sr *db.StepResult, run *db.Run, repo *db.Repo, workDir, logDir string, state stepExecutionState) (bool, types.StepName, error) {
 	stepName := step.Name()
 	logPath := filepath.Join(logDir, string(stepName)+".log")
-	finalExitCode := 0
+	finalExitCode := recoveredExitCode(sr)
 	autoFixLimit := e.autoFixLimit(stepName)
 	maxReviewFixRounds, reviewFixRounds := 0, 0
 	followUps := make(reviewFollowUpKeys)
@@ -1740,6 +1740,10 @@ rounds:
 		}
 		sctx.CoverageContinuation = nil
 		if refusal := ProtectedPathOutcome(err); refusal != nil {
+			// A refused lint fix never reran the command.
+			if stepName == types.StepLint {
+				refusal.ExitCode = finalExitCode
+			}
 			outcome, err = refusal, nil
 		}
 		roundNum++

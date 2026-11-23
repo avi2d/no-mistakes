@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/kunchenguid/no-mistakes/internal/ipc"
+	"github.com/kunchenguid/no-mistakes/internal/pipeline"
 	"github.com/kunchenguid/no-mistakes/internal/types"
 )
 
@@ -164,10 +165,13 @@ func renderPipelineView(run *ipc.RunInfo, steps []ipc.StepResultInfo, width int,
 
 		// Add status suffix for non-obvious states (dim per Typography Scale "Meta").
 		// Error messages are truncated to fit within the remaining line width.
-		switch step.Status {
-		case types.StepStatusAwaitingApproval:
+		switch {
+		case step.StepName == types.StepLint && (step.Status == types.StepStatusAwaitingApproval || step.Status == types.StepStatusFixReview) &&
+			step.FindingsJSON != nil && pipeline.HasFailingLintCommand(*step.FindingsJSON):
+			line += " " + dimStyle.Render("- awaiting repair")
+		case step.Status == types.StepStatusAwaitingApproval:
 			line += " " + dimStyle.Render("- awaiting approval")
-		case types.StepStatusFailed:
+		case step.Status == types.StepStatusFailed:
 			if step.Error != nil {
 				errText := "- " + *step.Error
 				remaining := contentWidth - lipgloss.Width(line) - 1 // -1 for space before suffix
@@ -213,12 +217,12 @@ func appendRightLabel(line, label string, width int) string {
 // Per DESIGN.md: "Sits below the pipeline box, above findings/diff"
 // showDiff controls whether the 'd' key label says "findings" (to toggle back) or "diff".
 // Selection actions are hidden in diff mode since they don't apply.
-func renderActionBar(steps []ipc.StepResultInfo, showSelectionActions bool, allowFix bool, showDiff bool, selectedCount int, totalCount int, confirmAbort bool, hasDiff bool, approvalReady bool, retryAvailable bool) string {
+func renderActionBar(steps []ipc.StepResultInfo, showSelectionActions bool, allowFix bool, showDiff bool, selectedCount int, totalCount int, confirmAbort bool, hasDiff bool, approvalReady bool, retryAvailable bool, lintCommandFailed bool) string {
 	step := awaitingStep(steps)
 	if step == nil {
 		if retryAvailable {
 			promptStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(ansiYellow))
-			return promptStyle.Render("Review state unavailable:") + "\n" + renderApprovalActions(false, false, false, 0, 0, confirmAbort, false, false, true)
+			return promptStyle.Render("Review state unavailable:") + "\n" + renderApprovalActions(false, false, false, 0, 0, confirmAbort, false, false, true, false)
 		}
 		return ""
 	}
@@ -229,15 +233,18 @@ func renderActionBar(steps []ipc.StepResultInfo, showSelectionActions bool, allo
 	if step.Status == types.StepStatusFixReview {
 		prompt = fmt.Sprintf("%s - review fix:", stepLabel(step.StepName))
 	}
+	if lintCommandFailed {
+		prompt = "Lint still fails. Fix or abort:"
+	}
 	b.WriteString(promptStyle.Render(prompt))
 	b.WriteString("\n")
 	// Hide selection actions in diff mode since toggle/A/N keys don't work there.
 	effectiveSelection := showSelectionActions && !showDiff
-	b.WriteString(renderApprovalActions(effectiveSelection, allowFix, showDiff, selectedCount, totalCount, confirmAbort, hasDiff, approvalReady, retryAvailable))
+	b.WriteString(renderApprovalActions(effectiveSelection, allowFix, showDiff, selectedCount, totalCount, confirmAbort, hasDiff, approvalReady, retryAvailable, lintCommandFailed))
 	return b.String()
 }
 
-func renderApprovalActions(showSelectionActions bool, allowFix bool, showDiff bool, selectedCount int, totalCount int, confirmAbort bool, hasDiff bool, approvalReady bool, retryAvailable bool) string {
+func renderApprovalActions(showSelectionActions bool, allowFix bool, showDiff bool, selectedCount int, totalCount int, confirmAbort bool, hasDiff bool, approvalReady bool, retryAvailable bool, lintCommandFailed bool) string {
 	boldKey := lipgloss.NewStyle().Bold(true)
 	renderAction := func(key, label string) string {
 		return boldKey.Render(key) + " " + label
@@ -256,7 +263,10 @@ func renderApprovalActions(showSelectionActions bool, allowFix bool, showDiff bo
 		return " " + strings.Join([]string{status, renderAction("x", abortLabel)}, "  ")
 	}
 
-	primary := []string{renderAction("a", "approve")}
+	var primary []string
+	if !lintCommandFailed {
+		primary = append(primary, renderAction("a", "approve"))
+	}
 	if allowFix {
 		fixLabel := "fix"
 		if selectedCount > 0 && selectedCount < totalCount {
@@ -264,7 +274,10 @@ func renderApprovalActions(showSelectionActions bool, allowFix bool, showDiff bo
 		}
 		primary = append(primary, renderAction("f", fixLabel))
 	}
-	primary = append(primary, renderAction("s", "skip"), renderAction("x", abortLabel))
+	if !lintCommandFailed {
+		primary = append(primary, renderAction("s", "skip"))
+	}
+	primary = append(primary, renderAction("x", abortLabel))
 	if hasDiff {
 		diffLabel := "diff"
 		if showDiff {
@@ -378,7 +391,7 @@ type helpEntry struct {
 }
 
 // renderHelpOverlay renders a help box showing keybindings relevant to the current state.
-func renderHelpOverlay(width int, run *ipc.RunInfo, hasAwaitingStep bool, showDiff bool, hasDiff bool, done bool, yolo bool) string {
+func renderHelpOverlay(width int, run *ipc.RunInfo, hasAwaitingStep bool, showDiff bool, hasDiff bool, done bool, yolo bool, lintCommandFailed bool) string {
 	boldKey := lipgloss.NewStyle().Bold(true)
 	dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(ansiBrightBlack))
 	contentWidth := width - 4
@@ -431,12 +444,15 @@ func renderHelpOverlay(width int, run *ipc.RunInfo, hasAwaitingStep bool, showDi
 		}
 		content.WriteString(section("Navigation", navEntries))
 		content.WriteString("\n")
-		actions := []helpEntry{
-			{"a", "approve"},
-			{"f", "fix"},
-			{"s", "skip"},
-			{"x x", "abort (press twice)"},
+		var actions []helpEntry
+		if !lintCommandFailed {
+			actions = append(actions, helpEntry{"a", "approve"})
 		}
+		actions = append(actions, helpEntry{"f", "fix"})
+		if !lintCommandFailed {
+			actions = append(actions, helpEntry{"s", "skip"})
+		}
+		actions = append(actions, helpEntry{"x x", "abort (press twice)"})
 		if hasDiff {
 			actions = append(actions, helpEntry{"d", "diff/findings toggle"})
 		}

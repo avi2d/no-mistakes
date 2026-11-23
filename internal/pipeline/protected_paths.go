@@ -40,6 +40,16 @@ func HasUnvalidatedWorkRefusal(findingsJSON string) bool {
 	return hasFindingID(findingsJSON, types.FindingIDTestAgentUnvalidatedWork)
 }
 
+func HasFailingLintCommand(findingsJSON string) bool {
+	findings, _ := types.ParseFindingsJSON(findingsJSON)
+	for _, finding := range findings.Items {
+		if finding.Category == types.FindingCategoryLintCommand {
+			return true
+		}
+	}
+	return false
+}
+
 func hasFindingID(findingsJSON, id string) bool {
 	findings, _ := types.ParseFindingsJSON(findingsJSON)
 	for _, finding := range findings.Items {
@@ -105,6 +115,8 @@ func approvalRefusal(step types.StepName, findingsJSON string) string {
 		return fmt.Sprintf("cannot approve a protected-path refusal, and the Review fix-round budget is exhausted so fix cannot retry %s either; skip this step or abort the run", step)
 	case HasProtectedPathRefusal(findingsJSON):
 		return fmt.Sprintf("cannot approve a protected-path refusal: resolve the reported edit, then use fix to retry %s; approval would skip unfinished work", step)
+	case step == types.StepLint && HasFailingLintCommand(findingsJSON):
+		return "cannot approve lint: the configured lint command still fails; use fix to repair it, or abort"
 	case HasUnvalidatedWorkRefusal(findingsJSON):
 		return fmt.Sprintf("cannot approve %s: the run worktree holds work no Test turn validated and approval would publish it; inspect it as the findings describe, then use fix to validate it, or abort", step)
 	}

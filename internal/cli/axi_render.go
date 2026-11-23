@@ -344,10 +344,12 @@ func (rv runView) findingsTally() string {
 			continue
 		}
 		for _, f := range parsed.Items {
-			switch f.Action {
-			case types.ActionAskUser:
+			switch {
+			case s.Name == string(types.StepLint) && f.Category == types.FindingCategoryLintCommand:
 				awaiting++
-			case types.ActionAutoFix:
+			case f.Action == types.ActionAskUser:
+				awaiting++
+			case f.Action == types.ActionAutoFix:
 				autofix++
 			default:
 				info++
@@ -729,9 +731,10 @@ func gateFields(gate stepView) []toon.Field {
 func gateFieldsForRun(gate stepView, runID string) []toon.Field {
 	respond := "no-mistakes axi respond" + runFlag(runID)
 	coverageHelp := "Run `" + respond + " --action complete-coverage` to review only the remaining paths using stored coverage for this source"
+	fixHelp := "Run `" + respond + " --action fix --findings <ids> [--ignore <ids>]` to have the pipeline fix the selected findings (do not edit files yourself); list every finding below in `--findings` or `--ignore`, unless an earlier round of this step already decided it, and a finding that round chose to fix cannot be declined by a later response"
 	help := []string{
 		"Run `" + respond + " --action approve` to accept this step and continue",
-		"Run `" + respond + " --action fix --findings <ids> [--ignore <ids>]` to have the pipeline fix the selected findings (do not edit files yourself); list every finding below in `--findings` or `--ignore`, unless an earlier round of this step already decided it, and a finding that round chose to fix cannot be declined by a later response",
+		fixHelp,
 	}
 	if pipeline.HasReviewFixRoundLimit(gate.FindingsJSON) {
 		help = []string{
@@ -777,17 +780,33 @@ func gateFieldsForRun(gate stepView, runID string) []toon.Field {
 		}
 		skip = "Do not skip this step: the steps after Test would commit and publish the unvalidated work, so skipping needs the operator's explicit decision"
 	}
+	if gate.hasFailingLintCommand() {
+		help = []string{
+			"Lint still fails. Approval is refused, and skipping this gate will not let the run push.",
+			fixHelp,
+			"Run `no-mistakes axi abort" + runFlag(runID) + "` to stop the run",
+		}
+	} else {
+		help = append(help, skip)
+	}
 	return gateFieldsWithHelp(gate, append(help,
-		skip,
 		fmt.Sprintf("Run `%s` to read the complete step summary and log", axiLogsFullCommand(gate.Name, runID)),
 		"A long-running call is working, not stalled - background it if your harness needs to, but the run never advances past a gate on its own. Read every return; on a `gate:`, respond; loop until an `outcome:`.",
 		preserveGateFixCommitsGuidance,
 	))
 }
 
+func (gate stepView) hasFailingLintCommand() bool {
+	return gate.Name == string(types.StepLint) && pipeline.HasFailingLintCommand(gate.FindingsJSON)
+}
+
 func inspectionOnlyGateFields(gate stepView, runID string) []toon.Field {
+	next := fmt.Sprintf("The explicitly selected gate for run %s is inspection-only here; respond with `no-mistakes axi respond --run %s --action approve|fix|skip`", runID, runID)
+	if gate.hasFailingLintCommand() {
+		next = "Lint still fails. Run `no-mistakes axi respond" + runFlag(runID) + " --action fix --findings <ids>` to repair it, or `no-mistakes axi abort" + runFlag(runID) + "` to stop the run."
+	}
 	return gateFieldsWithHelp(gate, []string{
-		fmt.Sprintf("The explicitly selected gate for run %s is inspection-only here; respond with `no-mistakes axi respond --run %s --action approve|fix|skip`", runID, runID),
+		next,
 		fmt.Sprintf("Run `%s` to read the complete step summary and log", axiLogsFullCommand(gate.Name, runID)),
 	})
 }

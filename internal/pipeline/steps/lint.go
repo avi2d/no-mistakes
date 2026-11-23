@@ -46,6 +46,7 @@ func (s *LintStep) Execute(sctx *pipeline.StepContext) (*pipeline.StepOutcome, e
 		findings.Items = append(findings.Items, Finding{
 			Severity: "error", Action: types.ActionAutoFix,
 			Description: result.description("lint"),
+			Category:    types.FindingCategoryLintCommand,
 		})
 	}
 	findings.Summary += "\n" + projectedOutput
@@ -224,6 +225,7 @@ Previous lint findings to address:
 			Items: []Finding{{
 				Severity:    "warning",
 				Description: fmt.Sprintf("linter found issues (exit code %d)", exitCode),
+				Category:    types.FindingCategoryLintCommand,
 			}},
 			Summary: projectedOutput,
 		}
