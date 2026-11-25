@@ -216,6 +216,39 @@ func TestReviewStep_RereviewWithoutAssertionChangesListsNothing(t *testing.T) {
 	}
 }
 
+func TestReviewStep_InitialReviewListsBaseAssertionButNotNewTest(t *testing.T) {
+	t.Parallel()
+	dir, _, _ := setupGitRepo(t)
+	gitCmd(t, dir, "checkout", "main")
+	baseSHA := commitTestFixture(t, dir, "app_test.go", testFixIntentFixture)
+	gitCmd(t, dir, "checkout", "feature")
+	gitCmd(t, dir, "reset", "--hard", baseSHA)
+	changed := strings.Replace(testFixIntentFixture, "want 2", "want 3", 1)
+	changed += "\nfunc TestNew(t *testing.T) {\n\tt.Fatal(\"new assertion\")\n}\n"
+	headSHA := commitTestFixture(t, dir, "app_test.go", changed)
+
+	ag := &mockAgent{name: "test", runFn: rereviewWithCoverage(t, dir, baseSHA)}
+	sctx := newTestContextWithDBRecords(t, ag, dir, baseSHA, headSHA, config.Commands{})
+	if _, err := (&ReviewStep{}).Execute(sctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(ag.calls) != 1 {
+		t.Fatalf("agent calls = %d, want initial review", len(ag.calls))
+	}
+	prompt := ag.calls[0].Prompt
+	start := strings.Index(prompt, "Changed test assertions on the branch:")
+	if start < 0 {
+		t.Fatal("initial review prompt omitted the changed base assertion list")
+	}
+	section := strings.SplitN(prompt[start:], "Judge each one against the stated intent:", 2)[0]
+	if !strings.Contains(section, "app_test.go:7:") || !strings.Contains(section, `t.Errorf("Add(1, 1) = %d, want 2", got)`) {
+		t.Fatalf("section omitted the base assertion: %s", section)
+	}
+	if strings.Contains(section, "new assertion") || strings.Contains(section, "want 3") {
+		t.Fatalf("section included an added assertion: %s", section)
+	}
+}
+
 func TestReviewStep_InitialReviewListsNoAssertionSection(t *testing.T) {
 	t.Parallel()
 	dir, baseSHA, _ := setupGitRepo(t)

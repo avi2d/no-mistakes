@@ -102,11 +102,19 @@ func parseOldStart(hunk string) int {
 // A single revision shows committed fix rounds and uncommitted worktree edits
 // together, while a two-revision range would miss the latter.
 func testAssertionChangesSection(ctx context.Context, workDir, from string) string {
+	return testAssertionChangesSectionBetween(ctx, workDir, from, "", "Changed test assertions in fix rounds:")
+}
+
+func testAssertionChangesSectionBetween(ctx context.Context, workDir, from, to, heading string) string {
 	from = strings.TrimSpace(from)
 	if from == "" {
 		return ""
 	}
-	diff, err := git.Run(ctx, workDir, "diff", "--no-renames", "-U0", from)
+	args := []string{"diff", "--no-renames", "-U0", from}
+	if to != "" {
+		args = append(args, to)
+	}
+	diff, err := git.Run(ctx, workDir, args...)
 	if err != nil || strings.TrimSpace(diff) == "" {
 		return ""
 	}
@@ -121,7 +129,7 @@ func testAssertionChangesSection(ctx context.Context, workDir, from string) stri
 		listed = changed[:maxListed]
 		truncated = fmt.Sprintf("\n- (%d further changed assertions omitted)", len(changed)-maxListed)
 	}
-	return "\nChanged test assertions in fix rounds:\n- " +
+	return "\n" + heading + "\n- " +
 		strings.Join(listed, "\n- ") + truncated +
 		"\nJudge each one against the stated intent: an assertion the intent changed is legitimate, one that contradicts it is a finding.\n"
 }
