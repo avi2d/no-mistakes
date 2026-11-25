@@ -297,13 +297,14 @@ Previous review findings to address:
 	}
 	historySection := executionContextPromptSection(sctx.WorkDir) + roundHistoryPromptSection(sctx) + settledQuestionsPromptSection(sctx) + supersededReviewHistoryPromptSection(sctx) + uncertifiedRoundHistoryPromptSection(sctx) + fixRoundProvenanceClause(sctx) + userIntentPromptSection(sctx) + planSection + intentConformanceReviewClause(sctx) + pipelineDeliveryPhaseClause() + testguidance.Rule + testguidance.ReviewerAction
 
-	// Empty when no fix round changed an assertion, leaving other prompts byte-identical.
 	if sctx.Fixing {
 		from := strings.TrimSpace(sctx.ReviewStartingHeadSHA)
 		if from == "" {
 			from = sctx.Run.HeadSHA
 		}
 		historySection += testAssertionChangesSection(ctx, sctx.WorkDir, from)
+	} else if !sctx.FinalizingAnswers && sctx.CoverageContinuation == nil {
+		historySection += testAssertionChangesSectionBetween(ctx, sctx.WorkDir, baseSHA, reviewTargetSHA, "Changed test assertions on the branch:")
 	}
 
 	// The authorization/privacy obligation below specializes the existing
