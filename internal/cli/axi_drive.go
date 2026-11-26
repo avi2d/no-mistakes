@@ -1602,7 +1602,11 @@ func respondDispositionFields(result ipc.RespondResult) []toon.Field {
 	if len(result.FollowUps) > 0 {
 		fields = append(fields, toon.Field{Key: "follow_ups", Value: result.FollowUps})
 	}
-	return []toon.Field{{Key: "recorded", Value: toon.NewObject(fields...)}}
+	resultFields := []toon.Field{{Key: "recorded", Value: toon.NewObject(fields...)}}
+	if len(result.FollowUps) > 0 && len(result.Fixed) == 0 {
+		resultFields = append(resultFields, toon.Field{Key: "fix_round", Value: fmt.Sprintf("skipped, no selected error; %d findings recorded as follow-ups", len(result.FollowUps))})
+	}
+	return resultFields
 }
 
 // renderDriveResult prints the run snapshot plus one of: the active gate (exit
