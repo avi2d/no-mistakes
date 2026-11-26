@@ -48,13 +48,29 @@ Review flags every newly added source-content-only violation and requires same-p
 
 ## Finding decision history
 
-When an operator resolves a findings gate with Approve, Skip, or Abort, or the `axi run --yes` loop approves it without selecting a fix, no-mistakes records that the round's findings were declined. A gate with no findings records no decision. A `fix` response must follow the explicit accounting rules of [`axi respond --action fix`](/no-mistakes/reference/cli/#no-mistakes-axi-respond). The decline set is derived from the complement of the recorded selection, excluding findings an earlier user round of the same step chose to fix; it has no storage of its own. A fix response that explicitly ignores findings without selecting any fixes records an empty selection, so those declines remain in the history. A finding previously decided in the same step keeps that decision when omitted; a later response cannot decline a finding previously chosen to fix. Findings merely left out by automatic filtering remain undecided.
+Ordinary approval, skip, and abort record a decline for the findings at the gate.
+An approval with `--follow-ups` records the named findings as Review follow-ups instead of declines.
+A gate with no findings records no decision.
+A fix response follows the explicit accounting rules of [`axi respond --action fix`](/no-mistakes/reference/cli/#no-mistakes-axi-respond).
+No-mistakes derives the declined IDs from the round's findings, excluding the selection and any findings an earlier response chose to fix.
+An ignore-only fix response records an empty selection so its declines remain in the history.
+Leaving a finding out keeps its earlier decision in the same step.
+A later response cannot decline a finding an earlier response chose to fix.
+Findings left out by automatic filtering remain undecided.
 
 Earlier decisions match finding content, not reusable finding IDs. An unrelated finding that inherits an old ID needs its own decision. Selected user-added findings participate in the same history and may be omitted at a later gate to retain their earlier decision.
 
-Every gate response records caller-supplied origin metadata, independently of telemetry: `auto_yes` for the `axi run --yes` loop, `interactive` for explicit CLI and TUI responses, and `unknown` for older clients that omit it and historical rows. Fix responses with a selection store the origin beside the round's selection; other responses (including Approve, Skip, and Abort) store it on the step. A fix response with nothing to select also stores its origin on the step. Origin is audit metadata only: it does not change gate behavior or `selection_source` semantics.
+Every gate response records caller-supplied origin metadata, independently of telemetry: `auto_yes` for the `axi run --yes` loop, `interactive` for explicit CLI and TUI responses, and `unknown` when the caller omits it.
+Fix responses with a selection and responses that record Review follow-ups store the origin on the round.
+Other responses store the origin on the step.
+Origin does not change gate behavior or `selection_source`.
 
-Before acknowledging a fix response, the daemon persists its selection, including normalized added findings and per-finding instructions. A failed write leaves the gate parked. If recovery parks the same round again, a subsequent `fix` response restores previously recorded selections, their instructions, and added findings into the fix dispatch, even when omitted from the new response. Restating an added finding restores it once under its recorded ID. New instructions for a restored finding supersede its recorded instructions.
+Before acknowledging a fix response, the daemon persists its selection, including normalized added findings and per-finding instructions.
+Before acknowledging an approval with `--follow-ups`, the daemon persists the named Review follow-ups.
+A failed write leaves the gate parked.
+If recovery parks the same round again, a fix response restores the recorded selection, instructions, and additions, even if the new response omits them.
+Restating an added finding restores it once under its recorded ID.
+New instructions for a restored finding supersede its recorded instructions.
 
 Review, Test, Document, Lint, CI, and repository gate fix agent prompts receive a sanitized history containing the current step's earlier rounds, decisions from other steps in the same run, and a bounded window of decisions from earlier runs on the same branch. Earlier fixes are resolved from the complete step history before that window is rendered, so a fix outside the window still prevents a later omission from appearing as a decline. A recorded decision takes precedence over conflicting user-intent wording, and later decisions about the same concern supersede earlier ones. The history never renders a finding an earlier round of the same step chose to fix under `user_chose_to_ignore`, whether the later round omitted it or resolved its gate with Approve, Skip, or Abort, so a later round cannot present one finding as both fixed and declined. The history instructs agents to respect every recorded decision - never implementing what a human declined and never reverting, undoing, or working around what a human chose to fix - and to report a genuine conflict rather than resolve it themselves. Completing Review does not clear branch decisions. Fix guidance from [`axi respond --instructions`](/no-mistakes/reference/cli/#no-mistakes-axi-respond) is recorded as `driver_instructions`, not as user instructions: the current step's history shows it labelled as the driving agent's guidance for that one fix round, and the decisions carried to other steps and later runs omit it, so no agent cites it as the user's choice.
 

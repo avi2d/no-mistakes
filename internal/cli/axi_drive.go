@@ -1789,7 +1789,7 @@ func successReportHelp(fixes []fixRow) []string {
 const legacyApprovalReasonRefusal = "an approval reason applies only to Test approval"
 
 func newAxiRespondCmd() *cobra.Command {
-	var action, step, findings, ignore, instructions, instructionsFile, addFinding, addFindingFile, reason, runID string
+	var action, step, findings, ignore, followUps, instructions, instructionsFile, addFinding, addFindingFile, reason, runID string
 	var autoYes bool
 	var wait time.Duration
 
@@ -1809,6 +1809,9 @@ func newAxiRespondCmd() *cobra.Command {
 			"--ignore is refused too: reverting an applied fix is out of scope for a gate\n" +
 			"response. The recorded dispositions (fixed, ignored, kept) are echoed in the\n" +
 			"output.\n\n" +
+			"With --action approve, use --follow-ups <ids> to record named warnings or\n" +
+			"info findings from a Review gate that reports defer_non_errors: true.\n" +
+			"The findings go in the PR's Review follow-ups section, not to the fixer.\n\n" +
 			"With --action abort, the operator rejects the parked gate: the round is\n" +
 			"recorded as declined, the step fails as \"aborted by user: <reason>\", and the\n" +
 			"run ends failed. --reason is required and is kept in the step error and the\n" +
@@ -1840,6 +1843,7 @@ func newAxiRespondCmd() *cobra.Command {
 					step:             step,
 					findings:         findings,
 					ignore:           ignore,
+					followUps:        followUps,
 					instructions:     instructions,
 					instructionsFile: instructionsFile,
 					addFinding:       addFinding,
@@ -1858,6 +1862,7 @@ func newAxiRespondCmd() *cobra.Command {
 	cmd.Flags().StringVar(&step, "step", "", "step to respond to (default: the step awaiting approval)")
 	cmd.Flags().StringVar(&findings, "findings", "", "comma-separated finding IDs to fix (with --action fix)")
 	cmd.Flags().StringVar(&ignore, "ignore", "", "comma-separated finding IDs to decline (with --action fix); every finding the gate shows must be in --findings or --ignore unless an earlier round of this step already decided it, and a finding that round chose to fix cannot be declined")
+	cmd.Flags().StringVar(&followUps, "follow-ups", "", "comma-separated Review finding IDs to record as PR follow-ups with --action approve")
 	cmd.Flags().StringVar(&instructions, "instructions", "", "guidance applied to selected findings; '-' reads stdin (exclusive with --instructions-file)")
 	cmd.Flags().StringVar(&instructionsFile, "instructions-file", "", "read fix guidance from a file (exclusive with --instructions)")
 	cmd.Flags().StringVar(&reason, "reason", "", "reason preserved with a Test approval exception (--step test --action approve), and required with --action abort")
@@ -1873,6 +1878,7 @@ type respondArgs struct {
 	step             string
 	findings         string
 	ignore           string
+	followUps        string
 	instructions     string
 	instructionsFile string
 	addFinding       string
@@ -1912,6 +1918,19 @@ func runAxiRespond(cmd *cobra.Command, ra respondArgs) error {
 	}
 	if act == types.ActionCompleteCoverage && (ra.autoYes || ra.findings != "" || ra.ignore != "" || ra.instructions != "" || ra.addFinding != "" || ra.reason != "") {
 		return emitError(cmd, 2, "complete-coverage cannot approve subsequent gates or change findings")
+	}
+
+	followUpIDs := splitCSV(ra.followUps)
+	if cmd.Flags().Changed("follow-ups") {
+		if act != types.ActionApprove {
+			return emitError(cmd, 2, "--follow-ups applies only to --action approve on Review")
+		}
+		if len(followUpIDs) == 0 {
+			return emitError(cmd, 2, "--follow-ups requires one or more finding IDs")
+		}
+		if ra.instructions != "" || ra.addFinding != "" {
+			return emitError(cmd, 2, "--instructions and --add-finding apply only to --action fix")
+		}
 	}
 
 	instructionsStdin := cmd.Flags().Changed("instructions") && ra.instructions == "-"
@@ -2049,6 +2068,15 @@ func runAxiRespond(cmd *cobra.Command, ra respondArgs) error {
 		}
 	} else if len(ignoreIDs) > 0 || ra.findings != "" {
 		return emitError(cmd, 2, "--findings and --ignore apply only to --action fix")
+	}
+
+	if len(followUpIDs) > 0 {
+		gate, ok := rv.awaitingStep()
+		if stepName != types.StepReview || !ok || gate.Name != string(types.StepReview) || gate.DeferNonErrors == nil || !*gate.DeferNonErrors {
+			return emitError(cmd, 2, "--follow-ups requires a parked Review gate that reports defer_non_errors: true",
+				"Reattach with `no-mistakes axi run` from the run's clone to read the live gate reply")
+		}
+		findingIDs = followUpIDs
 	}
 
 	var coverage *ipc.CoverageBinding
