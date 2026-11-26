@@ -70,23 +70,17 @@ func TestExecutor_AcceptedApprovalWinsReconciliationRace(t *testing.T) {
 	workDir := t.TempDir()
 	done := make(chan error, 1)
 	go func() { done <- exec.Execute(context.Background(), run, repo, workDir) }()
-	select {
-	case <-step.started:
-	case <-time.After(3 * time.Second):
-		t.Fatal("gate reconciliation did not start")
-	}
+	// Both waits are unbounded on purpose. Reaching the gate and terminalizing
+	// the run write SQLite and spawn git, which a loaded Windows runner stretches
+	// past any fixed wait; go test -timeout turns a real hang into a goroutine dump.
+	<-step.started
 	if err := exec.Respond(types.StepCI, types.ActionAbort, nil); err != nil {
 		t.Fatalf("Respond() error = %v", err)
 	}
 	close(step.release)
 
-	select {
-	case err := <-done:
-		if err == nil || err.Error() != "step ci: aborted by user" {
-			t.Fatalf("Execute() error = %v, want accepted abort", err)
-		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("accepted abort did not complete")
+	if err := <-done; err == nil || err.Error() != "step ci: aborted by user" {
+		t.Fatalf("Execute() error = %v, want accepted abort", err)
 	}
 
 	got, err := database.GetRun(run.ID)
