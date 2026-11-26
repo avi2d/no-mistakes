@@ -595,9 +595,11 @@ From the second round on, a fix response sends only selected `error` findings to
 Selected `warning` and `info` findings, including ones you add to the response, go in **Review follow-ups** in the PR description instead.
 `axi respond` lists their IDs under `recorded.follow_ups`, not `recorded.sent_to_fixer`.
 Findings you explicitly ignore do not become follow-ups.
+The live AXI Review gate reports `defer_non_errors: true` when the setting is on and the gate is at round two or later.
+On those gates, [`axi respond --action approve --follow-ups <ids>`](/no-mistakes/reference/cli/#no-mistakes-axi-respond) records the named warnings and info findings without asking for a fix.
 
 If no selected finding is an error, Review approves the gate without another fix round.
-This does not bypass a protected-path refusal, an open or unreadable review conversation, a coverage-only gate, or an earlier selected error that remains unresolved.
+Neither approval with `--follow-ups` nor a fix response converted to approval bypasses a protected-path refusal, an open or unreadable review conversation, a coverage-only gate, or an earlier selected error that remains unresolved.
 The option does not change the automatic fix budget or the response validation rules.
 
 With this option on, if a fixer leaves the reviewed commit unchanged and the worktree clean, Review skips the rereview.

@@ -729,6 +729,8 @@ type StepResultInfo struct {
 	// CIFirstGreenAt is the unix-seconds time the CI step first read its checks
 	// as fully green. Nil when that never happened on this step.
 	CIFirstGreenAt *int64 `json:"ci_first_green_at,omitempty"`
+	// Nil unless the live Review gate matches this snapshot.
+	DeferNonErrors *bool `json:"defer_non_errors,omitempty"`
 }
 
 // AgentStall names the agent a step is waiting on and the unix-seconds time
