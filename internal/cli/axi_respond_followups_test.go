@@ -16,7 +16,7 @@ func TestAxiRespond_ReportsSkippedFixRoundRatherThanSilentApproval(t *testing.T)
 		fixed []string
 		want  string
 	}{
-		{name: "only follow-ups", want: "fix_round: skipped, no selected error; 2 findings recorded as follow-ups"},
+		{name: "only follow-ups", want: "skipped, no selected error; 2 findings recorded as follow-ups"},
 		{name: "error also selected", fixed: []string{"R3"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -37,10 +37,10 @@ func TestAxiRespond_ReportsSkippedFixRoundRatherThanSilentApproval(t *testing.T)
 			if err != nil {
 				t.Fatalf("respond: %v\n%s", err, out)
 			}
-			if tc.want != "" && !strings.Contains(out, tc.want) {
+			if tc.want != "" && (!strings.Contains(out, "fix_round:") || !strings.Contains(out, tc.want)) {
 				t.Fatalf("output missing %q:\n%s", tc.want, out)
 			}
-			if tc.want == "" && strings.Contains(out, "fix_round: skipped") {
+			if tc.want == "" && strings.Contains(out, "fix_round:") {
 				t.Fatalf("reported a skipped fix round despite a selected error:\n%s", out)
 			}
 		})
