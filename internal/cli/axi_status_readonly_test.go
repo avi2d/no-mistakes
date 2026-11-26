@@ -177,7 +177,7 @@ func TestAxiStatusReadOnly(t *testing.T) {
 						t.Fatal(err)
 					}
 				}
-				for _, column := range []string{"last_activity_at", "last_activity", "agent_pid", "auto_fix_limit", "round_started_at", "override_reason", "skip_reason", "approval_reason", "failure_cause", "carried_from", "response_origin", "ci_first_green_at"} {
+				for _, column := range []string{"last_activity_at", "last_activity", "agent_pid", "auto_fix_limit", "round_started_at", "override_reason", "skip_reason", "approval_reason", "failure_cause", "carried_from", "response_origin"} {
 					if _, err := writer.Exec("ALTER TABLE step_results DROP COLUMN " + column); err != nil {
 						t.Fatal(err)
 					}

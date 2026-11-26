@@ -2258,12 +2258,13 @@ func assertFailingLintCommandRun(t *testing.T, h *Harness) {
 	}
 	h.Respond(run.ID, types.StepLint, types.ActionSkip)
 	completed := h.WaitForRun("failing-lint-command", 60*time.Second)
-	if completed.Status != types.RunCompleted {
-		t.Fatalf("failing lint command run did not complete after skip: status=%s error=%v", completed.Status, deref(completed.Error))
+	const refusal = "cannot push: lint exited with code 1"
+	if completed.Status != types.RunFailed || !strings.Contains(deref(completed.Error), refusal) {
+		t.Fatalf("skipping a failing lint gate must fail the run at push with %q: status=%s error=%v", refusal, completed.Status, deref(completed.Error))
 	}
 	completedLintStep, ok := findStep(completed.Steps, types.StepLint)
 	if !ok {
-		t.Fatal("expected completed lint step in failing lint command run")
+		t.Fatal("expected skipped lint step in failing lint command run")
 	}
 	if completedLintStep.Status != types.StepStatusSkipped {
 		t.Fatalf("expected skipped lint step after response, got %s", completedLintStep.Status)
@@ -2275,8 +2276,13 @@ func assertFailingLintCommandRun(t *testing.T, h *Harness) {
 	if !ok {
 		t.Fatal("expected push step after skipping failing lint command")
 	}
-	if pushStep.Status != types.StepStatusCompleted {
-		t.Fatalf("expected push to continue after skipped lint step, got %s", pushStep.Status)
+	if pushStep.Status != types.StepStatusFailed {
+		t.Fatalf("expected push to refuse after skipping a failing lint step, got %s", pushStep.Status)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if out, err := h.runGit(ctx, h.UpstreamDir, "rev-parse", "--verify", "--quiet", "refs/heads/failing-lint-command"); err == nil {
+		t.Fatalf("push published the branch after a skipped lint failure: upstream has %s", bytes.TrimSpace(out))
 	}
 }
 
