@@ -7,18 +7,41 @@ import (
 	"github.com/kunchenguid/no-mistakes/internal/types"
 )
 
-func (e *Executor) normalizeLaterReviewFix(response *approvalResponse, rounds []*db.StepRound) ([]string, error) {
-	if e.config == nil || !e.config.Review.DeferNonErrors {
-		return nil, nil
+func (e *Executor) ReviewGateDeferral(stepResultID, roundID string) *bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if !e.waiting || e.waitingStep != types.StepReview || e.waitingStepResultID != stepResultID ||
+		roundID == "" || e.waitingRoundID != roundID || e.db == nil {
+		return nil
 	}
-	var parkedRound *db.StepRound
+	rounds, err := e.db.GetRoundsByStep(stepResultID)
+	if err != nil {
+		return nil
+	}
+	round := e.parkedReviewRound(rounds)
+	if round == nil {
+		return nil
+	}
+	applies := e.reviewDeferralApplies(round)
+	return &applies
+}
+
+func (e *Executor) parkedReviewRound(rounds []*db.StepRound) *db.StepRound {
 	for _, round := range rounds {
 		if round.ID == e.waitingRoundID {
-			parkedRound = round
-			break
+			return round
 		}
 	}
-	if parkedRound == nil || parkedRound.Round < 2 {
+	return nil
+}
+
+func (e *Executor) reviewDeferralApplies(round *db.StepRound) bool {
+	return round != nil && round.Round >= 2 && e.config != nil && e.config.Review.DeferNonErrors
+}
+
+func (e *Executor) normalizeLaterReviewFix(response *approvalResponse, rounds []*db.StepRound) ([]string, error) {
+	parkedRound := e.parkedReviewRound(rounds)
+	if !e.reviewDeferralApplies(parkedRound) {
 		return nil, nil
 	}
 
@@ -26,47 +49,28 @@ func (e *Executor) normalizeLaterReviewFix(response *approvalResponse, rounds []
 	if err != nil {
 		return nil, err
 	}
-	previousFollowUps := types.Findings{}
-	if parkedRound.ReviewFollowUpsJSON != nil {
-		previousFollowUps, err = types.ParseFindingsJSON(*parkedRound.ReviewFollowUpsJSON)
-		if err != nil {
-			return nil, err
-		}
-	}
-	recordedKeys := make(reviewFollowUpKeys)
-	recordedKeys.add(previousFollowUps.Items)
 	selected := make(map[string]bool, len(response.findingIDs))
 	for _, id := range response.findingIDs {
 		selected[id] = true
 	}
 	var errorsSelected []string
 	var addedErrors []types.Finding
-	var deferredIDs []string
-	deferFinding := func(finding types.Finding) {
-		if !isReviewFollowUp(finding) {
-			return
-		}
-		deferredIDs = append(deferredIDs, finding.ID)
-		if key := findingKey(finding); !recordedKeys[key] {
-			previousFollowUps.Items = append(previousFollowUps.Items, finding)
-			recordedKeys[key] = true
-		}
-	}
+	var deferred []types.Finding
 	for _, finding := range gate.Items {
 		if !selected[finding.ID] {
 			continue
 		}
 		if finding.Severity == "error" {
 			errorsSelected = append(errorsSelected, finding.ID)
-		} else {
-			deferFinding(finding)
+		} else if isReviewFollowUp(finding) {
+			deferred = append(deferred, finding)
 		}
 	}
 	for _, finding := range response.addedFindings {
 		if finding.Severity == "error" {
 			addedErrors = append(addedErrors, finding)
-		} else {
-			deferFinding(finding)
+		} else if isReviewFollowUp(finding) {
+			deferred = append(deferred, finding)
 		}
 	}
 	if len(errorsSelected) == 0 && len(addedErrors) == 0 {
@@ -77,7 +81,80 @@ func (e *Executor) normalizeLaterReviewFix(response *approvalResponse, rounds []
 	}
 	response.findingIDs = errorsSelected
 	response.addedFindings = addedErrors
-	raw, err := types.MarshalFindingsJSON(previousFollowUps)
+	return attachReviewFollowUps(response, parkedRound, deferred)
+}
+
+func (e *Executor) prepareReviewFollowUpApproval(step types.StepName, response *approvalResponse) ([]string, error) {
+	if step != types.StepReview {
+		return nil, fmt.Errorf("approval with follow-ups applies only to Review")
+	}
+	rounds, refusal := e.roundsForFixValidation()
+	if refusal != nil {
+		return nil, refusal
+	}
+	round := e.parkedReviewRound(rounds)
+	if !e.reviewDeferralApplies(round) {
+		return nil, fmt.Errorf("approval with follow-ups requires review.defer_non_errors and at least two Review rounds")
+	}
+	gate, err := types.ParseFindingsJSON(e.waitingFindings)
+	if err != nil {
+		return nil, fmt.Errorf("read parked Review findings: %w", err)
+	}
+	if err := e.validateReviewFollowUpApproval(gate, rounds, round); err != nil {
+		return nil, err
+	}
+	if round.SelectedFindingIDs != nil && len(findingIDsFromSelectionJSON(*round.SelectedFindingIDs)) > 0 {
+		return nil, fmt.Errorf("this Review round already has a fix selection; resend the fix response or approve without follow-ups")
+	}
+	ids := uniqueNonEmpty(response.findingIDs)
+	if len(ids) == 0 {
+		return nil, fmt.Errorf("approval with follow-ups requires at least one finding ID")
+	}
+	requested := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		requested[id] = true
+	}
+	var deferred []types.Finding
+	for _, finding := range gate.Items {
+		if !requested[finding.ID] {
+			continue
+		}
+		if !isReviewFollowUp(finding) {
+			return nil, fmt.Errorf("Review finding %s cannot be recorded as a follow-up", finding.ID)
+		}
+		deferred = append(deferred, finding)
+		delete(requested, finding.ID)
+	}
+	for _, id := range ids {
+		if requested[id] {
+			return nil, fmt.Errorf("Review finding %s is not shown at this gate", id)
+		}
+	}
+	response.findingIDs = nil
+	return attachReviewFollowUps(response, round, deferred)
+}
+
+func attachReviewFollowUps(response *approvalResponse, round *db.StepRound, deferred []types.Finding) ([]string, error) {
+	recorded := types.Findings{}
+	if round.ReviewFollowUpsJSON != nil {
+		var err error
+		recorded, err = types.ParseFindingsJSON(*round.ReviewFollowUpsJSON)
+		if err != nil {
+			return nil, err
+		}
+	}
+	recordedKeys := make(reviewFollowUpKeys)
+	recordedKeys.add(recorded.Items)
+	var deferredIDs []string
+	for _, finding := range deferred {
+		deferredIDs = append(deferredIDs, finding.ID)
+		key := findingKey(finding)
+		if !recordedKeys[key] {
+			recorded.Items = append(recorded.Items, finding)
+			recordedKeys[key] = true
+		}
+	}
+	raw, err := types.MarshalFindingsJSON(recorded)
 	if err != nil {
 		return nil, err
 	}
@@ -90,15 +167,15 @@ func (e *Executor) validateReviewFollowUpApproval(gate types.Findings, rounds []
 		return fmt.Errorf("%s", e.waitingApprovalRefusal)
 	}
 	if HasUnansweredReviewQuestion(e.waitingFindings) || HasUnreadableReviewQuestionHistory(e.waitingFindings) {
-		return fmt.Errorf("cannot approve a Review gate with unresolved questions through a fix response")
+		return fmt.Errorf("cannot approve a Review gate with unresolved questions through deferral")
 	}
 	if len(gate.Items) == 0 || parkedRound.ReviewedHeadSHA == nil || *parkedRound.ReviewedHeadSHA == "" {
-		return fmt.Errorf("no selected Review error to fix and no findings gate to approve")
+		return fmt.Errorf("deferral approval requires a Review findings gate with a reviewed head")
 	}
 	chosen := earlierChosenToFixIDs(rounds, e.waitingFindings)
 	for _, finding := range gate.Items {
 		if finding.Severity == "error" && chosen[finding.ID] {
-			return fmt.Errorf("Review finding %s was selected earlier and remains unresolved; select it again or explicitly approve the gate", finding.ID)
+			return fmt.Errorf("Review finding %s was selected earlier and remains unresolved; select it again for a fix or approve without deferral", finding.ID)
 		}
 	}
 	return nil

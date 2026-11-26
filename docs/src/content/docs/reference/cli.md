@@ -346,6 +346,7 @@ Answer the current approval gate and continue until the next gate, CI-ready deci
 
 ```sh
 no-mistakes axi respond --action approve
+no-mistakes axi respond --action approve --follow-ups R1,R2
 no-mistakes axi respond --action fix --findings F1,F2 --instructions "optional guidance"
 no-mistakes axi respond --action fix --findings F1,F2 --ignore F3
 no-mistakes axi respond --action fix --add-finding '{"description":"...","action":"auto-fix"}'
@@ -364,6 +365,7 @@ no-mistakes axi respond --run <id> --action approve
 | `--step`         | `string` | awaiting step | Step to respond to                                                   |
 | `--findings`     | `string` | (none)        | Comma-separated finding IDs to fix with `--action fix`               |
 | `--ignore`       | `string` | (none)        | Comma-separated finding IDs to decline with `--action fix`; see the accounting rules below |
+| `--follow-ups`   | `string` | none          | Comma-separated Review finding IDs to record as PR follow-ups with `--action approve` |
 | `--instructions` | `string` | (none)        | Driver fix guidance applied to selected findings with `--action fix`; recorded as `driver_instructions`, never as the user's decision; `-` reads stdin until EOF, cancellation, or `--wait`; exclusive with `--instructions-file` |
 | `--instructions-file` | `string` | (none) | Read driver fix guidance from a file; exclusive with `--instructions` |
 | `--reason`       | `string` | (none)        | Operator's reason: optional exception explanation for a Test approval, required with `--action abort` |
@@ -380,10 +382,21 @@ Finding IDs are trimmed before validation. Missing or repeated gate finding IDs 
 
 A user-authored addition that collides with existing finding content is retained instead of being silently dropped. A matching non-user `no-op` can be replaced by the user record; collisions with blocking or other user-authored records keep both records. Its normalized ID, action, and instructions stay attached to the record sent to the fixer.
 
-Every successful fix response echoes what it recorded in a `recorded:` object: `fixed` (the findings selected, including `--add-finding` items under their normalized IDs), `ignored` (the findings explicitly declined), and `kept` (the gate findings omitted that a previous response for this step had already decided). A finding the restored decision dispatched is reported under `fixed`, not also under `kept`. Approve, skip, and abort emit no disposition echo. They are not decision-free: a nonempty gate they resolve is recorded as a decline round, which is what later rounds read as `user_chose_to_ignore`. `--yes` resolution is unchanged: it selects every current finding.
+A successful fix response echoes its dispositions in `recorded`.
+The `sent_to_fixer` list names fixes, including normalized IDs for findings added with `--add-finding`.
+The `ignored` list names explicit declines, and `kept` names earlier decisions you left in place.
+A restored selection appears in `sent_to_fixer`, not in `kept`.
+
+If the live Review gate reports `gate.defer_non_errors: true`, use `--action approve --follow-ups <ids>` to approve without starting a fix round.
+Name only warnings and info findings from that gate.
+The daemon applies the same approval safeguards as a [fix response converted to approval](/no-mistakes/reference/repo-config/#reviewdefer_non_errors).
+It records the named findings in **Review follow-ups** in the PR description and echoes their IDs in `recorded.follow_ups`.
+Approval without `--follow-ups`, skip, and abort still emit no disposition echo.
+They record a decline on a nonempty gate.
+The `--yes` resolution is unchanged.
 
 `--action complete-coverage` continues a Review gate under the [coverage continuation rules](/no-mistakes/reference/pipeline-steps/#coverage-continuation).
-It refuses `--yes`, `--findings`, `--ignore`, `--instructions`, `--instructions-file`, `--add-finding`, `--add-finding-file`, and `--reason`.
+It refuses `--yes`, `--findings`, `--ignore`, `--follow-ups`, `--instructions`, `--instructions-file`, `--add-finding`, `--add-finding-file`, and `--reason`.
 The CLI supplies the observed head, step result, and latest round binding automatically.
 
 For an explicitly authorized Test exception, use `no-mistakes axi respond --step test --action approve --reason "the operator's explanation"`.

@@ -1709,6 +1709,17 @@ func runSnapshot(mgr *RunManager, runID string, read func(string) (*ipc.RunInfo,
 		return nil, err
 	}
 	info.StateRev = stateRev
+	mgr.mu.Lock()
+	exec := mgr.executors[runID]
+	mgr.mu.Unlock()
+	if exec != nil {
+		for i := range info.Steps {
+			step := &info.Steps[i]
+			if step.StepName == types.StepReview && step.LatestRoundID != "" {
+				step.DeferNonErrors = exec.ReviewGateDeferral(step.ID, step.LatestRoundID)
+			}
+		}
+	}
 	return info, nil
 }
 

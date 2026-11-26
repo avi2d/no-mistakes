@@ -118,6 +118,7 @@ type stepView struct {
 	ReviewerEntry     *servedReviewerEntry
 	RepeatMarks       map[string]int
 	NoChangeFixRounds []int
+	DeferNonErrors    *bool
 	QuietWarning      time.Duration
 	SkipReason        string
 	Stall             *ipc.AgentStall
@@ -187,6 +188,7 @@ func runViewFromIPC(r *ipc.RunInfo) runView {
 			FixSummaries:      s.FixSummaries,
 			RepeatMarks:       s.RepeatMarks,
 			NoChangeFixRounds: s.NoChangeFixRounds,
+			DeferNonErrors:    s.DeferNonErrors,
 			StartedAt:         s.StartedAt,
 			RoundStartedAt:    s.RoundStartedAt,
 			LastActivityAt:    s.LastActivityAt,
@@ -833,6 +835,9 @@ func gateFieldsWithHelp(gate stepView, help []string) []toon.Field {
 	gfields := []toon.Field{
 		{Key: "step", Value: gate.Name},
 		{Key: "status", Value: gate.Status},
+	}
+	if gate.DeferNonErrors != nil {
+		gfields = append(gfields, toon.Field{Key: "defer_non_errors", Value: *gate.DeferNonErrors})
 	}
 	if parsed.Summary != "" {
 		gfields = append(gfields, toon.Field{Key: "summary", Value: truncate(parsed.Summary, maxGateSummary)})
