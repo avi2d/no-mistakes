@@ -482,7 +482,22 @@ func (e *Executor) RespondWithOverrides(step types.StepName, action types.Approv
 		dispositions.Fixed = combineSelectedFindingIDs(idsInPayloadOrder(response.findingIDs, findingIDsInPayloadOrder(e.waitingFindings)), normalized)
 		dispositions.Kept = excludeFindingIDs(split.Kept, restoredGateIDs)
 	}
-	if action != types.ActionFix && e.db != nil && e.waitingStepResultID != "" {
+	if action == types.ActionApprove && len(findingIDs) > 0 {
+		if len(ignoreFindingIDs)+len(response.instructions)+len(response.driverInstructions)+len(addedFindings) > 0 {
+			e.mu.Unlock()
+			return RespondDispositions{}, fmt.Errorf("approval with follow-ups cannot ignore, add or change findings")
+		}
+		var err error
+		dispositions.FollowUps, err = e.prepareReviewFollowUpApproval(step, &response)
+		if err == nil {
+			err = e.persistResponseDecision(step, response, "")
+		}
+		if err != nil {
+			e.mu.Unlock()
+			return RespondDispositions{}, err
+		}
+	}
+	if action != types.ActionFix && response.reviewFollowUps == nil && e.db != nil && e.waitingStepResultID != "" {
 		if err := e.db.SetStepResponseOrigin(e.waitingStepResultID, option.Origin); err != nil {
 			e.mu.Unlock()
 			return RespondDispositions{}, err
