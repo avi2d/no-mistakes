@@ -91,9 +91,8 @@ type CIStep struct {
 	// agent-commit shaper refuses every merge, so it stands aside for exactly
 	// this commit, whose message is git's own rather than an agent's.
 	provenMergeHead string
-	// prePushChecksPassed is true only while the repair being recorded was
-	// committed from a worktree the pre-push checks already passed on, so
-	// publishRepair need not run them a second time.
+	// prePushChecksPassed is true only while the head being recorded is the one
+	// the pre-push checks already passed, so publishRepair need not run them again.
 	prePushChecksPassed bool
 }
 

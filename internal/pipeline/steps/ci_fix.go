@@ -446,14 +446,13 @@ CI logs:
 	}
 	// A rebase repair under rebase.strategy rebase can never prove continuity,
 	// so it always revalidates and the Lint step checks it before Push.
+	var repair ciRepairResult
 	if !rebase || mergesMovedBase(sctx) {
 		defer func() { s.prePushChecksPassed = false }()
-		result, err = s.checkRepairBeforePush(sctx, repairTask, result)
-		if err != nil {
-			return ciRepairResult{}, err
-		}
+		repair, err = s.commitRepairAfterPrePushChecks(sctx, repairTask, conclusion.Summary, result)
+	} else {
+		repair, err = s.commitRepair(sctx, conclusion.Summary, result)
 	}
-	repair, err := s.commitRepair(sctx, conclusion.Summary, result)
 	if mergeConflict && rebaseBaseResolved {
 		repair.ConflictBaseSHA = rebaseBaseSHA
 	}
@@ -833,8 +832,17 @@ func unfinishedGitRepairOutcome(err error, findings Findings, deferred string) *
 }
 
 func (s *CIStep) commitRepair(sctx *pipeline.StepContext, summary string, producer *agent.Result) (ciRepairResult, error) {
-	if err := refuseUnfinishedGitOperation(sctx); err != nil {
+	headSHA, record, err := s.commitRepairChanges(sctx, summary, producer)
+	if err != nil || !record {
 		return ciRepairResult{}, err
+	}
+	return s.recordRepair(sctx, headSHA)
+}
+
+// The head is returned unrecorded; record is false when there is nothing to record.
+func (s *CIStep) commitRepairChanges(sctx *pipeline.StepContext, summary string, producer *agent.Result) (string, bool, error) {
+	if err := refuseUnfinishedGitOperation(sctx); err != nil {
+		return "", false, err
 	}
 	render := func() (string, error) {
 		repairSummary := summary
@@ -852,74 +860,73 @@ func (s *CIStep) commitRepair(sctx *pipeline.StepContext, summary string, produc
 		return message, nil
 	}
 	if err := refuseRewordedBranchCommits(sctx, types.StepCI, s.replayBase); err != nil {
-		return ciRepairResult{}, err
+		return "", false, err
 	}
 	if !s.isProvenMergeHead(sctx) {
 		if err := conformAgentCommits(sctx, types.StepCI, render); err != nil {
-			return ciRepairResult{}, err
+			return "", false, err
 		}
 	}
 	if s.replayBase == "" {
 		if s.isProvenMergeHead(sctx) {
 			if err := normalizeProvenMergeHead(sctx, s.provenMergeHead); err != nil {
-				return ciRepairResult{}, err
+				return "", false, err
 			}
 		} else if err := normalizeAgentHead(sctx); err != nil {
-			return ciRepairResult{}, err
+			return "", false, err
 		}
 	} else if err := restampReplayedCommits(sctx, s.replayBase); err != nil {
-		return ciRepairResult{}, err
+		return "", false, err
 	}
 	status, err := stepGitRun(sctx, "status", "--porcelain")
 	if err != nil {
-		return ciRepairResult{}, fmt.Errorf("check CI changes: %w", err)
+		return "", false, fmt.Errorf("check CI changes: %w", err)
 	}
 	if strings.TrimSpace(status) == "" {
 		sctx.Log("no changes to commit")
 		headSHA, err := stepGitHeadSHA(sctx)
 		if err == nil && ciHeadAwaitsRecording(sctx, headSHA) {
-			return s.recordRepair(sctx, headSHA)
+			return headSHA, true, nil
 		}
-		return ciRepairResult{}, nil
+		return "", false, nil
 	}
 
 	message, err := render()
 	if err != nil {
-		return ciRepairResult{}, err
+		return "", false, err
 	}
 	if err := stagePipelineChanges(sctx); err != nil {
-		return ciRepairResult{}, fmt.Errorf("stage CI changes: %w", err)
+		return "", false, fmt.Errorf("stage CI changes: %w", err)
 	}
 	staged, err := stagedChangesPresent(func(args ...string) (string, error) {
 		return stepGitRun(sctx, args...)
 	})
 	if err != nil {
-		return ciRepairResult{}, fmt.Errorf("inspect staged CI changes: %w", err)
+		return "", false, fmt.Errorf("inspect staged CI changes: %w", err)
 	}
 	if !staged {
 		sctx.Log("no staged CI changes to commit")
 		headSHA, err := stepGitHeadSHA(sctx)
 		if err != nil {
-			return ciRepairResult{}, fmt.Errorf("resolve head after empty CI handoff: %w", err)
+			return "", false, fmt.Errorf("resolve head after empty CI handoff: %w", err)
 		}
 		if ciHeadAwaitsRecording(sctx, headSHA) {
-			return s.recordRepair(sctx, headSHA)
+			return headSHA, true, nil
 		}
-		return ciRepairResult{}, nil
+		return "", false, nil
 	}
 	id, err := pipelineCommitIdentity(sctx, sctx.Run.HeadSHA)
 	if err != nil {
-		return ciRepairResult{}, err
+		return "", false, err
 	}
 	if _, err := stepGitRunWithEnv(sctx, pipelineIdentityEnv(id), append(pipelineIdentityConfig(id), "commit", "-m", message)...); err != nil {
-		return ciRepairResult{}, fmt.Errorf("commit: %w", err)
+		return "", false, fmt.Errorf("commit: %w", err)
 	}
 	headSHA, err := stepGitHeadSHA(sctx)
 	if err != nil {
-		return ciRepairResult{}, fmt.Errorf("resolve head after commit: %w", err)
+		return "", false, fmt.Errorf("resolve head after commit: %w", err)
 	}
-
-	return s.recordRepair(sctx, headSHA)
+	return headSHA, true, nil
 }
 
 // ciHeadAwaitsRecording reports whether a fix round that committed nothing
