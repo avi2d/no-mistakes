@@ -177,3 +177,74 @@ func TestCIStep_RevalidatingRepairLeavesLintToTheLintStep(t *testing.T) {
 		t.Fatalf("remote head = %s, want the unrepaired head %s", got, f.headSHA)
 	}
 }
+
+const (
+	prePushCommittedFile    = "docs-ok.txt"
+	prePushCommittedMessage = "docs: docs-ok.txt must be committed"
+)
+
+// A worktree check would pass on the uncommitted repair, so this reads HEAD.
+func usePrePushCommittedLintFixture(f *ciRepairFixture) {
+	check := "git cat-file -e HEAD:" + prePushCommittedFile
+	lint := check + " || { echo '" + prePushCommittedMessage + "'; exit 1; }"
+	if runtime.GOOS == "windows" {
+		lint = check + " || (echo " + prePushCommittedMessage + "& exit 1)"
+	}
+	f.sctx.Config.Commands.Lint = lint
+}
+
+func TestCIStep_PrePushChecksDoNotParkARepairThatPassesOnceCommitted(t *testing.T) {
+	f := newCIRepairFixture(t, false, nil)
+	usePrePushCommittedLintFixture(f)
+	ag := &mockAgent{name: "test"}
+	ag.runFn = func(ctx context.Context, opts agent.RunOpts) (*agent.Result, error) {
+		writeFixtureFile(t, opts.CWD, prePushCommittedFile, "documented\n")
+		return &agent.Result{Output: []byte(`{"summary":"repair the failing check"}`)}, nil
+	}
+	f.sctx.Agent = ag
+
+	// A published repair keeps the monitor polling until the fixture's poll
+	// budget cancels it, so cancellation is the success path here.
+	if _, err := f.run(t); !errors.Is(err, context.Canceled) {
+		t.Fatalf("CI step error = %v, want the monitor still polling after the published repair\nlog:\n%s", err, f.log())
+	}
+	if n := len(ciFixCalls(ag)); n != 1 {
+		t.Fatalf("CI fixer turns = %d, want 1: the committed repair passes the checks on its first turn", n)
+	}
+	local := f.localHead(t)
+	if local == f.headSHA {
+		t.Fatal("the repair commit was never created")
+	}
+	if got := f.remoteHead(t); got != local {
+		t.Fatalf("remote head = %s, want the repair %s published", got, local)
+	}
+}
+
+func TestCIStep_RejectedRepairCommitStaysOutOfPublishedHistory(t *testing.T) {
+	f := newCIRepairFixture(t, false, nil)
+	usePrePushCommittedLintFixture(f)
+	ag := &mockAgent{name: "test"}
+	ag.runFn = func(ctx context.Context, opts agent.RunOpts) (*agent.Result, error) {
+		if strings.Contains(opts.Prompt, prePushCommittedMessage) {
+			writeFixtureFile(t, opts.CWD, prePushCommittedFile, "documented\n")
+		} else {
+			writeFixtureFile(t, opts.CWD, "first-attempt.txt", "rejected\n")
+		}
+		return &agent.Result{Output: []byte(`{"summary":"repair the failing check"}`)}, nil
+	}
+	f.sctx.Agent = ag
+
+	if _, err := f.run(t); !errors.Is(err, context.Canceled) {
+		t.Fatalf("CI step error = %v, want the monitor still polling after the published repair\nlog:\n%s", err, f.log())
+	}
+	if n := len(ciFixCalls(ag)); n != 2 {
+		t.Fatalf("CI fixer turns = %d, want 2: the first repair fails the committed-tree check", n)
+	}
+	local := f.localHead(t)
+	if got := gitCmd(t, f.dir, "rev-list", "--count", f.headSHA+".."+local); got != "1" {
+		t.Fatalf("published repair adds %s commits to the unrepaired head, want 1: the rejected commit stayed in history", got)
+	}
+	if got := f.remoteHead(t); got != local {
+		t.Fatalf("remote head = %s, want the repair %s published", got, local)
+	}
+}
