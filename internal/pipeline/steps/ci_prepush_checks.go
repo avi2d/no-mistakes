@@ -66,47 +66,35 @@ func runPrePushChecks(sctx *pipeline.StepContext) error {
 	return nil
 }
 
-// repairChangedWorktree reports whether the fixer left anything a commit or
-// push would carry: uncommitted changes or a moved HEAD.
-func repairChangedWorktree(sctx *pipeline.StepContext) (bool, error) {
-	head, err := stepGitHeadSHA(sctx)
-	if err != nil {
-		return false, fmt.Errorf("resolve head before pre-push checks: %w", err)
-	}
-	if !strings.EqualFold(head, sctx.Run.HeadSHA) {
-		return true, nil
-	}
-	status, err := stepGitRun(sctx, "status", "--porcelain")
-	if err != nil {
-		return false, fmt.Errorf("check CI changes before pre-push checks: %w", err)
-	}
-	return strings.TrimSpace(status) != "", nil
-}
-
-// checkRepairBeforePush runs the pre-push checks on the fixer's worktree and,
-// while they fail, hands their output back to the fixer for up to
-// ciPrePushFixTurns more turns. It returns the last agent result, or the final
-// *prePushCheckFailure once the turns are spent.
-func (s *CIStep) checkRepairBeforePush(sctx *pipeline.StepContext, repairPrompt string, result *agent.Result) (*agent.Result, error) {
+// The checks read HEAD, so the repair is committed before they run. A failed
+// check rewinds that commit, so every fixer turn starts from the same head.
+func (s *CIStep) commitRepairAfterPrePushChecks(sctx *pipeline.StepContext, repairPrompt, summary string, result *agent.Result) (ciRepairResult, error) {
 	if !prePushChecksConfigured(sctx) || ciRevalidatesRepairs(sctx) {
-		return result, nil
+		return s.commitRepair(sctx, summary, result)
 	}
 	for turn := 0; ; turn++ {
-		changed, err := repairChangedWorktree(sctx)
+		startHead, err := stepGitHeadSHA(sctx)
 		if err != nil {
-			return result, err
+			return ciRepairResult{}, fmt.Errorf("resolve head before CI repair commit: %w", err)
 		}
-		if !changed {
-			return result, nil
+		headSHA, record, err := s.commitRepairChanges(sctx, summary, result)
+		if err != nil {
+			return ciRepairResult{}, err
+		}
+		if !record {
+			return ciRepairResult{}, nil
 		}
 		checkErr := runPrePushChecks(sctx)
 		if checkErr == nil {
 			s.prePushChecksPassed = true
-			return result, nil
+			return s.recordRepair(sctx, headSHA)
+		}
+		if err := rewindRepairCommit(sctx, startHead, headSHA); err != nil {
+			return ciRepairResult{}, errors.Join(checkErr, err)
 		}
 		var failure *prePushCheckFailure
 		if !errors.As(checkErr, &failure) || turn == ciPrePushFixTurns {
-			return result, checkErr
+			return ciRepairResult{}, checkErr
 		}
 		sctx.Log(fmt.Sprintf("pre-push checks failed, asking the CI fixer to fix them (turn %d of %d)...", turn+1, ciPrePushFixTurns))
 		next, err := runScratchAwareAgent(sctx, agent.RunOpts{
@@ -121,13 +109,24 @@ func (s *CIStep) checkRepairBeforePush(sctx *pipeline.StepContext, repairPrompt 
 			if !errors.Is(err, context.Canceled) && !errors.Is(err, pipeline.ErrAgentTimeout) {
 				err = fmt.Errorf("%w: %w", errCIFixAgentCrash, err)
 			}
-			return result, fmt.Errorf("agent CI pre-push fix: %w", err)
+			return ciRepairResult{}, fmt.Errorf("agent CI pre-push fix: %w", err)
 		}
 		result = next
 		if err := refuseUnfinishedGitOperation(sctx); err != nil {
-			return result, err
+			return ciRepairResult{}, err
 		}
 	}
+}
+
+// The reset is mixed: the commit's changes stay in the worktree for the fixer.
+func rewindRepairCommit(sctx *pipeline.StepContext, startHead, headSHA string) error {
+	if strings.EqualFold(startHead, headSHA) {
+		return nil
+	}
+	if _, err := stepGitRun(sctx, "reset", "-q", startHead); err != nil {
+		return fmt.Errorf("rewind unchecked CI repair commit %s: %w", shortObjectID(headSHA), err)
+	}
+	return nil
 }
 
 func ciPrePushFixPrompt(repairPrompt string, failure *prePushCheckFailure) string {
